@@ -1,4 +1,6 @@
-// Prisma schema — models go here once Phase 1 entities are built (see 03_DATABASE_SCHEMA.md §1).
+// Prisma schema — Phase 1 entities (see 03_DATABASE_SCHEMA.md §1).
+// See §1.1 there for the rules that must be enforced in application code,
+// not expressible in the schema alone (cost_price visibility, PIN gate, etc).
 
 generator client {
   provider = "prisma-client-js"
@@ -7,4 +9,122 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  STAFF
+}
+
+enum TransactionType {
+  STOCK_IN
+  STOCK_OUT
+  SAMPLE_OUT
+  SAMPLE_RETURN
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  name                String
+  username            String   @unique
+  passwordHash        String
+  role                Role
+  priceEditPinHash    String?  // only ever set for the OWNER account
+  createdAt           DateTime @default(now())
+
+  transactions        Transaction[]
+}
+
+model Factory {
+  id        String    @id @default(cuid())
+  name      String
+  contact   String?
+  createdAt DateTime  @default(now())
+
+  products  Product[]
+}
+
+model Product {
+  id            String        @id @default(cuid())
+  articleNo     String
+  factoryId     String
+  factory       Factory       @relation(fields: [factoryId], references: [id])
+  category      String?
+  isKids        Boolean       @default(false) // switches ProductSize vocabulary to age brackets
+  costPrice     Decimal?      // nullable = "pending price" until owner sets it. OWNER visibility only, enforced at API layer.
+  sellingPrice  Decimal?      // nullable = "pending price". Visible to OWNER and STAFF once set.
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  sizes         ProductSize[]
+  bundles       Bundle[]
+
+  @@unique([articleNo, factoryId]) // article number unique per factory, not globally
+}
+// A Product with null costPrice/sellingPrice shows a "pending price" badge everywhere it
+// appears until the owner sets both values (PIN-gated write, see 02_ARCHITECTURE.md §4.3).
+
+model ProductSize {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  sizeLabel String   // adult: "M","L","XL","XXL","3XL"..."6XL","S" (via "+ add other size").
+                      // kids (Product.isKids = true): age-bracket strings, e.g. "3-5 yrs" — same field, different vocabulary.
+  sortOrder Int      @default(0)
+
+  // Number of ProductSize rows for a Product = pieces-per-set for that article, whether
+  // adult letter-sizes or kids age-brackets — one unified rule, no separate 4pc/6pc lookup.
+  // Used later (Phase 3) to convert set-quantities into piece-quantities for billing.
+}
+
+model Color {
+  id   String @id @default(cuid())
+  name String @unique
+
+  bundles Bundle[]
+}
+
+model Bundle {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  colorId   String
+  color     Color    @relation(fields: [colorId], references: [id])
+
+  stock     Stock[]
+
+  @@unique([productId, colorId]) // defines which colors are valid for a given article
+}
+
+model Location {
+  id   String @id @default(cuid())
+  name String @unique
+
+  stock Stock[]
+}
+
+model Stock {
+  id                    String   @id @default(cuid())
+  bundleId              String
+  bundle                Bundle   @relation(fields: [bundleId], references: [id])
+  locationId            String
+  location              Location @relation(fields: [locationId], references: [id])
+  qtySets               Int      @default(0) // never edit directly — only via Transaction
+  qtyReservedForSample  Int      @default(0) // never edit directly — only via Transaction
+
+  transactions          Transaction[]
+
+  @@unique([bundleId, locationId])
+}
+
+model Transaction {
+  id        String            @id @default(cuid())
+  stockId   String
+  stock     Stock             @relation(fields: [stockId], references: [id])
+  userId    String
+  user      User              @relation(fields: [userId], references: [id])
+  type      TransactionType
+  qtySets   Int
+  note      String?
+  createdAt DateTime          @default(now())
 }

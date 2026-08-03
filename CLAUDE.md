@@ -1,6 +1,6 @@
 # Wholesale Garment Business Management System
 
-Full specs live in `/project-docs`. Read `06_ROADMAP.md` first — it indexes every other doc and defines the current build phase. **Only work within the current phase's scope unless explicitly told otherwise.**
+Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md` first — it indexes every other doc and defines the current build phase. **Only work within the current phase's scope unless explicitly told otherwise.**
 
 ## Doc index
 - `01_PRD.md` — what to build and why
@@ -23,9 +23,16 @@ Full specs live in `/project-docs`. Read `06_ROADMAP.md` first — it indexes ev
 - Stop after each task and wait for review — don't chain into the next task unprompted.
 - If something in the docs is ambiguous or missing, ask rather than assume.
 
-## Comments & teaching (I'm learning backend dev from zero — treat every session as a lesson too)
-- Comment **why**, not just what — the code itself already shows what a line does; the comment should explain the reasoning (why this approach, why this matters, what would break without it).
-- `LEARNING_LOG.md` at the project root has two sections: **Decisions & Reasoning** (why we built things a particular way, what alternative we didn't take and why) and **Concepts** (plain-English glossary). Update both **continuously, not just at the end of a task** — the moment a real decision gets made or a new concept comes up, even mid-task, log it right then rather than batching it for later.
-- Concept entries must be genuinely complete, not a one-line dictionary definition: include whatever prerequisite context is needed to actually understand it (don't assume knowledge that hasn't been logged yet), how it connects to concepts already in the log, and a concrete example from this project's own code where possible — not just an abstract definition.
-- After finishing a task, give me a short plain-English walkthrough of what you built and why, before I review the diff — assume I have no backend background at all.
-- If I ask "explain this like I'm new to backend dev," slow all the way down — no assumed prior knowledge.
+## Git commits
+- Never include AI attribution — no "Generated with Claude Code" line, no "Co-Authored-By: Claude" trailer. Commits should read like a person wrote them.
+- Short, direct, imperative summary line (e.g. "Add Prisma schema for Phase 1 entities", not "This commit implements..." or a bullet list of every file touched).
+- Only add a body beyond the summary line if there's a genuinely non-obvious reason behind the change worth recording — not a recap of what the diff already shows.
+- Commit after each reviewed task, not just once at the start of the project.
+
+## Comments & teaching (I'm learning full-stack dev from zero — backend AND frontend both need the same depth of explanation, nothing gets skipped because it's "just frontend" or "just styling")
+- Comment **why**, not just what — applies equally everywhere: Express routes and Prisma queries get the same explanatory treatment as React components, state management, and hooks.
+- `LEARNING_LOG.md` has three sections: **Decisions & Reasoning**, **Mistakes & Fixes**, and **Concepts**. Update all three continuously as things happen, not batched at the end of a task.
+- **Mistakes & Fixes entries are mandatory whenever something doesn't work on the first attempt** — not just for major bugs. Every entry must cover, in order: (1) the original approach and why it seemed right at the time, (2) what actually went wrong and how it was noticed, (3) how the real cause was diagnosed, (4) the fix that was applied, and (5) **why that specific fix is the correct one** — the actual reasoning for why it addresses the real cause, not just "a" fix that happened to make the error go away.
+- Concept entries must be genuinely complete, not a one-line dictionary definition: include whatever prerequisite context is needed to actually understand it (don't assume knowledge that hasn't been logged yet), how it connects to concepts already in the log, and a concrete example from this project's own code where possible — not just an abstract definition. This applies to frontend concepts (components, props, state, hooks, rendering) exactly as much as backend ones.
+- After finishing a task, give a full plain-English walkthrough of what was built and why, before I review the diff — covering backend and frontend equally, assume zero prior background in either.
+- If I ask "explain this like I'm new to backend dev" or "new to frontend dev," slow all the way down for that side specifically — no assumed prior knowledge.
