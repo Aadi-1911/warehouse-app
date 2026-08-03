@@ -1,0 +1,1 @@
+// Stock resource routes.

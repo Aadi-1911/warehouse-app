@@ -1,0 +1,1 @@
+// Bundle resource routes.

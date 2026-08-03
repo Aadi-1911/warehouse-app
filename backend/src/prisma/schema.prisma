@@ -1,0 +1,10 @@
+// Prisma schema — models go here once Phase 1 entities are built (see 03_DATABASE_SCHEMA.md §1).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
