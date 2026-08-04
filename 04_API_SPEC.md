@@ -103,7 +103,7 @@ Lists Bundles for a given Product (i.e. its valid colors) — can also be served
 
 ### `GET /api/stock` 🔒
 Query params: `?articleNo=`, `?colorId=`, `?locationId=` — supports the Live Stock View's search/filter requirement.
-Response: `[{ bundleId, productArticleNo, colorName, locationName, qtySets, qtyReservedForSample }]`
+Response: `[{ bundleId, productArticleNo, colorName, locationId, locationName, qtySets, qtyReservedForSample }]`
 **No direct write endpoint exists for Stock** — quantities only change via `POST /api/transactions` (see below). This is intentional; do not add a `PATCH /api/stock/:id`.
 
 ---
@@ -130,7 +130,7 @@ Errors: `400` for any quantity that would go negative; `404` if Bundle/Location 
 
 ### `GET /api/transactions` 🔒
 Query params: `?bundleId=`, `?locationId=`, `?userId=`, `?from=`, `?to=` — for audit/history views.
-Response: list of Transaction records with joined user name, bundle/product/color info for display.
+Response: `[{ id, type, qtySets, note, createdAt, userId, userName, bundleId, productArticleNo, colorName, locationId, locationName }]` — reuses the same field names as `GET /api/stock`'s joined data for consistency. Default order: newest first.
 
 ---
 

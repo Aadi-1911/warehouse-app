@@ -30,6 +30,8 @@ model User {
   passwordHash        String
   role                Role
   priceEditPinHash    String?  // only ever set for the OWNER account
+  failedPinAttempts   Int      @default(0)  // consecutive wrong PIN attempts; reset on a correct one
+  pinLockedUntil      DateTime?             // set after too many failures — PIN checks rejected until this passes
   createdAt           DateTime @default(now())
 
   transactions        Transaction[]
