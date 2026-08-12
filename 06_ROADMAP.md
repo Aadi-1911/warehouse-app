@@ -25,6 +25,7 @@
 - **Category** — ✅ COMPLETE (backend + Receive Stock picker + inline "+ create new"). **🔲 No archive/reactivate endpoint** — missed when the archiving task was scoped (rule 85 gap).
 - **Party** — Schema only (minimal form). **🔲 No `POST`/`GET /api/parties` — Party is currently unreachable through the API.** Only deactivate/reactivate exist, with nothing yet to act on.
 - **Transfer** — ✅ COMPLETE, backend (`POST`/`GET /api/transfers`, atomic paired legs, negative-stock guard) **and** frontend (own Home tile, Stock-row-based selection, no "+ create" by design). Confirms and closes what was originally rule 46's accepted Phase 1 limitation.
+- **Custom-composition orders / `LoosePieces` / `TransactionSizeBreakdown`** — Schema designed and migrated. **🔲 No endpoints, no screen. Confirmed structurally dependent on Phase 2's Pack Order screen** (rule 95) — the decision of whether to substitute happens at packing time, not order time, so this can't be built until Order/Pack Order exists.
 
 ## Phase 2 — Orders & Parties
 
