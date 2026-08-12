@@ -90,11 +90,17 @@ Sets `isActive: true` — reverses a deactivation.
 ## Categories 🔒
 
 ### `GET /api/categories` 🔒
-Response: `[{ id, name }]`
+Response: `[{ id, name, isActive }]`
 
 ### `POST /api/categories` 🔒
 Body: `{ name }`
 Validation: name must be unique (case-insensitive recommended, to avoid "Hoodie" vs "hoodie" duplicates). Mirrors `POST /api/colors` exactly.
+
+### `PATCH /api/categories/:id/deactivate` 🔒
+Sets `isActive: false`. **Never hard-delete a Category** — Product rows reference `categoryId` and must stay resolvable forever, same audit-trail principle as `User.isActive`. Any authenticated role — matches `POST /api/categories`' own gating. Idempotent. **No lockout-prevention guard** — no equivalent risk to Users' last-active-owner case. Closes rule 85's remaining gap — the last of the six archivable entities to get this.
+
+### `PATCH /api/categories/:id/reactivate` 🔒
+Sets `isActive: true` — reverses a deactivation.
 
 ---
 
