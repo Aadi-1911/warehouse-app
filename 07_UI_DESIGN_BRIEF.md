@@ -28,8 +28,8 @@ A wholesale garment business sources garments from factories and distributes the
 |---|---|---|
 | **Success (green)** | Positive / increasing | "Stock in" actions, matched/confirmed states, fully-packed order lines |
 | **Danger (red)** | Negative / removal | "Stock out" actions, damaged-item flags |
-| **Warning (amber)** | Needs attention | "Sample out", low-stock badges, short-packed order lines, new-article-pending-price status |
-| **Accent (blue)** | Primary navigation / neutral action | Primary buttons, "Sample return" action, Live Stock View branding, filter chips |
+| **Warning (amber)** | Needs attention | Low-stock badges, short-packed order lines, new-article-pending-price status |
+| **Accent (blue)** | Primary navigation / neutral action | Primary buttons, Live Stock View branding, filter chips |
 | **Highlight (purple)** | Order/Party-related | New Order screen branding, cart "Add" actions |
 
 A component's background/border/text should always share the same role tint together (e.g., a warning badge uses warning-tinted background, border, AND text — never mix roles within one element).

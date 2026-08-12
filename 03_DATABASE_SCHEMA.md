@@ -94,8 +94,11 @@ model ProductSize {
                       // kids (Product.isKids = true): fixed category strings per rule 50 — "1-5yr", "6-16yr", "12-18yr".
   sortOrder Int      @default(0)
 
-  // Number of ProductSize rows for a Product = pieces-per-set for that article, whether
-  // adult letter-sizes or kids age-brackets — one unified rule, no separate 4pc/6pc lookup.
+  // Adult articles: pieces-per-set = the COUNT of ProductSize rows (e.g. M/L/XL/XXL = 4 rows = 4 pieces).
+  // Kids articles (rule 50, supersedes an earlier unified-counting design): exactly ONE ProductSize
+  // row exists (single-select category), and pieces-per-set is a FIXED lookup on that category's
+  // label, NOT the row count — "1-5yr"=5pc, "6-16yr"=6pc, "12-18yr"=4pc. Counting rows for a Kids
+  // article gives the wrong answer; this caused real bugs before being caught and fixed.
   // Used later (Phase 3) to convert set-quantities into piece-quantities for billing.
 
   @@unique([productId, sizeLabel]) // a duplicate label for the same Product would silently

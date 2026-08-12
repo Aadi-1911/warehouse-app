@@ -13,7 +13,7 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 ## Non-negotiable rules (apply regardless of which task is active)
 - `cost_price` is NEVER returned to a STAFF-role request, in any API response, under any circumstance. Enforce server-side.
 - Setting or editing `costPrice` or `sellingPrice` — whether at creation or later — requires OWNER role AND a separate PIN match, never role alone, with no exception for it happening at creation time.
-- Stock quantities (`Stock.qtySets`, `qtyReservedForSample`) only ever change as a side effect of inserting a `Transaction` row, atomically. Never write a direct UPDATE to Stock.
+- Stock quantities (`Stock.qtySets`) only ever change as a side effect of inserting a `Transaction` row, atomically. Never write a direct UPDATE to Stock.
 - Article numbers are unique per Factory, never globally — all lookups/matches must be scoped to the selected Factory.
 - Order status is exactly four stages: Placed → Packed → Billed → Shipped. Don't collapse or reorder these.
 - Before installing any new npm package, check its `engines` field (`npm view <package> engines`) against this machine's Node version. This has caused real problems three times already (Prisma 7, Vite 7, jsdom) — check proactively, don't wait to hit the error.

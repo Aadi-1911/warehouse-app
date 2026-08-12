@@ -21,8 +21,10 @@
 **Goal:** Small, necessary operational pieces that don't fit neatly under "inventory" but are needed before real multi-person use.
 
 - **Manage Users** — ✅ COMPLETE. Multi-owner support (self-service PIN, primary-owner-only owner creation, soft-deactivate with lockout protection), account creation/list/deactivate UI, self-service PIN setup.
-- **Factory Payables** — 🔲 designed, not built. GST field + edit capability for Factory, `costPriceSnapshot` on Transaction, `FactoryPayment` entity, lightweight computed "amount payable" per Factory. See rules 80–82, `04_API_SPEC.md`'s Factories section.
-  - **Estimate:** small — roughly 2–4 tasks (one schema/migration task, one or two backend endpoint tasks, one small frontend view). A short detour, not a new phase-scale effort.
+- **Factory Payables** — ✅ backend complete (schema, `costPriceSnapshot`, `/payable`, `POST /api/factory-payments`, tested including a Kids piece-count case). **🔲 Frontend view was proposed but never actually sent as a task — not built.**
+- **Category** — ✅ COMPLETE (backend + Receive Stock picker + inline "+ create new"). **🔲 No archive/reactivate endpoint** — missed when the archiving task was scoped (rule 85 gap).
+- **Party** — Schema only (minimal form). **🔲 No `POST`/`GET /api/parties` — Party is currently unreachable through the API.** Only deactivate/reactivate exist, with nothing yet to act on.
+- **Transfer** — ✅ COMPLETE, backend (`POST`/`GET /api/transfers`, atomic paired legs, negative-stock guard) **and** frontend (own Home tile, Stock-row-based selection, no "+ create" by design). Confirms and closes what was originally rule 46's accepted Phase 1 limitation.
 
 ## Phase 2 — Orders & Parties
 

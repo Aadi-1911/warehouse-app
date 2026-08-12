@@ -65,7 +65,7 @@ This is a real usage gate, not a feature-completeness gate. A feature-complete b
 ### 5.3 Product (Article) Management
 - Owner can create/edit a Product: article number, Factory, category, cost price, selling price.
 - Article number is unique **per Factory**, not globally (the same article number can exist under different Factories). Lookup/matching must always be scoped to the currently-selected Factory.
-- Each Product has a fixed set of sizes defined once at creation, with no size pre-selected by default — staff always selects manually. Adult sizing: a Common row (M, L, XL, XXL) plus an always-visible Extended row (3XL–6XL); Small (S) is available via a "+ add other size" option rather than shown by default. A per-article "Kids" toggle switches the size vocabulary entirely to age brackets instead of letter sizes. Pieces-per-set = however many size/age options are selected, for both adult and kids articles — one unified rule.
+- Each Product has a fixed set of sizes defined once at creation, with no size pre-selected by default — staff always selects manually. Adult sizing: a Common row (M, L, XL, XXL) plus an always-visible Extended row (3XL–6XL); Small (S) is available via a "+ add other size" option rather than shown by default. Pieces-per-set for adult sizing is the count of sizes selected. A per-article "Kids" toggle switches to three fixed, single-select categories instead (1-5yr/5pc, 6-16yr/6pc, 12-18yr/4pc, per rule 50) — pieces-per-set for Kids is a fixed lookup on the chosen category, not a count. These are two different mechanisms, not one unified rule (an earlier design used a single counting rule for both; superseded after it caused real bugs).
 - Sizes belong to the Product, not duplicated per color/bundle.
 - `cost_price` and `sellingPrice` are nullable — a Product with either unset shows a "pending price" state everywhere it appears, until the owner sets both. Editing either requires PIN confirmation (owner only, see Section 9).
 
@@ -82,17 +82,20 @@ This is a real usage gate, not a feature-completeness gate. A feature-complete b
 ### 5.7 Stock Tracking
 - Stock is tracked per Bundle **and** per Location (a given Bundle can have different quantities at different Locations).
 - Quantity is counted in **sets**, never individual pieces.
-- Stock also tracks a separate "reserved for sample" quantity — sets pulled out to show to a Party are not removed from inventory, they move into a reserved state and can later return to available stock (see Transaction types below).
 
 ### 5.8 Transactions (the audit trail)
 - Every stock movement must create a Transaction record: who did it, what type, how much, when.
-- Transaction types (Phase 1): `STOCK_IN`, `STOCK_OUT`, `SAMPLE_OUT`, `SAMPLE_RETURN`.
+- Transaction types (Phase 1): `STOCK_IN`, `STOCK_OUT`, `DEFECT_RETURN`, `PARTY_RETURN`, `TRANSFER_OUT`, `TRANSFER_IN`. (Sample tracking — `SAMPLE_OUT`/`SAMPLE_RETURN`/reserved-for-sample quantity — was removed entirely per rule 84; genuinely unnecessary, common tacit business knowledge that never needed system modeling.)
 - **No stock quantity is ever manually edited directly** — every change to a Stock row must be the result of a logged Transaction. This is a hard rule, not a style preference.
 
 ### 5.9 Screens (Phase 1)
-1. **Add Stock Entry** — the single most-used screen. Must work smoothly for non-technical staff on a phone: select Product → select Color (filtered to valid Bundles only) → select Location → enter quantity (sets) → select movement type → submit. Minimal typing, dropdowns/taps preferred.
-2. **Live Stock View** — searchable/filterable dashboard by article, color, location. Shows current stock levels. Owner sees cost price context where relevant; staff do not.
-3. **Manage Users** (owner-only, low-frequency use) — full scope: a list of existing accounts (name, username, role, active status), a "create new" action (Name, Username, Password, Role — with a brief description of what each role grants, and the OWNER option hidden entirely for a non-primary-owner creator), and a deactivate/reactivate toggle per account (never a hard delete — see rule 75). A newly created owner account has no PIN yet; setting it is a separate self-service action the new owner does themselves, not part of this screen. This was missing from the original screen list despite the backend supporting account creation since early in Phase 1 — added because there was no way for the owner to onboard real staff without manually crafting an API request, which blocks the actual Phase 1 usage gate.
+1. **Login** — real authentication (bcrypt-hashed password, JWT), role-aware from the first request.
+2. **Home** — role-based tile launcher; staff and owner see different tiles from the same screen.
+3. **Add Stock Entry (Receive Stock)** — the single most-used screen. Must work smoothly for non-technical staff on a phone: select Product → select Color (filtered to valid Bundles only) → select Location → enter quantity (sets) → select movement type → submit. Minimal typing, dropdowns/taps preferred.
+4. **Live Stock View** — searchable/filterable dashboard by article, color, location. Shows current stock levels. Owner sees cost price context where relevant; staff do not.
+5. **Manage Users** (owner-only, low-frequency use) — full scope: a list of existing accounts (name, username, role, active status), a "create new" action (Name, Username, Password, Role — with a brief description of what each role grants, and the OWNER option hidden entirely for a non-primary-owner creator), and a deactivate/reactivate toggle per account (never a hard delete — see rule 75). A newly created owner account has no PIN yet; setting it is a separate self-service action the new owner does themselves, not part of this screen. This was missing from the original screen list despite the backend supporting account creation since early in Phase 1 — added because there was no way for the owner to onboard real staff without manually crafting an API request, which blocks the actual Phase 1 usage gate.
+6. **Set PIN** — self-service PIN setup for an owner account whose PIN is currently unset.
+7. **Transfer** — its own Home tile; moves stock between the business's own locations.
 
 ### 5.10 Stretch (only if time allows within Phase 1, not required)
 - Low-stock flag/alert: ≤2 sets remaining triggers a small red badge (never a fully-tinted card/row — keep it subtle, not alarming). This threshold is used consistently everywhere stock is shown, including future Live Stock, Pack Order, and New Order screens.
