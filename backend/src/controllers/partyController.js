@@ -17,13 +17,68 @@ const SELECT = {
   isActive: true,
 };
 
-// PATCH /api/parties/:id/deactivate — OWNER only (👑). Party has no POST/GET endpoint yet
-// (out of scope for this task — only deactivate/reactivate were asked for), so there's no
-// existing creation gate to mirror the way Factory/Product/Color/Location's deactivate
-// endpoints do; OWNER-only was chosen deliberately for a customer/shop-relationship record,
-// treating it like Location rather than the more casual Color/Factory lookup lists. Soft-
-// deactivate only, NEVER hard-delete — Transaction/PartyStockReturn rows reference partyId and
-// must stay resolvable forever, same principle as User.isActive. Idempotent: deactivating an
+// GET /api/parties — any authenticated role (🔒), matching Location/Factory/Color's own GET
+// gating. No isActive filtering here — same convention as every other archived entity: the
+// response always includes isActive, and hiding archived records from daily pickers is a
+// frontend concern, not a server-side one. This keeps "hidden from pickers" and "fully
+// accessible when needed" (rule 85) both true from one unfiltered endpoint.
+async function listParties(req, res) {
+  const parties = await prisma.party.findMany({ select: SELECT });
+  res.json(parties);
+}
+
+// POST /api/parties — OWNER only (👑), per an explicit decision made when this task was scoped:
+// unlike Factory/Color/Category (open to any role), Party is treated like Location — a
+// customer/shop-relationship record, not a casual lookup list. Case-insensitive uniqueness on
+// name mirrors Color/Category/Location's own pattern (pre-check + P2002 catch as backup for the
+// exact-case race the pre-check alone can't fully close).
+//
+// One real gap, worth flagging rather than quietly matching in name only: Color.name and the
+// newer Factory.name both carry a DB-level `@unique` index, so their P2002 catch is a genuine
+// backstop. Party.name has NO such index in schema.prisma — nothing currently in this codebase
+// enforces it below the application layer. The P2002 catch below is kept anyway (harmless, and
+// it starts doing real work the moment a unique index is added), but as of this task the
+// pre-check is the only defense that actually exists; two POSTs for the same name landing in
+// the same race window could both succeed. Not fixed here — adding a DB constraint is a schema
+// migration, outside this task's scope of "build the endpoints."
+async function createParty(req, res) {
+  const { name, shopName, location, address, contact, gstNo } = req.body;
+  if (!name || !name.trim()) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name is required');
+  }
+  const trimmed = name.trim();
+
+  const existing = await prisma.party.findFirst({
+    where: { name: { equals: trimmed, mode: 'insensitive' } },
+  });
+  if (existing) {
+    return sendError(res, 409, 'DUPLICATE_PARTY', `Party "${existing.name}" already exists`);
+  }
+
+  try {
+    const party = await prisma.party.create({
+      data: {
+        name: trimmed,
+        shopName: shopName?.trim() || null,
+        location: location?.trim() || null,
+        address: address?.trim() || null,
+        contact: contact?.trim() || null,
+        gstNo: gstNo?.trim() || null,
+      },
+      select: SELECT,
+    });
+    res.status(201).json(party);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_PARTY', `Party "${trimmed}" already exists`);
+    }
+    throw err;
+  }
+}
+
+// PATCH /api/parties/:id/deactivate — OWNER only (👑), matching createParty's own gating.
+// Soft-deactivate only, NEVER hard-delete — Transaction/PartyStockReturn rows reference partyId
+// and must stay resolvable forever, same principle as User.isActive. Idempotent: deactivating an
 // already-inactive party just re-confirms the state, not an error. No lockout-prevention guard
 // (unlike userController's deactivateUser) — that pair exists specifically because the system
 // must never reach zero active OWNER accounts; a Party has no equivalent structural risk.
@@ -52,4 +107,4 @@ async function reactivateParty(req, res) {
   res.json(party);
 }
 
-module.exports = { deactivateParty, reactivateParty };
+module.exports = { listParties, createParty, deactivateParty, reactivateParty };

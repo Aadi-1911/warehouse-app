@@ -149,9 +149,15 @@ Response: `[{ id, name, bundleId }]`
 
 ---
 
-## Parties 👑
+## Parties 🔒
 
-No `GET`/`POST` endpoint exists yet — Party has no create/list surface (out of scope for the task that added these two; Phase 1's minimal Party model exists in the schema for Transaction/PartyStockReturn's `partyId` relations, but nothing currently creates one through the API).
+### `GET /api/parties` 🔒
+Response: `[{ id, name, shopName, location, address, contact, gstNo, isActive }]`
+
+### `POST /api/parties` 👑
+Body: `{ name, shopName?, location?, address?, contact?, gstNo? }`
+`name` required, rest optional per the schema's minimal Phase 1 Party form. Owner-only — unlike Factory/Color/Category (open to any role), Party is treated like Location, a customer/shop-relationship record rather than a casual lookup list.
+Validation: `name` must be unique (case-insensitive, same pattern as Color/Category/Location) — return `409` on conflict, not a generic error. **Note:** unlike Color/Factory, `Party.name` has no DB-level unique index yet, so this is an application-level check only — a real (if narrow) race window exists until a schema migration adds one.
 
 ### `PATCH /api/parties/:id/deactivate` 👑
 Sets `isActive: false`. **Never hard-delete a Party** — Transaction/PartyStockReturn rows reference `partyId` and must stay resolvable forever, same audit-trail principle as `User.isActive`. Owner-only — Party has no existing creation endpoint to mirror gating from, so this was decided independently, treating a customer/shop-relationship record like Location rather than the more casual Color/Factory lookup lists. Idempotent. **No lockout-prevention guard** — no equivalent risk to Users' last-active-owner case.
