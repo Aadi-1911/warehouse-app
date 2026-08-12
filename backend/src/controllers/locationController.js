@@ -3,7 +3,7 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-const SELECT = { id: true, name: true };
+const SELECT = { id: true, name: true, isActive: true };
 
 // GET /api/locations — any authenticated role (🔒)
 async function listLocations(req, res) {
@@ -40,4 +40,37 @@ async function createLocation(req, res) {
   }
 }
 
-module.exports = { listLocations, createLocation };
+// PATCH /api/locations/:id/deactivate — OWNER only (👑), matching createLocation's own gating
+// (unlike Factory/Color/Product, Location creation is already OWNER-restricted, so deactivate
+// stays consistent with that rather than opening up to any role). Soft-deactivate only, NEVER
+// hard-delete — Stock/Transaction rows reference locationId and must stay resolvable forever,
+// same principle as User.isActive. Idempotent: deactivating an already-inactive location just
+// re-confirms the state, not an error. No lockout-prevention guard (unlike userController's
+// deactivateUser) — that pair exists specifically because the system must never reach zero
+// active OWNER accounts; a Location has no equivalent structural risk.
+async function deactivateLocation(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.location.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${id}`);
+  }
+
+  const location = await prisma.location.update({ where: { id }, data: { isActive: false }, select: SELECT });
+  res.json(location);
+}
+
+// PATCH /api/locations/:id/reactivate — OWNER only (👑). Reverses a deactivation.
+async function reactivateLocation(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.location.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${id}`);
+  }
+
+  const location = await prisma.location.update({ where: { id }, data: { isActive: true }, select: SELECT });
+  res.json(location);
+}
+
+module.exports = { listLocations, createLocation, deactivateLocation, reactivateLocation };

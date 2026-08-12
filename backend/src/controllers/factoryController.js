@@ -3,7 +3,21 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-const SELECT = { id: true, name: true, contact: true };
+const SELECT = { id: true, name: true, contact: true, gstNo: true, isActive: true };
+
+// Mirrors the frontend's KIDS_PIECES_BY_LABEL (ReceiveStock.jsx) exactly — a Kids article
+// stores exactly ONE ProductSize row (the chosen category), so its piece count is a fixed
+// lookup, never sizes.length. Duplicated here (not imported) because frontend and backend are
+// separate codebases with no shared-constants package; if the three categories ever change,
+// both copies need updating together.
+const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
+
+function piecesPerSetFor(product) {
+  if (product.isKids) {
+    return KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0;
+  }
+  return product.sizes.length;
+}
 
 // GET /api/factories — any authenticated role (🔒)
 async function listFactories(req, res) {
@@ -12,19 +26,181 @@ async function listFactories(req, res) {
 }
 
 // POST /api/factories — any authenticated role (🔒) — Factories grow via normal usage,
-// no OWNER gate. No uniqueness rule for Factory name either in the spec or the schema
-// (unlike Color/Location) — two factories legitimately could share a display name.
+// no OWNER gate. Factory.name is now unique (03_DATABASE_SCHEMA.md audit, 2026-08-07) — same
+// case-insensitive pre-check + P2002 backup pattern already used by Color/Location, for the
+// same "Navy" vs "navy" race the pre-check alone can't fully close.
 async function createFactory(req, res) {
-  const { name, contact } = req.body;
+  const { name, contact, gstNo } = req.body;
   if (!name || !name.trim()) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'name is required');
   }
+  const trimmed = name.trim();
 
-  const factory = await prisma.factory.create({
-    data: { name: name.trim(), contact: contact || null },
-    select: SELECT,
+  const existing = await prisma.factory.findFirst({
+    where: { name: { equals: trimmed, mode: 'insensitive' } },
   });
-  res.status(201).json(factory);
+  if (existing) {
+    return sendError(res, 409, 'DUPLICATE_FACTORY', `Factory "${existing.name}" already exists`);
+  }
+
+  try {
+    const factory = await prisma.factory.create({
+      data: { name: trimmed, contact: contact || null, gstNo: gstNo || null },
+      select: SELECT,
+    });
+    res.status(201).json(factory);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_FACTORY', `Factory "${trimmed}" already exists`);
+    }
+    throw err;
+  }
 }
 
-module.exports = { listFactories, createFactory };
+// PATCH /api/factories/:id — OWNER only (👑), no PIN — editing factory details (especially
+// GST) is administrative, not the pricing-adjacent action the PIN gate exists to protect.
+async function updateFactory(req, res) {
+  const { id } = req.params;
+  const body = req.body;
+
+  const data = {};
+  if ('name' in body) data.name = body.name;
+  if ('contact' in body) data.contact = body.contact;
+  if ('gstNo' in body) data.gstNo = body.gstNo;
+
+  if (Object.keys(data).length === 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'No editable fields provided');
+  }
+  if ('name' in data && (!data.name || !data.name.trim())) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+  }
+
+  const existing = await prisma.factory.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'FACTORY_NOT_FOUND', `No factory with id ${id}`);
+  }
+
+  if ('name' in data) {
+    data.name = data.name.trim();
+    const nameClash = await prisma.factory.findFirst({
+      where: { name: { equals: data.name, mode: 'insensitive' }, id: { not: id } },
+    });
+    if (nameClash) {
+      return sendError(res, 409, 'DUPLICATE_FACTORY', `Factory "${nameClash.name}" already exists`);
+    }
+  }
+
+  try {
+    const updated = await prisma.factory.update({ where: { id }, data, select: SELECT });
+    res.json(updated);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_FACTORY', `Factory "${data.name}" already exists`);
+    }
+    throw err;
+  }
+}
+
+// PATCH /api/factories/:id/deactivate — any authenticated role (🔒), matching createFactory's
+// own gating — deactivate/reactivate is a distinct action from editing GST/contact details
+// (which stays OWNER-only via updateFactory above), not a subset of it. Soft-deactivate only,
+// NEVER hard-delete — Product/Transaction history traces back through factoryId and must stay
+// resolvable forever, same principle as User.isActive. Idempotent: deactivating an
+// already-inactive factory just re-confirms the state, not an error. Unlike userController's
+// deactivateUser, there is no lockout-prevention guard here — that pair existed specifically
+// because the system must never reach zero active OWNER accounts; a Factory has no equivalent
+// structural risk (an inactive Factory just means "hidden from daily pickers," nothing breaks).
+async function deactivateFactory(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.factory.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'FACTORY_NOT_FOUND', `No factory with id ${id}`);
+  }
+
+  const factory = await prisma.factory.update({ where: { id }, data: { isActive: false }, select: SELECT });
+  res.json(factory);
+}
+
+// PATCH /api/factories/:id/reactivate — any authenticated role (🔒). Reverses a deactivation.
+async function reactivateFactory(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.factory.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'FACTORY_NOT_FOUND', `No factory with id ${id}`);
+  }
+
+  const factory = await prisma.factory.update({ where: { id }, data: { isActive: true }, select: SELECT });
+  res.json(factory);
+}
+
+// GET /api/factories/:id/payable — OWNER only (👑). Computed, not stored: SUM(STOCK_IN
+// qtySets × piecesPerSet × costPriceSnapshot) minus SUM(FactoryPayment.amount), both scoped to
+// this Factory. costPriceSnapshot (not a live join to Product.costPrice) is what makes this
+// number stable against a later price change — see createTransaction for where it's captured.
+async function getFactoryPayable(req, res) {
+  const { id } = req.params;
+
+  const factory = await prisma.factory.findUnique({ where: { id } });
+  if (!factory) {
+    return sendError(res, 404, 'FACTORY_NOT_FOUND', `No factory with id ${id}`);
+  }
+
+  const stockInTransactions = await prisma.transaction.findMany({
+    where: {
+      type: 'STOCK_IN',
+      stock: { bundle: { product: { factoryId: id } } },
+    },
+    select: {
+      qtySets: true,
+      costPriceSnapshot: true,
+      stock: {
+        select: {
+          bundle: {
+            select: {
+              product: {
+                select: { isKids: true, sizes: { select: { sizeLabel: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // A snapshot of null (the article was still pending-price at the moment it was received)
+  // contributes 0 forever — correct, not a bug: this transaction genuinely had no recorded
+  // cost at receiving time, and a price set weeks later shouldn't retroactively invent one.
+  const totalOwed = stockInTransactions.reduce((sum, t) => {
+    const piecesPerSet = piecesPerSetFor(t.stock.bundle.product);
+    const price = t.costPriceSnapshot != null ? Number(t.costPriceSnapshot) : 0;
+    return sum + t.qtySets * piecesPerSet * price;
+  }, 0);
+
+  const payments = await prisma.factoryPayment.findMany({
+    where: { factoryId: id },
+    select: { id: true, amount: true, date: true, note: true },
+    orderBy: { date: 'desc' },
+  });
+
+  const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+
+  res.json({
+    factoryId: id,
+    totalOwed,
+    totalPaid,
+    amountPayable: totalOwed - totalPaid,
+    payments,
+  });
+}
+
+module.exports = {
+  listFactories,
+  createFactory,
+  updateFactory,
+  deactivateFactory,
+  reactivateFactory,
+  getFactoryPayable,
+  piecesPerSetFor,
+};

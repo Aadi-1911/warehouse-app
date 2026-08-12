@@ -3,7 +3,7 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-const SELECT = { id: true, name: true };
+const SELECT = { id: true, name: true, isActive: true };
 
 // GET /api/colors — any authenticated role (🔒)
 async function listColors(req, res) {
@@ -41,4 +41,35 @@ async function createColor(req, res) {
   }
 }
 
-module.exports = { listColors, createColor };
+// PATCH /api/colors/:id/deactivate — any authenticated role (🔒), matching createColor's own
+// gating. Soft-deactivate only, NEVER hard-delete — Bundle rows reference colorId and must stay
+// resolvable forever, same principle as User.isActive. Idempotent: deactivating an
+// already-inactive color just re-confirms the state, not an error. No lockout-prevention guard
+// (unlike userController's deactivateUser) — that pair exists specifically because the system
+// must never reach zero active OWNER accounts; a Color has no equivalent structural risk.
+async function deactivateColor(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.color.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'COLOR_NOT_FOUND', `No color with id ${id}`);
+  }
+
+  const color = await prisma.color.update({ where: { id }, data: { isActive: false }, select: SELECT });
+  res.json(color);
+}
+
+// PATCH /api/colors/:id/reactivate — any authenticated role (🔒). Reverses a deactivation.
+async function reactivateColor(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.color.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'COLOR_NOT_FOUND', `No color with id ${id}`);
+  }
+
+  const color = await prisma.color.update({ where: { id }, data: { isActive: true }, select: SELECT });
+  res.json(color);
+}
+
+module.exports = { listColors, createColor, deactivateColor, reactivateColor };

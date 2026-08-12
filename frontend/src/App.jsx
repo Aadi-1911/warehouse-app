@@ -1,1 +1,76 @@
-// Root React component — routes between pages once React Router is added.
+// Root React component — owns the route table for the whole app.
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './hooks/useAuth';
+import ProtectedRoute from './components/ProtectedRoute';
+import Login from './pages/Login';
+import Home from './pages/Home';
+import ReceiveStock from './pages/ReceiveStock';
+import LiveStock from './pages/LiveStock';
+import Transfer from './pages/Transfer';
+import ManageUsers from './pages/ManageUsers';
+import SetPin from './pages/SetPin';
+
+export default function App() {
+  return (
+    // AuthProvider sits *inside* BrowserRouter so anything it renders can still use router
+    // hooks, and *outside* Routes so the session survives navigation between pages rather
+    // than being torn down and re-fetched on every route change.
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Home />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/receive"
+            element={
+              <ProtectedRoute>
+                <ReceiveStock />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/live-stock"
+            element={
+              <ProtectedRoute>
+                <LiveStock />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/transfer"
+            element={
+              <ProtectedRoute>
+                <Transfer />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <ManageUsers />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/set-pin"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <SetPin />
+              </ProtectedRoute>
+            }
+          />
+          {/* Unknown URLs fall back home rather than rendering a blank screen. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

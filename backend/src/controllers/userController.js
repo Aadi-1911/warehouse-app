@@ -1,12 +1,14 @@
 const bcrypt = require('bcrypt');
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { verifyPin } = require('../middleware/requirePin');
 
 const prisma = new PrismaClient();
 
-const SELECT = { id: true, name: true, username: true, role: true };
+const SELECT = { id: true, name: true, username: true, role: true, isActive: true, isPrimaryOwner: true };
 const VALID_ROLES = ['OWNER', 'STAFF'];
 const SALT_ROUNDS = 10; // matches seed.js — same hashing strength for every password in this app
+const PIN_SALT_ROUNDS = 10; // matches seed.js's PIN hash and every other PIN hash in this app
 
 // GET /api/users — OWNER only (👑). passwordHash/priceEditPinHash are never SELECTed — same
 // pattern as costPrice's OWNER-only visibility in productController.js: the fields don't exist
@@ -16,7 +18,13 @@ async function listUsers(req, res) {
   res.json(users);
 }
 
-// POST /api/users — OWNER only (👑)
+// POST /api/users — OWNER only (👑). Creating a STAFF or non-primary OWNER account is open to
+// any OWNER; creating an OWNER account specifically requires isPrimaryOwner (rule 74) — checked
+// against req.user.isPrimaryOwner, which auth.js re-derives fresh from the DB on this same
+// request, never trusted from the JWT. New accounts always start with priceEditPinHash: null
+// and isPrimaryOwner: false — neither is ever set here, both are left to the schema's defaults,
+// since a PIN is exclusively self-service (rule 73) and primary-owner status is exclusively
+// the one originally-seeded account (seed.js), never something granted via this endpoint.
 async function createUser(req, res) {
   const { name, username, password, role } = req.body;
 
@@ -25,6 +33,9 @@ async function createUser(req, res) {
   }
   if (!VALID_ROLES.includes(role)) {
     return sendError(res, 400, 'VALIDATION_ERROR', `role must be one of: ${VALID_ROLES.join(', ')}`);
+  }
+  if (role === 'OWNER' && !req.user.isPrimaryOwner) {
+    return sendError(res, 403, 'FORBIDDEN_ROLE', 'Only the primary owner can create additional OWNER accounts');
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -43,4 +54,95 @@ async function createUser(req, res) {
   }
 }
 
-module.exports = { listUsers, createUser };
+// PATCH /api/users/:id/deactivate — OWNER only (👑), no PIN. Soft-deactivate only — never
+// hard-delete (rule 75) — Transaction rows reference userId and must stay resolvable forever.
+// Idempotent: deactivating an already-inactive user just re-confirms the state, not an error.
+//
+// Two guards close a real total-lockout risk (04_API_SPEC.md): self-deactivation is always
+// rejected, and the last active OWNER can never be deactivated through this endpoint. Checked
+// in this order deliberately — under this route's own auth model (OWNER-only, and requireAuth
+// already rejects inactive users), whoever is making this request IS necessarily a currently
+// active OWNER. So if the target is the sole remaining active owner, the requester — who must
+// also be an active owner to have reached this route at all — is necessarily that same
+// person: the self-check alone already covers every single-request "sole owner" scenario, and
+// is checked first for exactly that reason. The last-owner count check still runs
+// independently afterward, both because the literal spec asks for it as its own guard and
+// because it's the one that would matter if two different owners raced to deactivate two
+// different owners at the same instant — a real gap this simple count check does not close
+// (that would need row-level locking, not attempted here given how rare and low-stakes that
+// race is for a low-frequency, owner-only admin action).
+async function deactivateUser(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.user.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'USER_NOT_FOUND', `No user with id ${id}`);
+  }
+
+  if (id === req.user.id) {
+    return sendError(res, 403, 'CANNOT_DEACTIVATE_SELF', 'You cannot deactivate your own account');
+  }
+
+  if (existing.role === 'OWNER' && existing.isActive) {
+    const activeOwnerCount = await prisma.user.count({ where: { role: 'OWNER', isActive: true } });
+    if (activeOwnerCount <= 1) {
+      return sendError(
+        res,
+        403,
+        'LAST_ACTIVE_OWNER',
+        'Cannot deactivate the last remaining active OWNER account'
+      );
+    }
+  }
+
+  const user = await prisma.user.update({ where: { id }, data: { isActive: false }, select: SELECT });
+  res.json(user);
+}
+
+// PATCH /api/users/:id/reactivate — OWNER only (👑), no PIN. Reverses a deactivation.
+async function reactivateUser(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.user.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'USER_NOT_FOUND', `No user with id ${id}`);
+  }
+
+  const user = await prisma.user.update({ where: { id }, data: { isActive: true }, select: SELECT });
+  res.json(user);
+}
+
+// PATCH /api/users/me/pin — OWNER only (route-gated). The ONLY way a PIN is ever set (rule 73)
+// — never by whoever created the account. First-time setup (priceEditPinHash currently null)
+// needs no currentPin, since there's no existing PIN to prove knowledge of. Once a PIN exists,
+// changing it reuses verifyPin — the exact same lockout counters as the price-edit PIN gate,
+// since it's the same secret and the same brute-force risk (see requirePin.js).
+async function updateOwnPin(req, res) {
+  const { newPin, currentPin } = req.body;
+
+  if (!newPin) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'newPin is required');
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user) {
+    return sendError(res, 401, 'USER_NOT_FOUND', 'User no longer exists');
+  }
+
+  if (user.priceEditPinHash) {
+    const result = await verifyPin(req.user.id, currentPin);
+    if (!result.ok) {
+      return sendError(res, result.status, result.code, result.message, result.extra || {});
+    }
+  }
+
+  const priceEditPinHash = await bcrypt.hash(newPin, PIN_SALT_ROUNDS);
+  await prisma.user.update({
+    where: { id: req.user.id },
+    data: { priceEditPinHash, failedPinAttempts: 0, pinLockedUntil: null },
+  });
+
+  res.json({ message: 'PIN updated successfully' });
+}
+
+module.exports = { listUsers, createUser, deactivateUser, reactivateUser, updateOwnPin };

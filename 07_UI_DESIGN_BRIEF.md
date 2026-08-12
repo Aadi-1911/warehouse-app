@@ -14,7 +14,7 @@ A wholesale garment business sources garments from factories and distributes the
 | Role | Device | Access |
 |---|---|---|
 | **Staff** | **Phone only** | Logs stock movements, receives shipments, takes orders. Never sees cost price. |
-| **Owner** | **PC only** (not shown in this screen set) | Full access, pricing, approvals. |
+| **Owner** | **Both PC and phone** | Full access, pricing, approvals. Owner screens must work on mobile too, not assume desktop-only. |
 
 **All screens in this brief are for the Staff role, mobile-first.** Design for one-handed thumb use: large tap targets (minimum ~40px), minimal free-text typing, dropdowns/chips/steppers preferred over keyboard input wherever the underlying data is structured.
 
@@ -69,7 +69,7 @@ A component's background/border/text should always share the same role tint toge
 ### 5.1 Home
 - Header: app icon mark + "Warehouse" / greeting with staff name.
 - 2×2 grid of large square tiles: Receive Stock (green), New Order (purple), Pack Order (amber), Live Stock (blue) — each with an icon and label, tinted by its role color.
-- Bottom note: small muted banner stating pricing/article setup is owner-only and hidden from this account.
+- Bottom note (**STAFF role only** — showing this to OWNER would be false, since pricing is their screen, not hidden from them): small muted banner stating pricing/article setup is owner-only and hidden from this account.
 
 ### 5.2 Receive Stock
 - Header (green-tinted icon: delivery truck).
@@ -152,7 +152,7 @@ A component's background/border/text should always share the same role tint toge
 ### 5.2 Receive Stock — updated
 - Rename the lookup button from "Check" to **"Add"** (two-step flow unchanged: Add to look up, then Add to receipt to commit).
 - Article lookup must always offer a **"Change"** action to re-search — never leave a dead-end disabled input after a wrong/failed search.
-- New articles: no sizes pre-selected. Show Common row (M/L/XL/XXL) + Extended row (3XL–6XL, always visible) + a "+ add other size" option for S. A **Kids toggle** swaps the whole size section to age-bracket chips instead. Show a live "= N pieces per set" readout that updates as sizes/brackets are selected.
+- New articles: no sizes pre-selected. Show Common row (M/L/XL/XXL) + Extended row (3XL–6XL, always visible) + a "+ add other size" option for S. A **Kids toggle** swaps the whole size section to three fixed, single-select categories instead — 1–5yr (5pc), 6–16yr (6pc), 12–18yr (4pc) — displayed like a set of options where only one can be active at a time, not multi-select chips. For adult sizing, show a live "= N pieces per set" readout that updates as sizes are selected (counting-based). For Kids, the piece count is fixed the moment a category is chosen — no live counting needed, just display that category's set piece count directly.
 - **Multiple colours of the same article are staged together** (tick colour, set quantity, repeat) and committed as one group — never single-colour-at-a-time entries.
 - Each finalized article entry **snapshots its own Factory, Location, and price** at that moment — not read live from the session-level dropdowns later.
 - Add a **"Damaged on arrival"** flag option per item being added.
@@ -190,6 +190,37 @@ A component's background/border/text should always share the same role tint toge
 - **Pack Order card states**: three distinct visual states per line — a check icon (fully packed, neutral card), a warning triangle (short-packed, card gets a warning tint), and a dashed circle (not started, neutral card). Once an order moves past "Placed," packing quantities become read-only/frozen — don't allow edits to a line after packing is locked in.
 - **Low Stock screen has no severity tiers** — a row at 0 sets looks the same as a row at 2 sets, both simply flagged. Don't invent extra visual urgency levels beyond the single ≤2 threshold; it adds complexity without real decision value at this scale. Empty state: a single centered muted line ("Nothing is low on stock right now"), no factory headers shown.
 - **Correction reason chips**: when editing a History entry, require picking a reason from a fixed set (Miscount, Wrong colour, Wrong customer, Other) before the correction can be confirmed — a single-select chip row, not free text as the primary input (though "Other" can allow a short free-text note).
+
+## 8. Owner Desktop Dashboard (Phase 2 — documented now, NOT built yet)
+
+**Scope note:** depends on Orders existing (Phase 2). This is documented now so it's designed once, correctly, rather than built ad hoc later — but nothing here gets implemented while Phase 1 frontend work is still in progress. It's a desktop-optimized *additional* experience for owner, supplementing — not replacing — the mobile-usable baseline required by rule 15 (owner also checks the app from a phone; this dashboard is for when they're actually at their PC).
+
+### Layout shell
+Fixed 240px dark sidebar (logo tile, "Garment Manager"/"Owner" label, nav: Overview/Orders/Low Stock/History, active-row highlight, owner avatar+name pinned to bottom) + main content area, 100vh, only the content pane scrolls. 64px top bar (page title left, today's date right). Same design tokens as the rest of the app (§3.4) — same canvas color, same semantic role colors, no new palette.
+
+### Overview (default landing)
+- **KPI row**, 6 cards: Stock value (blue, computed from `costPrice` — inventory cost basis), Sets in stock (neutral), Pieces in stock (neutral), Open orders — Placed+Packed count (purple), Low stock lines — count of stock rows ≤2 sets (red), Revenue from Billed+Shipped orders (green, computed from `sellingPrice` — deliberately a different field than Stock Value, since one is cost and one is what the business actually collects).
+- **Widget grid**, independently resizable cards (`resize: both`, each with a sane min-width/height so nothing collapses unusably small):
+  - **Stock & Pricing** (largest) — searchable, grouped by article. **Corrected from the original spec: exposes both `costPrice` and `sellingPrice`, not a single price field**, consistent with the two-field pricing model used everywhere else. Each is a click-to-edit control — "Set price" in amber if pending. **Corrected: committing an edit requires a lightweight inline PIN prompt right at the point of edit — not the heavy Cancel/Confirm modal used elsewhere, but not skippable either.** Rows below each article header show (color, location, sets), tinted red at ≤2 sets.
+  - **Orders** — one card per order: party, status badge (Placed/Packed/Billed/Shipped, same color coding as everywhere else), line count, value. "Mark billed" button appears only on `packed` orders.
+  - **Order value by article** — horizontal bar chart, descending by total order value; unpriced articles show "— price not set" instead of a bar.
+  - **Low stock** — compact ≤2-sets list, capped short, full detail lives on the Low Stock page.
+  - **Recent activity** — latest 5 History entries, "View all" links to History.
+
+### Orders page
+Accordion, one row per order (party, status, line/value summary). Expanded: one line per article/color (ordered vs. packed once applicable) + line value. "Mark billed" only on `packed` orders, **through the standard confirm modal** (this one — unlike price edits — is a real inventory/business-state change, so it keeps the heavy confirm pattern). Writes a History entry authored as the owner.
+
+### Low Stock page
+Full, untruncated version of the Overview widget — same red theme, same ≤2 threshold, same "Nothing is low on stock right now" empty state as the staff-facing Low Stock screen (§5.7) — one shared rule, two surfaces.
+
+### History page
+Same shared, append-only log the staff app writes to. **Read-only for owner — no correction/edit affordance on this surface**, even though staff's History screen has one. Owner actions (marking billed) write into this same log, authored as the owner.
+
+### Rules carried over unchanged from the staff app (do not deviate)
+- `(no, factory)` is still the true article identity — never assume article number alone is unique, same as everywhere else.
+- Confirm-modal → toast pattern for every state-changing action **except price edits**, which are the one deliberate exception (lightweight PIN prompt instead, per the correction above).
+- Owner does not pack or ship — those stay staff-only (rule 63). Owner's only status transition is packed→billed.
+- All monetary values are computed (`sets × piecesPerSet × price`), never hand-entered, except the price field itself.
 
 ## 6. What NOT to Do
 

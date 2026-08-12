@@ -35,7 +35,7 @@ Phase 1 solves problems 1–3. Problem 4 is Phase 4.
 
 | Role | Who | Device | Access |
 |---|---|---|---|
-| **OWNER** | Business owner (one person) | **PC only** | Full access. Only role that can ever see `cost_price`. Editing `cost_price` or `selling_price` additionally requires a PIN confirmation (see Section 9, Non-Functional Requirements). |
+| **OWNER** | Business owner (one person) | **Both PC and phone** | Full access. Only role that can ever see `cost_price`. Editing `cost_price` or `selling_price` additionally requires a PIN confirmation (see Section 9, Non-Functional Requirements). |
 | **STAFF** | Warehouse/sales staff (starts at 1, may grow) | **Phone only** | Can log stock in/out. Can view `selling_price` but never `cost_price`. Cannot edit prices under any circumstance, regardless of PIN. |
 
 Staff are not highly technical — UI must favor taps/dropdowns over free-text entry, and UI-facing labels must use plain language, not schema terminology (see Section 8, Glossary).
@@ -92,6 +92,7 @@ This is a real usage gate, not a feature-completeness gate. A feature-complete b
 ### 5.9 Screens (Phase 1)
 1. **Add Stock Entry** — the single most-used screen. Must work smoothly for non-technical staff on a phone: select Product → select Color (filtered to valid Bundles only) → select Location → enter quantity (sets) → select movement type → submit. Minimal typing, dropdowns/taps preferred.
 2. **Live Stock View** — searchable/filterable dashboard by article, color, location. Shows current stock levels. Owner sees cost price context where relevant; staff do not.
+3. **Manage Users** (owner-only, low-frequency use) — full scope: a list of existing accounts (name, username, role, active status), a "create new" action (Name, Username, Password, Role — with a brief description of what each role grants, and the OWNER option hidden entirely for a non-primary-owner creator), and a deactivate/reactivate toggle per account (never a hard delete — see rule 75). A newly created owner account has no PIN yet; setting it is a separate self-service action the new owner does themselves, not part of this screen. This was missing from the original screen list despite the backend supporting account creation since early in Phase 1 — added because there was no way for the owner to onboard real staff without manually crafting an API request, which blocks the actual Phase 1 usage gate.
 
 ### 5.10 Stretch (only if time allows within Phase 1, not required)
 - Low-stock flag/alert: ≤2 sets remaining triggers a small red badge (never a fully-tinted card/row — keep it subtle, not alarming). This threshold is used consistently everywhere stock is shown, including future Live Stock, Pack Order, and New Order screens.
@@ -114,7 +115,7 @@ Full detail for all of these lives in `05_BUSINESS_RULES.md` and should inform P
 ## 7. Non-Functional Requirements
 
 - **Platform:** Responsive website, installable as a PWA — not a native app. See `02_ARCHITECTURE.md` for reasoning.
-- **Device split:** Staff-facing screens must be mobile-first (large tap targets, minimal typing, one-handed usable). Owner-facing screens can assume desktop screen real estate.
+- **Device split:** All screens must work acceptably on mobile — large tap targets, minimal typing, one-handed usable. Owner-facing screens (pricing, corrections) can take advantage of extra desktop space when available, but must never assume desktop-only, since owner also checks the app from a phone.
 - **Authorization:** All access control (role checks, PIN checks) must be enforced **server-side**. UI-level hiding alone is not acceptable — this applies especially to `cost_price` visibility and editing.
 - **Auditability:** Every stock quantity must be traceable to a logged Transaction. No floating, manually-editable numbers.
 - **Scale:** Design for correctness and usability, not throughput. 2–5 users, weekly-cadence usage. Do not over-engineer for concurrency, high availability, or large data volume.

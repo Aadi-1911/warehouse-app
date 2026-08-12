@@ -11,7 +11,14 @@ function productSelect(role) {
     id: true,
     articleNo: true,
     factoryId: true,
-    category: true,
+    name: true,
+    // Round 12: category is now a relation, not a scalar string. `select: { category: true }`
+    // would pull every scalar field of the linked row (id, name, isActive) — narrowed to just
+    // id/name since isActive isn't meaningful on an already-resolved reference.
+    categoryId: true,
+    category: { select: { id: true, name: true } },
+    isKids: true,
+    isActive: true,
     sellingPrice: true,
     ...(role === 'OWNER' ? { costPrice: true } : {}),
     sizes: {
@@ -53,13 +60,37 @@ async function getProduct(req, res) {
   res.json(product);
 }
 
-// POST /api/products — OWNER only (👑), no PIN — creating a new article isn't editing an
-// existing price, so §4.3's PIN gate doesn't apply here (only PATCH triggers it).
+// Receive Stock's New-article form now always sends a real categoryId (required field, backed
+// by GET /api/categories) — this fallback is no longer the primary mechanism it was when it was
+// first added, just a defensive backend safety net for any caller that omits it (a future
+// integration, a direct API call, a raw script). Looked up by name rather than hardcoding the
+// seeded id, since nothing guarantees a fixed id across environments beyond what the migration
+// seeded on this one.
+async function getDefaultCategoryId() {
+  const fallback = await prisma.category.findFirst({ where: { name: 'Others' } });
+  if (!fallback) {
+    // Should be unreachable — "Others" is seeded by the migration itself — but failing loudly
+    // here is much clearer than letting a missing categoryId reach Prisma as undefined and
+    // produce the same raw "Argument categoryId is missing" crash this fallback exists to avoid.
+    throw new Error('Default "Others" Category not found — was the Round 12 migration seed data removed?');
+  }
+  return fallback.id;
+}
+
+// POST /api/products — any authenticated role (🔒) when creating with no price fields, which
+// lands the article in the nullable "pending price" state. The moment the body sets
+// costPrice/sellingPrice, the route's requireOwnerPinForPriceFields middleware (routes/
+// products.js) has already enforced the exact same OWNER+PIN gate PATCH uses — the rule is
+// never "creating vs. editing," it's "does this request set a real price." By the time this
+// function runs, that check has already passed if it was going to be needed at all.
 async function createProduct(req, res) {
-  const { articleNo, factoryId, category, costPrice, sellingPrice, sizes } = req.body;
+  const { articleNo, factoryId, name, categoryId, isKids, costPrice, sellingPrice, sizes } = req.body;
 
   if (!articleNo || !factoryId) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'articleNo and factoryId are required');
+  }
+  if (!name || !name.trim()) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name is required');
   }
   if (!Array.isArray(sizes) || sizes.length === 0) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'sizes must be a non-empty array');
@@ -71,20 +102,34 @@ async function createProduct(req, res) {
   }
 
   try {
+    const resolvedCategoryId = categoryId || (await getDefaultCategoryId());
     const product = await prisma.product.create({
       data: {
         articleNo,
         factoryId,
-        category,
+        name: name.trim(),
+        categoryId: resolvedCategoryId,
+        isKids: !!isKids,
         costPrice,
         sellingPrice,
         sizes: { create: sizes.map((s) => ({ sizeLabel: s.sizeLabel, sortOrder: s.sortOrder ?? 0 })) },
       },
-      select: productSelect('OWNER'), // requireRole('OWNER') already gated this route
+      // Structurally the same "select, don't strip" guarantee as every other Product read —
+      // now that STAFF can hit this route too, hardcoding 'OWNER' here would leak costPrice
+      // straight back to the STAFF request that just set it (or left it blank).
+      select: productSelect(req.user.role),
     });
     res.status(201).json(product);
   } catch (err) {
+    // Two different unique constraints can throw the identical P2002 here — (articleNo,
+    // factoryId) on Product, or the newer (productId, sizeLabel) on ProductSize, reachable if a
+    // caller bypasses the UI's chip-toggle (which can't itself select the same size twice) and
+    // posts a duplicate sizeLabel directly. meta.target names which columns were actually
+    // violated, so this never mislabels one as the other.
     if (err.code === 'P2002') {
+      if (err.meta?.target?.includes?.('sizeLabel')) {
+        return sendError(res, 409, 'DUPLICATE_SIZE', 'Each size can only be listed once for an article');
+      }
       return sendError(
         res,
         409,
@@ -93,6 +138,13 @@ async function createProduct(req, res) {
       );
     }
     if (err.code === 'P2003') {
+      // Two different foreign keys can throw the identical P2003 here — factoryId or (now)
+      // categoryId. err.meta.constraint names the actual constraint that failed (verified
+      // empirically: "Product_categoryId_fkey" on this Prisma version — NOT err.meta.field_name,
+      // which doesn't exist here despite being the name used in some Prisma docs/versions).
+      if (err.meta?.constraint?.includes?.('categoryId')) {
+        return sendError(res, 404, 'CATEGORY_NOT_FOUND', `No category with id ${categoryId}`);
+      }
       return sendError(res, 404, 'FACTORY_NOT_FOUND', `No factory with id ${factoryId}`);
     }
     throw err;
@@ -124,7 +176,50 @@ async function getValidColors(req, res) {
   res.json(response);
 }
 
-const PATCHABLE_FIELDS = ['category', 'isKids', 'costPrice', 'sellingPrice'];
+// PATCH /api/products/:id/deactivate — any authenticated role (🔒), matching createProduct's
+// own base gating (any role can create/receive against a Product with no price fields touched;
+// deactivate is likewise never a price action). Archives the WHOLE article, all its colors
+// together as one unit, per Product.isActive's own schema comment — not per-color. Soft-
+// deactivate only, NEVER hard-delete — Bundle/Transaction history traces back through
+// productId and must stay resolvable forever, same principle as User.isActive. Idempotent:
+// deactivating an already-inactive product just re-confirms the state, not an error. No
+// lockout-prevention guard (unlike userController's deactivateUser) — that pair exists
+// specifically because the system must never reach zero active OWNER accounts; a Product has
+// no equivalent structural risk.
+async function deactivateProduct(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.product.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'PRODUCT_NOT_FOUND', `No product with id ${id}`);
+  }
+
+  const product = await prisma.product.update({
+    where: { id },
+    data: { isActive: false },
+    select: productSelect(req.user.role),
+  });
+  res.json(product);
+}
+
+// PATCH /api/products/:id/reactivate — any authenticated role (🔒). Reverses a deactivation.
+async function reactivateProduct(req, res) {
+  const { id } = req.params;
+
+  const existing = await prisma.product.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'PRODUCT_NOT_FOUND', `No product with id ${id}`);
+  }
+
+  const product = await prisma.product.update({
+    where: { id },
+    data: { isActive: true },
+    select: productSelect(req.user.role),
+  });
+  res.json(product);
+}
+
+const PATCHABLE_FIELDS = ['categoryId', 'isKids', 'costPrice', 'sellingPrice'];
 
 // PATCH /api/products/:id — OWNER only always (📌); PIN additionally required when the body
 // touches costPrice/sellingPrice (enforced by the requirePinForPriceEdits middleware in the
@@ -151,19 +246,39 @@ async function updateProduct(req, res) {
   if (Object.keys(data).length === 0) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'No editable fields provided');
   }
+  // categoryId is required on Product — unlike costPrice/sellingPrice (genuinely nullable,
+  // "pending" states), there's no valid empty value to patch it to.
+  if ('categoryId' in data && !data.categoryId) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'categoryId cannot be empty');
+  }
 
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
     return sendError(res, 404, 'PRODUCT_NOT_FOUND', `No product with id ${id}`);
   }
 
-  const updated = await prisma.product.update({
-    where: { id },
-    data,
-    select: productSelect(req.user.role), // OWNER here — requireRole('OWNER') already gated this route
-  });
-
-  res.json(updated);
+  try {
+    const updated = await prisma.product.update({
+      where: { id },
+      data,
+      select: productSelect(req.user.role), // OWNER here — requireRole('OWNER') already gated this route
+    });
+    res.json(updated);
+  } catch (err) {
+    if (err.code === 'P2003') {
+      return sendError(res, 404, 'CATEGORY_NOT_FOUND', `No category with id ${data.categoryId}`);
+    }
+    throw err;
+  }
 }
 
-module.exports = { listProducts, getProduct, createProduct, updateProduct, getValidColors, productSelect };
+module.exports = {
+  listProducts,
+  getProduct,
+  createProduct,
+  updateProduct,
+  deactivateProduct,
+  reactivateProduct,
+  getValidColors,
+  productSelect,
+};

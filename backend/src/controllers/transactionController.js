@@ -3,7 +3,34 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-const VALID_TYPES = ['STOCK_IN', 'STOCK_OUT', 'SAMPLE_OUT', 'SAMPLE_RETURN'];
+// Deliberately narrower than the TransactionType enum. DEFECT_RETURN and PARTY_RETURN are
+// declared in the enum so a later phase's rows are insertable against the existing database
+// type, but neither has stock-movement semantics designed yet — accepting them here would mean
+// guessing at how they move stock. Rejecting them until they're built is the honest behaviour;
+// the alternative is an endpoint that silently applies the wrong movement to real inventory.
+//
+// TRANSFER_OUT/TRANSFER_IN are excluded for a DIFFERENT and permanent reason: they are fully
+// built, but they are only ever valid as a PAIR, created together atomically by
+// POST /api/transfers. Accepting a lone TRANSFER_OUT here would let stock leave one location
+// without ever arriving at the other — the exact invariant the Transfer model exists to
+// guarantee. These two stay rejected here even now that transfers work.
+// (SAMPLE_OUT/SAMPLE_RETURN were removed outright — 05_BUSINESS_RULES.md rule 84.)
+const VALID_TYPES = ['STOCK_IN', 'STOCK_OUT'];
+
+// Never returned by any endpoint (04_API_SPEC.md's POST/GET /api/transactions response shapes
+// both omit it) — it exists purely for the /api/factories/:id/payable aggregation to read
+// directly. Explicit select on every Transaction create/read keeps it from ever leaking out
+// through this controller regardless of role, the same "select, don't strip" guarantee used
+// for costPrice on Products.
+const TRANSACTION_RESPONSE_SELECT = {
+  id: true,
+  stockId: true,
+  userId: true,
+  type: true,
+  qtySets: true,
+  note: true,
+  createdAt: true,
+};
 
 // Maps a transaction type to (a) the Prisma update it applies and (b) the WHERE-clause guard
 // that must hold for the update to be allowed to run at all. The guard is what makes the
@@ -18,18 +45,6 @@ function buildStockUpdate(type, qtySets) {
         data: { qtySets: { decrement: qtySets } },
         guard: { qtySets: { gte: qtySets } },
         insufficientField: 'qtySets',
-      };
-    case 'SAMPLE_OUT':
-      return {
-        data: { qtySets: { decrement: qtySets }, qtyReservedForSample: { increment: qtySets } },
-        guard: { qtySets: { gte: qtySets } },
-        insufficientField: 'qtySets',
-      };
-    case 'SAMPLE_RETURN':
-      return {
-        data: { qtyReservedForSample: { decrement: qtySets }, qtySets: { increment: qtySets } },
-        guard: { qtyReservedForSample: { gte: qtySets } },
-        insufficientField: 'qtyReservedForSample',
       };
     default:
       throw new Error(`Unhandled transaction type: ${type}`);
@@ -54,7 +69,12 @@ async function createTransaction(req, res) {
 
   // Confirms the (Product, Color) pairing is real — a Bundle can only exist if it was created
   // through POST /api/bundles, which already validated both sides existed at that time.
-  const bundle = await prisma.bundle.findUnique({ where: { id: bundleId } });
+  // product.costPrice rides along so a STOCK_IN can snapshot it below — this is an internal
+  // read for that purpose only, never forwarded to the response (see TRANSACTION_RESPONSE_SELECT).
+  const bundle = await prisma.bundle.findUnique({
+    where: { id: bundleId },
+    select: { id: true, product: { select: { costPrice: true } } },
+  });
   if (!bundle) {
     return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${bundleId}`);
   }
@@ -71,7 +91,7 @@ async function createTransaction(req, res) {
       const stock = await tx.stock.upsert({
         where: { bundleId_locationId: { bundleId, locationId } },
         update: {},
-        create: { bundleId, locationId, qtySets: 0, qtyReservedForSample: 0 },
+        create: { bundleId, locationId, qtySets: 0 },
       });
 
       const { data, guard, insufficientField } = buildStockUpdate(type, qtySets);
@@ -93,8 +113,16 @@ async function createTransaction(req, res) {
       // values, not a value computed in JS from a possibly-stale earlier read.
       const updatedStock = await tx.stock.findUnique({ where: { id: stock.id } });
 
+      // Populated only for STOCK_IN, and only from the Product's costPrice AT THIS EXACT
+      // MOMENT — a later price change must never retroactively alter what this specific
+      // receipt owed the factory (verified directly in the payable calculation's own test).
+      // Null costPrice (still pending) snapshots as null, not 0 — genuinely "unknown at the
+      // time," which the payable sum treats as contributing nothing, correctly.
+      const costPriceSnapshot = type === 'STOCK_IN' ? bundle.product.costPrice : null;
+
       const transaction = await tx.transaction.create({
-        data: { stockId: stock.id, userId: req.user.id, type, qtySets, note: note || null },
+        data: { stockId: stock.id, userId: req.user.id, type, qtySets, note: note || null, costPriceSnapshot },
+        select: TRANSACTION_RESPONSE_SELECT,
       });
 
       return { transaction, updatedStock };

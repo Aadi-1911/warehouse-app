@@ -27,8 +27,10 @@ enum Role {
 enum TransactionType {
   STOCK_IN
   STOCK_OUT
-  SAMPLE_OUT
-  SAMPLE_RETURN
+  DEFECT_RETURN
+  PARTY_RETURN // whole sets returned by a Party (damage, sizing, other reason) — never partial pieces
+  TRANSFER_OUT // leg of a Transfer — decreases stock at the source location
+  TRANSFER_IN  // leg of a Transfer — increases stock at the destination location
 }
 
 model User {
@@ -37,19 +39,28 @@ model User {
   username            String   @unique
   passwordHash        String
   role                Role
-  priceEditPinHash    String?  // only ever set for the OWNER account
+  priceEditPinHash    String?  // nullable = "pending PIN" state, same pattern as pending-price. Every OWNER sets their own PIN themselves, self-service, after account creation — never set by whoever created the account.
+  failedPinAttempts   Int      @default(0) // rate-limiting for PIN attempts — was implemented but never backfilled into this doc until now
+  pinLockedUntil      DateTime? // set when failedPinAttempts hits the lockout threshold; null = not locked
+  isActive            Boolean  @default(true) // soft-deactivate only, NEVER hard-delete a User — Transaction/History rows reference userId and must stay resolvable forever. Deactivated users can't log in but their historical records stay fully intact.
+  isPrimaryOwner      Boolean  @default(false) // true only for the originally-seeded owner account. Only a primary owner can create another OWNER-role account. Regular (non-primary) owners can create STAFF accounts but not further owners.
   createdAt           DateTime @default(now())
 
   transactions        Transaction[]
+  partyStockReturns   PartyStockReturn[]
+  transfers           Transfer[]
 }
 
 model Factory {
   id        String    @id @default(cuid())
-  name      String
+  name      String    @unique
   contact   String?
+  gstNo     String?
+  isActive  Boolean   @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
   createdAt DateTime  @default(now())
 
   products  Product[]
+  payments  FactoryPayment[]
 }
 
 model Product {
@@ -57,10 +68,13 @@ model Product {
   articleNo     String
   factoryId     String
   factory       Factory       @relation(fields: [factoryId], references: [id])
-  category      String?
+  name          String        // e.g. "Round Neck Tee", "Kurta Set" — distinct from category, added here after every UI mockup assumed it existed but the original schema never included it
+  categoryId    String        // required — every article must have a category. References the growing Category list, not free text.
+  category      Category      @relation(fields: [categoryId], references: [id])
   isKids        Boolean       @default(false) // switches ProductSize vocabulary to age brackets
   costPrice     Decimal?      // nullable = "pending price" until owner sets it. OWNER visibility only, enforced at API layer.
   sellingPrice  Decimal?      // nullable = "pending price". Visible to OWNER and STAFF once set.
+  isActive      Boolean       @default(true) // archives the WHOLE article, all its colors together as one unit — not per-color. Hidden from daily pickers, fully accessible when needed.
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -77,19 +91,43 @@ model ProductSize {
   productId String
   product   Product  @relation(fields: [productId], references: [id])
   sizeLabel String   // adult: "M","L","XL","XXL","3XL"..."6XL","S" (via "+ add other size").
-                      // kids (Product.isKids = true): age-bracket strings, e.g. "3-5 yrs" — same field, different vocabulary.
+                      // kids (Product.isKids = true): fixed category strings per rule 50 — "1-5yr", "6-16yr", "12-18yr".
   sortOrder Int      @default(0)
 
   // Number of ProductSize rows for a Product = pieces-per-set for that article, whether
   // adult letter-sizes or kids age-brackets — one unified rule, no separate 4pc/6pc lookup.
   // Used later (Phase 3) to convert set-quantities into piece-quantities for billing.
+
+  @@unique([productId, sizeLabel]) // a duplicate label for the same Product would silently
+  // inflate pieces-per-set (a straight COUNT of these rows) — this makes that unrepresentable
+  // at the database level, not just prevented by the chip-toggle UI never offering a duplicate.
 }
 
 model Color {
-  id   String @id @default(cuid())
-  name String @unique
+  id       String  @id @default(cuid())
+  name     String  @unique
+  isActive Boolean @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
 
   bundles Bundle[]
+}
+
+model Category {
+  // Same growing-list pattern as Color/Factory/Location — seeded with 11 starting values
+  // (T-shirts, Lowers, Shirts, Coordsets, Kids, Shorts, Tracksuits, Hoodie, Jacket,
+  // Sweatshirt, Others), extendable via a "+ add new category" action in the app, never
+  // hardcoded or free text. Required on every Product going forward.
+  //
+  // "Kids" is a real, independent category, distinct from Product.isKids — isKids controls
+  // sizing behavior; Category controls browsing/filtering. Turning on the Kids sizing toggle
+  // during Receive Stock smart-defaults the category picker to "Kids," but doesn't lock it —
+  // a kids item can still be categorized as something more specific (e.g. "Hoodie") if that's
+  // the better fit. The category picker itself is always visible during article creation,
+  // regardless of the Kids toggle's state.
+  id       String    @id @default(cuid())
+  name     String    @unique
+  isActive Boolean   @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+
+  products Product[]
 }
 
 model Bundle {
@@ -99,16 +137,41 @@ model Bundle {
   colorId   String
   color     Color    @relation(fields: [colorId], references: [id])
 
-  stock     Stock[]
-
+  stock             Stock[]
+  loosePieces       LoosePieces[]
+  partyStockReturns PartyStockReturn[]
+  transfers         Transfer[]
   @@unique([productId, colorId]) // defines which colors are valid for a given article
 }
 
 model Location {
-  id   String @id @default(cuid())
-  name String @unique
+  id       String  @id @default(cuid())
+  name     String  @unique
+  isActive Boolean @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
 
-  stock Stock[]
+  stock             Stock[]
+  loosePieces       LoosePieces[]
+  partyStockReturns PartyStockReturn[]
+  transfersFrom     Transfer[] @relation("TransferFrom")
+  transfersTo       Transfer[] @relation("TransferTo")
+}
+
+model Party {
+  id                  String   @id @default(cuid())
+  name                String
+  shopName            String?
+  location            String?
+  address             String?  // full address, distinct from the general "location" (city/area) field above
+  contact              String? // phone number
+  gstNo               String?
+  isActive            Boolean  @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+  createdAt           DateTime @default(now())
+  // runningDueBalance and tier deliberately NOT included here — those depend on the Order/Bill
+  // system (Phase 2/3), which doesn't exist yet. This is Party pulled forward in minimal form,
+  // real enough for Phase 1's custom-composition orders and returns, extended later, not replaced.
+
+  transactions      Transaction[]
+  partyStockReturns PartyStockReturn[]
 }
 
 model Stock {
@@ -117,30 +180,136 @@ model Stock {
   bundle                Bundle   @relation(fields: [bundleId], references: [id])
   locationId            String
   location              Location @relation(fields: [locationId], references: [id])
-  qtySets               Int      @default(0) // never edit directly — only via Transaction
-  qtyReservedForSample  Int      @default(0) // never edit directly — only via Transaction
+  qtySets               Int      @default(0) // never edit directly — only via Transaction, atomic increment/decrement only
 
   transactions          Transaction[]
 
   @@unique([bundleId, locationId])
+  // A `qtySets >= 0` CHECK constraint named "stock_qty_sets_non_negative" also exists on this
+  // table. It CANNOT be declared here: Prisma 6.19.3 has no `@@check` attribute (verified —
+  // `prisma validate` fails with P1012 "not a valid field or attribute definition"), so it lives
+  // as raw SQL in migration 20260809_round11_schema_revision. Prisma's migration engine doesn't
+  // model CHECK constraints at all, which is exactly why it survives: `migrate diff` neither
+  // sees it nor proposes dropping it (verified after applying). The trade-off is that it's
+  // invisible to anyone reading only this file — hence this comment.
 }
 
 model Transaction {
-  id        String            @id @default(cuid())
-  stockId   String
-  stock     Stock             @relation(fields: [stockId], references: [id])
-  userId    String
-  user      User              @relation(fields: [userId], references: [id])
-  type      TransactionType
-  qtySets   Int
-  note      String?
-  createdAt DateTime          @default(now())
+  id                   String            @id @default(cuid())
+  stockId              String
+  stock                Stock             @relation(fields: [stockId], references: [id])
+  userId               String
+  user                 User              @relation(fields: [userId], references: [id])
+  type                 TransactionType
+  qtySets              Int               // always counts as whole sets, even for a custom-composition order (rule: 1 set moved, regardless of actual piece breakdown)
+  note                 String?
+  costPriceSnapshot    Decimal?          // populated only for STOCK_IN — the Product's costPrice at the exact moment received, so a later price change never retroactively alters what was actually owed to the factory for this receipt. Same reasoning as OrderLineItem.priceAtOrder, applied to the outgoing (factory) side instead of the incoming (party) side.
+  partyId              String?           // populated only when this movement is tied to a specific Party — a custom-composition order or a PartyStockReturn. Null for ordinary Receive Stock movements.
+  party                Party?            @relation(fields: [partyId], references: [id])
+  isCustomComposition  Boolean           @default(false) // true only when the "custom order" toggle was used — flags that a TransactionSizeBreakdown exists for this row
+  sizeBreakdown        TransactionSizeBreakdown[] // populated only when isCustomComposition = true
+  partyStockReturnId   String?           // populated only for type PARTY_RETURN — links back to the return event
+  partyStockReturn     PartyStockReturn? @relation(fields: [partyStockReturnId], references: [id])
+  transferId           String?           // populated only for TRANSFER_OUT / TRANSFER_IN — links the two paired legs of a single Transfer back to that Transfer record. Null for every other type.
+  transfer             Transfer?         @relation(fields: [transferId], references: [id])
+  createdAt            DateTime          @default(now())
 }
+
+model TransactionSizeBreakdown {
+  // Created only for a custom-composition order (Transaction.isCustomComposition = true).
+  // Records the real, manually-entered piece-by-piece makeup of a non-standard order —
+  // e.g. M:1, L:1, XL:1 (a size skipped) or M:2, L:1, XL:1 (an uneven mix) — even though
+  // the parent Transaction still counts as exactly 1 set for pricing/quantity purposes.
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  sizeLabel     String      // matches ProductSize.sizeLabel vocabulary for this article
+  qtyPieces     Int
+}
+
+model LoosePieces {
+  // Tracks odd/loose pieces of a specific size currently sitting outside a complete set,
+  // as a result of custom-composition orders. A size skipped by an order (e.g. XXL left
+  // behind) increments this; a later custom order needing an extra piece of that same
+  // size draws it down from here first — this is the mechanism behind sizes "cancelling
+  // out" across separate custom orders over time, per real business observation.
+  id         String   @id @default(cuid())
+  bundleId   String
+  bundle     Bundle   @relation(fields: [bundleId], references: [id])
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+  sizeLabel  String
+  qtyPieces  Int      @default(0)
+
+  @@unique([bundleId, locationId, sizeLabel])
+}
+
+model Transfer {
+  // Internal stock movement between the company's own locations (e.g. Delhi <-> Gurgaon).
+  // Does NOT change total company-wide stock — only shifts which location holds it.
+  // Always produces exactly two Transaction rows (TRANSFER_OUT at fromLocation's Stock row,
+  // TRANSFER_IN at toLocation's Stock row), both linked back here via Transaction.transferId,
+  // created together inside one atomic database transaction so the pair can never exist
+  // half-done (e.g. stock leaving Delhi without arriving in Gurgaon on a crash/network failure).
+  id             String       @id @default(cuid())
+  bundleId       String
+  bundle         Bundle       @relation(fields: [bundleId], references: [id])
+  fromLocationId String
+  fromLocation   Location     @relation("TransferFrom", fields: [fromLocationId], references: [id])
+  toLocationId   String
+  toLocation     Location     @relation("TransferTo", fields: [toLocationId], references: [id])
+  qtySets        Int
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  transactions   Transaction[]
+
+  // fromLocationId and toLocationId must never be equal — enforce at the application layer
+  // (a "transfer" to the same location isn't a transfer, it's a no-op / data entry mistake).
+}
+
+model PartyStockReturn {
+  // A simple event log, NOT a pending/settled workflow — whole sets returned by a Party
+  // (damage, sizing, other reason), logged after the fact. No lifecycle, no line-by-line
+  // partial settlement — just "this came back, here's what and from whom."
+  id            String        @id @default(cuid())
+  partyId       String
+  party         Party         @relation(fields: [partyId], references: [id])
+  bundleId      String
+  bundle        Bundle        @relation(fields: [bundleId], references: [id])
+  locationId    String        // where the returned stock is being added back to
+  location      Location      @relation(fields: [locationId], references: [id])
+  qtySets       Int           // whole sets only, never partial pieces
+  valueSnapshot Decimal       // cost-based worth of this return, computed and stored at the moment of return — shown as its own visible figure, never touches Party.runningDueBalance (reconciled manually, by design)
+  note          String?
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  createdAt     DateTime      @default(now())
+
+  transactions  Transaction[]
+}
+
+model FactoryPayment {
+  // Mirrors Payment (the party-facing dues tracker) but for the reverse direction — money WE pay TO a factory.
+  id          String   @id @default(cuid())
+  factoryId   String
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  amount      Decimal
+  date        DateTime
+  note        String?
+  createdById String
+  createdAt   DateTime @default(now())
+}
+// Amount payable to a Factory = SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot for that factory's products)
+//                                − SUM(FactoryPayment.amount for that factory).
+// Same lightweight, computed-not-formal pattern as the Phase 2.5 party-dues tracker — not a formal ledger/invoice system.
 ```
 
 ### 1.1 Hard Rules to Enforce in Application Code (not expressible in schema alone)
 
-- `Stock.qtySets` and `Stock.qtyReservedForSample` must only ever change as a side effect of creating a `Transaction` row, inside the same database transaction (atomic). Never expose a direct "edit stock quantity" endpoint.
+- `Stock.qtySets` must only ever change as a side effect of creating a `Transaction` row, inside the same database transaction (atomic). Never expose a direct "edit stock quantity" endpoint.
 - `Product.costPrice` must never appear in any API response served to a `STAFF`-role user, under any circumstance.
 - Editing `Product.costPrice` or `Product.sellingPrice` requires both `role == OWNER` AND a valid PIN match against `priceEditPinHash` — checked server-side on the write endpoint.
 - When creating a `Bundle` reference (e.g. during a Transaction), only `Color` values that already have a `Bundle` row for that `Product` are valid — reject arbitrary Product+Color combinations at the API layer.
@@ -169,7 +338,8 @@ model Party {
   name                String
   shopName            String?
   location            String?
-  contact             String?
+  address             String?  // full address, distinct from the general "location" (city/area) field above
+  contact             String?  // phone number
   gstNo               String?
   runningDueBalance   Decimal  @default(0)
   tier                PartyTier
@@ -182,6 +352,8 @@ model Order {
   status      OrderStatus  @default(PLACED)
   createdById String
   createdAt   DateTime     @default(now())
+  packedAt    DateTime?    // set when status transitions to PACKED
+  billedAt    DateTime?    // set when status transitions to BILLED
   shippedAt   DateTime?    // set when status transitions to SHIPPED
 
   lineItems   OrderLineItem[]
@@ -202,9 +374,10 @@ model OrderLineItem {
 
 model OrderAdjustment {
   // Append-only log. "Adjusted" is an event layered on top of Order.status,
-  // not a status value itself — Order.status stays linear (Placed → Packed → Billed).
+  // not a status value itself — Order.status stays linear (Placed → Packed → Billed → Shipped).
   id          String   @id @default(cuid())
   orderId     String
+  lineItemId  String?  // nullable — which specific line changed, for multi-line orders (rule 22). Null = order-level change, not tied to one line.
   changedById String
   changedAt   DateTime @default(now())
   field       String
@@ -228,6 +401,12 @@ enum PaymentAllocationType {
   MANUAL_OVERRIDE
 }
 
+enum DueThresholdDays {
+  FIFTEEN
+  THIRTY
+  FORTY_FIVE
+}
+
 model Bill {
   id                String   @id @default(cuid())
   orderId           String
@@ -235,7 +414,7 @@ model Bill {
   billNo            String   @unique
   date              DateTime
   deliveryDate      DateTime
-  dueThresholdDays   Int      // 15, 30, or 45
+  dueThresholdDays   DueThresholdDays // 15, 30, or 45 — enum, not a raw Int, matching every other fixed-value-set field in this doc
   gstFields          Json?    // structure TBD at implementation time
   totalAmount        Decimal
   outstandingBalance Decimal

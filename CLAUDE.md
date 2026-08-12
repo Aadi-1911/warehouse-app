@@ -12,16 +12,21 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 
 ## Non-negotiable rules (apply regardless of which task is active)
 - `cost_price` is NEVER returned to a STAFF-role request, in any API response, under any circumstance. Enforce server-side.
-- Editing `costPrice` or `sellingPrice` requires OWNER role AND a separate PIN match — never role alone.
+- Setting or editing `costPrice` or `sellingPrice` — whether at creation or later — requires OWNER role AND a separate PIN match, never role alone, with no exception for it happening at creation time.
 - Stock quantities (`Stock.qtySets`, `qtyReservedForSample`) only ever change as a side effect of inserting a `Transaction` row, atomically. Never write a direct UPDATE to Stock.
 - Article numbers are unique per Factory, never globally — all lookups/matches must be scoped to the selected Factory.
 - Order status is exactly four stages: Placed → Packed → Billed → Shipped. Don't collapse or reorder these.
+- Before installing any new npm package, check its `engines` field (`npm view <package> engines`) against this machine's Node version. This has caused real problems three times already (Prisma 7, Vite 7, jsdom) — check proactively, don't wait to hit the error.
 
 ## Working style
 - One task at a time, scoped to a single resource, endpoint, or screen. Don't build multiple pieces in one session.
 - Explain your reasoning before writing code, especially for anything touching auth, pricing, or stock mutation logic.
 - Stop after each task and wait for review — don't chain into the next task unprompted.
 - If something in the docs is ambiguous or missing, ask rather than assume.
+- In frontend tests, use polling (`waitFor`) for anything waiting on a real network response, never a fixed `sleep()` — a fixed delay against a real backend is inherently unreliable (too short flakes, too long wastes time). Plain `sleep()` is fine only for purely synchronous UI state changes with no network involved.
+- A test that scripts the exact interaction sequence needed to use a feature (e.g., "switch the dropdown to trigger staging") proves the underlying logic works — it never proves a real person could discover that sequence without already knowing the implementation. Where a feature depends on a non-obvious interaction, the UI itself must make that interaction visibly discoverable (a visible staged-list, a counter, an explicit button) — a passing test is not a substitute for real usability.
+- Any async-loading UI state must be able to represent "hasn't started fetching yet" as its own distinct state — never alias it onto whatever a loading boolean defaults to. A boolean that starts `false` is indistinguishable from "finished loading, found nothing," producing a real, deterministic window (however brief) where the UI shows a false empty-state before the fetch has even begun. Use an explicit status (`'idle' | 'loading' | 'loaded'`, or similar) for anything that fetches data on mount/lookup, not a bare boolean.
+- A `waitFor` predicate must be false in the starting state, before the action being waited on happens — otherwise it can pass immediately by coincidence (already true from a previous state), silently asserting against stale data instead of actually waiting for anything. Key the wait on something that's only true in the target state, never something that merely tends to already be true.
 
 ## Git commits
 - Never include AI attribution — no "Generated with Claude Code" line, no "Co-Authored-By: Claude" trailer. Commits should read like a person wrote them.

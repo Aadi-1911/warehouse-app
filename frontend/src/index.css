@@ -1,0 +1,1022 @@
+/* Design tokens transcribed from 07_UI_DESIGN_BRIEF.md §3.4. Defined as CSS custom properties
+   up front so later screens reference the role name (--accent-text) rather than pasting hex
+   codes around — the brief is explicit that a component's border/background/text must share
+   one semantic role, which is far easier to hold to when they're named. */
+:root {
+  --success-border: #A9DDB4;
+  --success-bg: #E9F6EC;
+  --success-text: #1E7A34;
+
+  --danger-border: #F0B4B0;
+  --danger-bg: #FBEAE9;
+  --danger-text: #B23A31;
+
+  --warning-border: #F0CD82;
+  --warning-bg: #FCF3DE;
+  --warning-text: #8A6413;
+
+  --accent-border: #AFCBF2;
+  --accent-bg: #E8F0FC;
+  --accent-text: #1F5AA6;
+
+  --purple-border: #D2B4F0;
+  --purple-bg: #F2EAFB;
+  --purple-text: #6B2FA8;
+
+  --card-border: #E4E2DE;
+  --card-bg: #fff;
+  --text-primary: #1C1B19;
+
+  --divider: #ECEAE6;
+  --section-fill: #F5F4F1;
+  --text-secondary: #6B6863;
+  --text-tertiary: #9A968F;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--section-fill);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+/* Full-viewport centring, used by the login screen and the auth loading state. */
+.centered-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px; /* standard horizontal page margin */
+}
+
+.page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+/* --- Screen header: icon mark + two-line text block, on every screen per §3.2 --- */
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+/* A badge inside the header (e.g. the role chip on Home) sits hard right, away from the
+   icon-mark + text block that leads the row. */
+.screen-header .badge {
+  margin-left: auto;
+}
+
+.icon-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.icon-mark.accent {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-text);
+}
+
+.icon-mark.success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.icon-mark.warning {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.screen-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* The brief gives Home's greeting its own size, a step up from the standard screen title. */
+.greeting {
+  font-size: 21px;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* --- Cards --- */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+}
+
+/* Card title/article name size, per the typography scale — a card's own section header,
+   distinct from the page-level .screen-title above it. */
+.card-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+
+.hint-text {
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+
+/* Side-by-side Factory/Location selects at the top of Receive Stock (§5.2). */
+.field-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.field-row .field {
+  flex: 1;
+  min-width: 0; /* lets a long factory name ellipsize instead of forcing the row to overflow */
+  margin-bottom: 0;
+}
+
+/* --- Form fields --- */
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+/* A plain labeled checkbox — used for "Damaged on arrival". Deliberately not a .chip: this is
+   a single yes/no flag on the color being staged, not a picker choosing among options. */
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--danger-text); /* damage is a danger-role flag (§3.1) */
+  cursor: pointer;
+}
+
+.field-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.field input {
+  width: 100%;
+  /* 1.5px border on inputs, per the brief's shape spec. */
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.field input:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+/* Selects share the input look exactly (§3.4: 1.5px border on inputs/selects/tab buttons) so
+   a Factory dropdown and an Article No. text field read as the same kind of control. */
+.field select {
+  width: 100%;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Article No. input sits next to the Add button rather than stacked above it. */
+.article-lookup-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* Reuses .article-lookup-row's input-next-to-button layout for CreatableSelect's inline
+   "type a new name" row (Factory/Location/Color) — same flex:1-to-fill-the-row need. */
+.inline-create-input {
+  flex: 1;
+}
+
+.article-no-field {
+  flex: 1;
+  margin-bottom: 14px;
+}
+
+/* --- Buttons --- */
+.btn-primary,
+.btn-secondary {
+  width: 100%;
+  /* ~40px minimum tap target for one-handed thumb use (§2). */
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--accent-text);
+  border: 1px solid var(--accent-text);
+  color: #fff;
+  margin-top: 6px;
+}
+
+.btn-secondary {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  margin-top: 16px;
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* An inline variant that sits beside a field instead of spanning full width and stacking
+   below it — used by the Article No. "Add" button. */
+.btn-inline {
+  width: auto;
+  min-width: 88px;
+  margin-top: 0;
+  /* Matches the field's own height (11px vertical padding + 1.5px border, twice) exactly, so
+     the button's bottom edge lines up with the input's rather than floating. */
+  height: 46px;
+  flex-shrink: 0;
+}
+
+/* A button styled as plain text — no background, no border — for a secondary action nested
+   inside another element (e.g. "Change" inside a lookup banner), where a full button would
+   compete with the banner itself for attention. Colour is `currentColor`, not a fixed accent:
+   used inside role-tinted banners (success/warning), where §3.1 requires every element to
+   share that banner's own role tint rather than introducing an unrelated colour. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: currentColor;
+  text-decoration: underline;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* --- Error banner: background, border AND text all share the danger role --- */
+.error-banner {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+/* --- New-article form: Name + size selection (rules 49-50), then "Create article" --- */
+.new-article-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+/* Segmented/tile selector chips (§3.2): "Unselected = neutral gray. Selected = filled..."
+   Used for size chips and the Kids toggle alike — a toggle is just a one-chip picker. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  border-radius: 9999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  color: var(--text-secondary);
+}
+
+/* Exact "Selected chip (any picker)" token from §3.4's design table — not any of the
+   success/danger/warning/accent/purple role tints, since picking a size or toggling Kids
+   isn't itself a status; it's a plain selection state shared by every picker in the app. */
+.chip-selected {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: #fff;
+}
+
+.kids-toggle-chip {
+  margin-bottom: 12px;
+}
+
+.add-other-size-link {
+  display: inline-block;
+  margin-bottom: 10px;
+}
+
+.pieces-readout {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin: 4px 0 0;
+}
+
+/* --- Color staging (§6 Round 6, rule 53) --- */
+.color-staging {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+/* Stepper: "circular +/- buttons flanking a centered number... shadow-as-border" (§3.4) —
+   never a raw number input for quantities, per §6's explicit "What NOT to Do". */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stepper-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--card-bg);
+  /* "shadow-as-border (no visible border line)" per the design tokens. */
+  box-shadow: 0 0 0 1px var(--card-border);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepper-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.stepper-value {
+  min-width: 24px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* Staged colors: one row per finalized color for the current article, removable. */
+.staged-list {
+  margin: 14px 0;
+}
+
+.staged-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+}
+
+.staged-row + .staged-row {
+  border-top: 1px solid var(--divider);
+}
+
+.staged-color-name {
+  flex: 1;
+  font-weight: 700;
+}
+
+/* Removal is a destructive action (§3.1: danger = negative/removal) — the × inherits
+   .link-button's shape but takes the danger role's text colour explicitly. */
+.danger-text {
+  color: var(--danger-text);
+}
+
+/* --- Lookup result banners (§5.2): Matched (green) vs New article (amber) --- */
+.lookup-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.lookup-banner p {
+  margin: 0;
+}
+
+.lookup-banner-success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.lookup-banner-warning {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
+/* --- Save Receipt result banner: plain-language outcome, not a status code in sight ---
+   Unlike .lookup-banner (a single line + an action, laid out in a row), this can hold several
+   paragraphs and a list of exactly which lines still need saving, so it stacks vertically. */
+.result-banner {
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.result-banner p {
+  margin: 0 0 6px;
+}
+
+.result-banner p:last-of-type {
+  margin-bottom: 8px;
+}
+
+.result-banner-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+
+.result-banner-list li {
+  margin-bottom: 3px;
+}
+
+.result-banner-success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.result-banner-warning {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
+/* --- Badges --- */
+.badge {
+  display: inline-block;
+  border-radius: 9999px;
+  padding: 3px 9px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.badge-accent {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-text);
+}
+
+.badge-purple {
+  background: var(--purple-bg);
+  border: 1px solid var(--purple-border);
+  color: var(--purple-text);
+}
+
+.badge-success {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.badge-danger {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+/* --- Home tile grid (§5.1) ---
+   Two columns even though only two Phase 1 tiles exist today: when New Order and Pack Order
+   arrive in Phase 2 they wrap onto a second row, producing the specified 2x2 with no change
+   to this rule. */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tile {
+  /* "Large square tiles" — a 1:1 ratio keeps them square at any column width, so the layout
+     holds from a narrow phone to the owner's desktop without breakpoint-specific heights. */
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  border: 1px solid;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  text-decoration: none;
+}
+
+.tile-label {
+  font-size: 14px;
+  font-weight: 700;
+  /* Inherits the tile's role colour rather than restating it, keeping icon, border,
+     background and text on one semantic role per §3.1. */
+  color: inherit;
+}
+
+.tile-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.tile-accent {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+/* --- Footer note (§5.1): small muted banner, staff only --- */
+.footer-note {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* --- Section headings between page-level blocks (e.g. "Accounts" above the user list) ---
+   Matches the brief's "section-group headers (uppercase)" typography spec. */
+.section-heading {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+  margin: 20px 0 10px;
+}
+
+/* --- Receipt table (rule 53): one card per article, grouped, Colour/Sets/Pieces per row --- */
+.receipt-group {
+  margin-bottom: 12px;
+}
+
+.receipt-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.receipt-group-article {
+  font-weight: 700;
+  font-size: 13.5px;
+}
+
+/* A genuine <table>, not the div-based row list used during staging — rule 53 specifically
+   calls for a table here, and this is the one screen section where that's warranted; the
+   staged-list above is still in-progress state, not the finalized receipt. */
+.receipt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.receipt-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.receipt-table td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.receipt-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Sets/Pieces right-aligned as numbers; Colour (first column) stays left-aligned. */
+.receipt-table th:not(:first-child),
+.receipt-table td:not(:first-child) {
+  text-align: right;
+}
+
+.receipt-damaged-badge {
+  margin-left: 8px;
+}
+
+/* --- Manage Users: account list rows --- */
+.user-list {
+  padding: 4px 20px;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 0;
+}
+
+.user-row + .user-row {
+  border-top: 1px solid var(--divider);
+}
+
+.user-row-info {
+  flex: 1;
+  min-width: 0; /* lets a long name/username ellipsize instead of pushing badges off-row */
+}
+
+.user-row-name {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-row-primary-badge {
+  font-size: 9px;
+  padding: 2px 7px;
+}
+
+.user-row-username {
+  font-size: 11.5px;
+  margin-top: 1px;
+}
+
+/* Explains why no deactivate control is offered on this row (self, or the last active owner)
+   — muted rather than a disabled button, since there's nothing to click at all, not a
+   temporarily-unavailable action. */
+.user-row-disabled-note {
+  font-size: 11px;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+/* --- Confirm modal (§3.4): centered, dark scrim, ~300px card, two full-width buttons --- */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 27, 25, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.modal-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 18px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-modal-cancel,
+.btn-modal-confirm {
+  flex: 1;
+  min-height: 42px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-modal-cancel {
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  color: var(--text-secondary);
+}
+
+/* Filled in the action's own theme colour — a destructive confirm (deactivate) reads danger,
+   a restorative one (reactivate) reads success, matching §3.1's role-color meanings. */
+.btn-modal-confirm {
+  border: 1px solid;
+  color: #fff;
+}
+
+.btn-modal-confirm-danger {
+  background: var(--danger-text);
+  border-color: var(--danger-text);
+}
+
+.btn-modal-confirm-success {
+  background: var(--success-text);
+  border-color: var(--success-text);
+}
+
+.btn-modal-confirm-accent {
+  background: var(--accent-text);
+  border-color: var(--accent-text);
+}
+
+/* --- Home: self-service PIN prompt + Manage Users entry point --- */
+.prompt-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-bottom: 12px;
+}
+
+.prompt-banner-warning {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
+/* A quieter entry point than the tile grid's big colourful actions — appropriate for
+   "owner-only, low-frequency use" (01_PRD.md §95), not competing with daily staff workflows. */
+.secondary-link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-decoration: none;
+  border-top: 1px solid var(--divider);
+}
+
+/* --- Live Stock View: stat cards (§5.5) --- */
+.stat-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  flex: 1;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.centered-empty-state {
+  text-align: center;
+  padding: 32px 0;
+  font-size: 12.5px;
+}
+
+/* --- Accordion (Factory outer layer, Article nested inside — rule 57) ---
+   §3.2's shared accordion component: collapsed by default, any number of sections open
+   independently, header row shows a count + a low-stock flag + a chevron that rotates open. */
+.accordion-section {
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+/* Nested (Article-level) sections sit inside an already-bordered Factory card, so they use a
+   plain top divider instead of their own card border/shadow — a card-inside-a-card would be
+   visual noise the brief's "resizing panel" language doesn't call for. */
+.accordion-section.nested {
+  margin-bottom: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.accordion-header.nested {
+  padding: 12px 0;
+}
+
+.accordion-header-text {
+  min-width: 0; /* lets a long factory/article name ellipsize instead of pushing the chevron off */
+}
+
+.accordion-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.accordion-title-sm {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.accordion-subtitle {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.accordion-low-badge {
+  flex-shrink: 0;
+}
+
+.chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  color: var(--text-tertiary);
+}
+
+.chevron-open {
+  transform: rotate(180deg);
+}
+
+.accordion-body {
+  margin-top: 14px;
+}
+
+.accordion-body.nested {
+  padding: 4px 0 12px;
+}
+
+/* --- Individual stock rows: Colour / Location / Sets, per rule 56 never fully tinted --- */
+.stock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 12.5px;
+}
+
+.stock-row + .stock-row {
+  border-top: 1px solid var(--divider);
+}
+
+.stock-row-color {
+  flex: 1;
+  font-weight: 700;
+  min-width: 0;
+}
+
+.stock-row-qty {
+  font-weight: 700;
+}
+
+/* --- Transfer: selectable in-stock rows ---
+   Unlike Live Stock's .stock-row (read-only display) these are real buttons — the row IS the
+   selection control, since on this screen the thing being picked is a concrete Stock row, not
+   an article you then narrow by colour. Styled as a list rather than a <select> because each
+   option carries three pieces of information (article, colour, available quantity) that a
+   single-line option label would flatten. */
+.transfer-stock-list {
+  margin: 12px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.transfer-stock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  font-size: 12.5px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--divider);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Accent tint, matching this screen's own role colour — the same "selected" language the
+   chip rows use during article sizing, rather than inventing a third selection idiom. */
+.transfer-stock-row-selected {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+.transfer-row-article {
+  font-weight: 700;
+  min-width: 0;
+}
+
+.transfer-row-color {
+  flex: 1;
+  min-width: 0;
+}
+
+.transfer-row-qty {
+  font-weight: 700;
+  white-space: nowrap;
+}

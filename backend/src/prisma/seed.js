@@ -14,21 +14,38 @@ async function main() {
     const priceEditPinHash = await bcrypt.hash(TEST_OWNER.pin, 10);
 
     const user = await prisma.user.create({
-      data: { username: TEST_OWNER.username, passwordHash, name: TEST_OWNER.name, role: 'OWNER', priceEditPinHash },
+      data: {
+        username: TEST_OWNER.username,
+        passwordHash,
+        name: TEST_OWNER.name,
+        role: 'OWNER',
+        priceEditPinHash,
+        isPrimaryOwner: true, // this IS the originally-seeded owner account, by definition
+      },
     });
 
-    console.log(`Seeded OWNER user: ${user.username} (id ${user.id}) with dev PIN ${TEST_OWNER.pin}`);
+    console.log(`Seeded OWNER user: ${user.username} (id ${user.id}) with dev PIN ${TEST_OWNER.pin}, isPrimaryOwner: true`);
     return;
   }
 
   // Never overwrite passwordHash/priceEditPinHash on an existing user — re-running this script
-  // must not silently undo a real password or PIN change made after seeding.
+  // must not silently undo a real password or PIN change made after seeding. isPrimaryOwner is
+  // different: it's a system flag, not a secret the account holder manages, and this seeded
+  // account IS the originally-seeded owner by definition — backfilling it to true is always
+  // correct, never a destructive overwrite of something a real user set themselves.
+  const backfill = {};
   if (!existing.priceEditPinHash) {
-    const priceEditPinHash = await bcrypt.hash(TEST_OWNER.pin, 10);
-    await prisma.user.update({ where: { id: existing.id }, data: { priceEditPinHash } });
-    console.log(`Backfilled dev PIN ${TEST_OWNER.pin} for existing OWNER user: ${existing.username}`);
+    backfill.priceEditPinHash = await bcrypt.hash(TEST_OWNER.pin, 10);
+  }
+  if (!existing.isPrimaryOwner) {
+    backfill.isPrimaryOwner = true;
+  }
+
+  if (Object.keys(backfill).length > 0) {
+    await prisma.user.update({ where: { id: existing.id }, data: backfill });
+    console.log(`Backfilled for existing OWNER user '${existing.username}': ${Object.keys(backfill).join(', ')}`);
   } else {
-    console.log(`OWNER user '${existing.username}' already exists with a PIN set — nothing to do.`);
+    console.log(`OWNER user '${existing.username}' already fully set up — nothing to do.`);
   }
 }
 

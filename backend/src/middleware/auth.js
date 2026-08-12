@@ -27,7 +27,25 @@ async function requireAuth(req, res, next) {
     return sendError(res, 401, 'USER_NOT_FOUND', 'User no longer exists');
   }
 
-  req.user = { id: user.id, username: user.username, name: user.name, role: user.role };
+  // Checked on EVERY request, not just login — a JWT is stateless and valid for 7 days, so
+  // this is the only enforcement point that can make a deactivation (e.g. a fired staff member)
+  // take effect immediately instead of whenever their existing token happens to expire.
+  if (!user.isActive) {
+    return sendError(res, 403, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated');
+  }
+
+  // isPrimaryOwner rides along the same already-fetched row as role — re-derived fresh from
+  // the DB every request, same as role, never trusted from the JWT payload.
+  req.user = {
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    isPrimaryOwner: user.isPrimaryOwner,
+    // A safe derived boolean, never the hash itself — lets the client know whether to show
+    // the self-service "Set your PIN" prompt without ever exposing priceEditPinHash.
+    hasPinSet: !!user.priceEditPinHash,
+  };
   next();
 }
 

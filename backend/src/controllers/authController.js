@@ -28,11 +28,31 @@ async function login(req, res) {
     return invalidCredentials();
   }
 
+  // Checked AFTER password verification, deliberately — checking first would let someone who
+  // doesn't even know the password distinguish "deactivated account" from "wrong password,"
+  // a new enumeration leak on top of the existing one this function already guards against.
+  // Checked here too (not just requireAuth) so a freshly-deactivated user gets a clear, honest
+  // reason at login rather than a generic invalid-credentials message.
+  if (!user.isActive) {
+    return sendError(res, 403, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated');
+  }
+
   const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
   res.json({
     token,
-    user: { id: user.id, username: user.username, name: user.name, role: user.role },
+    // Matches the exact shape auth.js's requireAuth attaches to req.user for GET /api/auth/me
+    // — the two paths a client learns "who am I" must never disagree, or a page that reads
+    // isPrimaryOwner right after login (vs. after a refresh) would silently see a different,
+    // incomplete user object depending purely on which of the two calls it happened to go through.
+    user: {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      isPrimaryOwner: user.isPrimaryOwner,
+      hasPinSet: !!user.priceEditPinHash,
+    },
   });
 }
 
