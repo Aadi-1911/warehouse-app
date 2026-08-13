@@ -182,16 +182,30 @@ async function getFactoryPayable(req, res) {
     return sum + t.qtySets * piecesPerSet * price;
   }, 0);
 
+  // wasEdited added to the select for the frontend's "edited" label — an explicit flag now,
+  // not inferred from updatedAt-vs-createdAt (see LEARNING_LOG.md for why that heuristic was
+  // replaced). createdAt/updatedAt stay selected too — still generically useful, harmless to
+  // leave in, no longer load-bearing for the "edited" signal specifically. The
+  // totalOwed/totalPaid/amountPayable recompute itself needed no changes at all for edit/delete
+  // to work correctly (this whole query already runs fresh, from live rows, on every call; see
+  // LEARNING_LOG.md for the explicit verification).
+  //
+  // orderBy is two levels for the same reason the frontend's merged-history sort is: `date` is
+  // the real-world ordering (a backdated entry belongs where its date says), but two entries
+  // sharing the exact same date need a tiebreaker, and `createdAt` — set once at insert, never
+  // user-edited — is what actually answers "which of these was recorded first." Matches the
+  // frontend's own tiebreak logic so this array's order is meaningful even if a future caller
+  // reads payments/debits directly instead of going through the merged `history` list.
   const [payments, debits] = await Promise.all([
     prisma.factoryPayment.findMany({
       where: { factoryId: id },
-      select: { id: true, amount: true, date: true, note: true },
-      orderBy: { date: 'desc' },
+      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     }),
     prisma.factoryDebit.findMany({
       where: { factoryId: id },
-      select: { id: true, amount: true, date: true, note: true },
-      orderBy: { date: 'desc' },
+      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     }),
   ]);
 

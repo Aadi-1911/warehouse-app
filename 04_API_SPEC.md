@@ -60,17 +60,30 @@ Sets `isActive: false`. **Never hard-delete a Factory** — Product/Transaction 
 Sets `isActive: true` — reverses a deactivation.
 
 ### `GET /api/factories/:id/payable` 👑
-Response: `{ factoryId, totalOwed, totalPaid, amountPayable, payments: [{ id, amount, date, note }], debits: [{ id, amount, date, note }] }`
+Response: `{ factoryId, totalOwed, totalPaid, amountPayable, payments: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }], debits: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }] }`
 **Owner-only, not any-role** — corrected from an earlier draft. This total is computed from `costPriceSnapshot`, and staff already know exact quantities received (they log the STOCK_IN transactions themselves), so an open payable figure would be trivially reverse-engineerable into the actual cost price per piece — the same information the PIN gate and role check exist to protect, just reached through arithmetic instead of a direct field read.
-`totalOwed` = `SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot)` **plus** `SUM(FactoryDebit.amount)`, both scoped to this Factory. `amountPayable` = `totalOwed − SUM(FactoryPayment.amount)`, unchanged in shape. `debits` exists so a real, manually-recorded amount owed (05_BUSINESS_RULES.md rule 96) is visible the same way `payments` already is, not just folded invisibly into the `totalOwed` figure. Lightweight, same pattern as the party-facing dues tracker — not a formal ledger.
+`totalOwed` = `SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot)` **plus** `SUM(FactoryDebit.amount)`, both scoped to this Factory. `amountPayable` = `totalOwed − SUM(FactoryPayment.amount)`, unchanged in shape. `debits` exists so a real, manually-recorded amount owed (05_BUSINESS_RULES.md rule 96) is visible the same way `payments` already is, not just folded invisibly into the `totalOwed` figure. Lightweight, same pattern as the party-facing dues tracker — not a formal ledger. **Requires no special handling for edits/deletes** — this whole response is recomputed fresh from live rows on every call (no caching layer anywhere in the chain), so an edited or deleted `FactoryPayment`/`FactoryDebit` is correctly reflected on the very next call, verified explicitly rather than assumed when PATCH/DELETE were added below. `wasEdited` is an explicit boolean a client reads directly for an "edited" indicator — **not** inferred by comparing `createdAt`/`updatedAt`, which both remain in the response as generically useful metadata but are no longer load-bearing for that signal (an earlier updatedAt-vs-createdAt-plus-60-seconds heuristic missed a real edit made within a minute of creation; see LEARNING_LOG.md).
 
 ### `POST /api/factory-payments` 📌
 Body: `{ factoryId, amount, date, note?, pin }`
-Records a payment made to a Factory, reducing `amountPayable`. Owner-only, mirrors the reasoning for Payment allocation being a deliberate, logged action. **PIN required as of the Factory Payables screen** (§5.8 of `07_UI_DESIGN_BRIEF.md`) — originally shipped role-only, revisited so a real financial action isn't gated by role alone, same `requirePin` middleware and lockout behavior as price edits. `403` on missing/invalid/locked PIN, same codes as `PATCH /api/products/:id`.
+Records a payment made to a Factory, reducing `amountPayable`. Owner-only, mirrors the reasoning for Payment allocation being a deliberate, logged action. **PIN required as of the Factory Payables screen** (§5.8 of `07_UI_DESIGN_BRIEF.md`) — originally shipped role-only, revisited so a real financial action isn't gated by role alone, same `requirePin` middleware and lockout behavior as price edits. `403` on missing/invalid/locked PIN, same codes as `PATCH /api/products/:id`. Response includes `wasEdited: false` — always false for a freshly-created entry.
+
+### `PATCH /api/factory-payments/:id` 📌
+Body: any subset of `{ amount, date, note }`, plus `pin` (always required — see below).
+Corrects a previously-recorded payment. **Unlike `PATCH /api/products/:id`, the PIN is required unconditionally, not only when specific fields are touched** — every field on this resource (`amount`/`date`/`note`) is itself a financial detail, so there's no non-sensitive subset of an edit that could skip the PIN the way editing a Product's `categoryId` alone can. Sets `wasEdited: true` unconditionally whenever a real edit is saved — explicit, not inferred from timestamps, and never reset back to `false` once set. `404 FACTORY_PAYMENT_NOT_FOUND` if the id doesn't exist.
+
+### `DELETE /api/factory-payments/:id` 📌
+No body beyond `{ pin }` (always required, same unconditional gating as PATCH above). **A genuine hard delete** — the first one in this API. Safe specifically because nothing else in the schema references `FactoryPayment` by foreign key (unlike Factory/Product/User/Location/Party/Category, which all use soft-deactivate via `isActive` because other rows trace back through them and must stay resolvable forever). Returns `204` with no body on success. `404 FACTORY_PAYMENT_NOT_FOUND` if the id doesn't exist.
 
 ### `POST /api/factory-debits` 📌
 Body: `{ factoryId, amount, date, note?, pin }`
 Records a manual increase to amount owed to a Factory — the mirror of `POST /api/factory-payments` in the other direction. Same gating as the payment endpoint (Owner + PIN, identical `requirePin` behavior and error codes), since this is an equally sensitive financial action, just moving `amountPayable` up instead of down. Exists specifically for real, pre-app debt that has no corresponding STOCK_IN transaction history in this system (05_BUSINESS_RULES.md rule 96) — without it, a factory in that position has no way to reach a correct `amountPayable`, since `totalOwed` would otherwise only ever reflect stock received *through the app*.
+
+### `PATCH /api/factory-debits/:id` 📌
+Identical shape and reasoning to `PATCH /api/factory-payments/:id` above, for the reverse-direction entity. `404 FACTORY_DEBIT_NOT_FOUND` if the id doesn't exist.
+
+### `DELETE /api/factory-debits/:id` 📌
+Identical shape and reasoning to `DELETE /api/factory-payments/:id` above. `404 FACTORY_DEBIT_NOT_FOUND` if the id doesn't exist.
 
 ---
 

@@ -4,8 +4,8 @@ import { useAuth } from '../hooks/useAuth';
 import { WalletIcon, KeyIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listFactories, getFactoryPayable } from '../api/factories';
-import { createFactoryPayment } from '../api/factoryPayments';
-import { createFactoryDebit } from '../api/factoryDebits';
+import { createFactoryPayment, updateFactoryPayment, deleteFactoryPayment } from '../api/factoryPayments';
+import { createFactoryDebit, updateFactoryDebit, deleteFactoryDebit } from '../api/factoryDebits';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -66,6 +66,21 @@ export default function FactoryPayables() {
   const [submitError, setSubmitError] = useState(null);
   const [attemptsRemaining, setAttemptsRemaining] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+
+  // Editing or deleting an EXISTING entry — deliberately separate state from activeForm above,
+  // which stays untouched (this task's own instruction: don't touch the creation flow). null |
+  // { kind: 'payment' | 'debit', mode: 'edit' | 'delete', entry }. One nullable object rather
+  // than parallel edit/delete booleans, same "make the bad state unrepresentable" reasoning as
+  // activeForm — an edit form and a delete confirmation are never open at the same time, any
+  // more than two creation forms are.
+  const [entryAction, setEntryAction] = useState(null);
+  const [entryAmount, setEntryAmount] = useState('');
+  const [entryDate, setEntryDate] = useState('');
+  const [entryNote, setEntryNote] = useState('');
+  const [entryPin, setEntryPin] = useState('');
+  const [entrySubmitting, setEntrySubmitting] = useState(false);
+  const [entrySubmitError, setEntrySubmitError] = useState(null);
+  const [entryAttemptsRemaining, setEntryAttemptsRemaining] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +144,9 @@ export default function FactoryPayables() {
     // silently re-pointing it at a different factory avoids recording against the wrong one.
     setActiveForm(null);
     resetForm();
+    // Same reasoning applies to an in-progress edit/delete of an existing entry — it belonged
+    // to a row from the previous factory's history, which is about to disappear.
+    setEntryAction(null);
     setSuccessMessage(null);
   }
 
@@ -207,17 +225,123 @@ export default function FactoryPayables() {
     }
   }
 
+  // Opens the edit form for an existing row, pre-filled with its current amount/date/note
+  // (requirement 2). entry.date arrives as a full ISO timestamp ("2026-08-01T00:00:00.000Z") —
+  // sliced to YYYY-MM-DD for the <input type="date">, same shape todayInputValue() produces.
+  function handleStartEditEntry(kind, entry) {
+    setActiveForm(null); // creation and editing an existing entry never happen at the same time
+    setEntryAction({ kind, mode: 'edit', entry });
+    setEntryAmount(String(entry.amount));
+    setEntryDate(entry.date.slice(0, 10));
+    setEntryNote(entry.note ?? '');
+    setEntryPin('');
+    setEntrySubmitError(null);
+    setEntryAttemptsRemaining(null);
+  }
+
+  // Opens the delete confirmation for an existing row. No amount/date/note fields — there's
+  // nothing to edit, just the PIN, which is itself the confirmation step (requirement 1: no
+  // separate confirm-modal on top).
+  function handleStartDeleteEntry(kind, entry) {
+    setActiveForm(null);
+    setEntryAction({ kind, mode: 'delete', entry });
+    setEntryPin('');
+    setEntrySubmitError(null);
+    setEntryAttemptsRemaining(null);
+  }
+
+  function handleCancelEntryAction() {
+    setEntryAction(null);
+    setEntryPin('');
+    setEntrySubmitError(null);
+    setEntryAttemptsRemaining(null);
+  }
+
+  // Shared by both edit and delete of an existing entry, the same way handleSubmitForm above is
+  // shared by both creation actions — one function branching on entryAction.mode rather than
+  // two near-duplicate handlers.
+  async function handleSubmitEntryAction(event) {
+    event.preventDefault();
+    setEntrySubmitError(null);
+    setEntryAttemptsRemaining(null);
+
+    const { kind, mode, entry } = entryAction;
+    const parsedAmount = Number(entryAmount);
+
+    if (mode === 'edit') {
+      if (!parsedAmount || parsedAmount <= 0) {
+        setEntrySubmitError('Enter a valid amount.');
+        return;
+      }
+      if (!entryDate) {
+        setEntrySubmitError('Enter a date.');
+        return;
+      }
+    }
+    if (!entryPin) {
+      setEntrySubmitError('Enter your PIN.');
+      return;
+    }
+
+    const isDebit = kind === 'debit';
+    const update = isDebit ? updateFactoryDebit : updateFactoryPayment;
+    const remove = isDebit ? deleteFactoryDebit : deleteFactoryPayment;
+
+    setEntrySubmitting(true);
+    try {
+      if (mode === 'edit') {
+        await update(entry.id, {
+          amount: parsedAmount,
+          date: entryDate,
+          note: entryNote.trim() || undefined,
+          pin: entryPin,
+        });
+        setSuccessMessage(`${isDebit ? 'Amount owed' : 'Payment'} entry updated.`);
+      } else {
+        await remove(entry.id, { pin: entryPin });
+        setSuccessMessage(`${isDebit ? 'Amount owed' : 'Payment'} entry deleted.`);
+      }
+      setEntryAction(null);
+      setEntryPin('');
+      // Re-fetch so the stat cards and list reflect the real, current state — never patch
+      // local state optimistically (requirement 4), same discipline handleSubmitForm already
+      // uses after creating an entry.
+      setPayableStatus('loading');
+      const fresh = await getFactoryPayable(factoryId);
+      setPayable(fresh);
+      setPayableStatus('loaded');
+    } catch (err) {
+      if (err.code === 'INVALID_PIN' && err.extra?.attemptsRemaining != null) {
+        setEntryAttemptsRemaining(err.extra.attemptsRemaining);
+      }
+      setEntrySubmitError(err.message);
+      setEntryPin('');
+    } finally {
+      setEntrySubmitting(false);
+    }
+  }
+
   const showStats = factoryId && payableStatus === 'loaded' && !payableError && payable;
 
   // One chronological timeline instead of two separate lists to scroll through — each entry
   // tagged with its own kind so the row can render "+ Owed"/"− Paid" distinctly. Sorted by date
   // descending regardless of kind, so a debit and a payment interleave correctly by when they
-  // actually happened, not grouped by type.
+  // actually happened, not grouped by type. `date` is the primary key (it's what "when this
+  // happened" means to whoever's reading the list — a backdated entry belongs where its date
+  // says, not at the top just because it was typed in today). When two entries share the exact
+  // same date — genuinely common, e.g. several payments logged the same day — `date` alone
+  // can't order them at all, so `createdAt` (when the row was actually inserted, never
+  // user-edited) breaks the tie, most-recently-created first, so same-day entries still land in
+  // the order they were actually recorded instead of an arbitrary array-concatenation order.
   const history = showStats
     ? [
         ...payable.payments.map((p) => ({ ...p, kind: 'payment' })),
         ...payable.debits.map((d) => ({ ...d, kind: 'debit' })),
-      ].sort((a, b) => new Date(b.date) - new Date(a.date))
+      ].sort((a, b) => {
+        const dateDiff = new Date(b.date) - new Date(a.date);
+        if (dateDiff !== 0) return dateDiff;
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      })
     : [];
 
   return (
@@ -288,31 +412,62 @@ export default function FactoryPayables() {
             {history.length === 0 ? (
               <p className="muted centered-empty-state">Nothing recorded yet.</p>
             ) : (
-              history.map((entry) => (
-                <div key={`${entry.kind}-${entry.id}`} className="payment-history-row">
-                  <div className="payment-history-meta">
-                    <span className="payment-history-date">{formatDate(entry.date)}</span>
-                    {entry.note && <span className="payment-history-note">{entry.note}</span>}
+              history.map((entry) => {
+                // Row-level edit/delete is disabled while any other form is open (creation, or
+                // editing/deleting a DIFFERENT row) — not because two forms open at once would
+                // break anything structurally, but because offering to start a second one while
+                // one is already mid-flight invites acting on the wrong row.
+                const rowActionsDisabled =
+                  !!activeForm || submitting || entrySubmitting || (!!entryAction && entryAction.entry.id !== entry.id);
+                return (
+                  <div key={`${entry.kind}-${entry.id}`} className="payment-history-row">
+                    <div className="payment-history-meta">
+                      <span className="payment-history-date">
+                        {formatDate(entry.date)}
+                        {/* wasEdited is an explicit flag from the API, set true the moment a
+                            PATCH is saved — not inferred by comparing timestamps. Replaces an
+                            earlier updatedAt-vs-createdAt-plus-60-seconds heuristic that missed
+                            a real edit made within a minute of creation (LEARNING_LOG.md). */}
+                        {entry.wasEdited && <span className="payment-history-edited">edited</span>}
+                      </span>
+                      {entry.note && <span className="payment-history-note">{entry.note}</span>}
+                    </div>
+                    {/* entry.amount is a raw Prisma Decimal — arrives as a STRING ("250.5"), not
+                        a number (see api/factories.js). formatCurrency() Number()s it internally.
+                        Sign + badge + tint together distinguish the two kinds in one glance,
+                        rather than requiring a second look at which list a row came from — there
+                        is no second list anymore, this is the whole point of merging them. */}
+                    <div className="payment-history-value">
+                      <span className={`badge ${entry.kind === 'debit' ? 'badge-warning' : 'badge-success'}`}>
+                        {entry.kind === 'debit' ? '+ Owed' : '− Paid'}
+                      </span>
+                      <span
+                        className={`payment-history-amount ${
+                          entry.kind === 'debit' ? 'payment-history-amount-debit' : 'payment-history-amount-payment'
+                        }`}
+                      >
+                        {entry.kind === 'debit' ? '+' : '−'} {formatCurrency(entry.amount)}
+                      </span>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => handleStartEditEntry(entry.kind, entry)}
+                        disabled={rowActionsDisabled}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button danger-text"
+                        onClick={() => handleStartDeleteEntry(entry.kind, entry)}
+                        disabled={rowActionsDisabled}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  {/* entry.amount is a raw Prisma Decimal — arrives as a STRING ("250.5"), not
-                      a number (see api/factories.js). formatCurrency() Number()s it internally.
-                      Sign + badge + tint together distinguish the two kinds in one glance,
-                      rather than requiring a second look at which list a row came from — there
-                      is no second list anymore, this is the whole point of merging them. */}
-                  <div className="payment-history-value">
-                    <span className={`badge ${entry.kind === 'debit' ? 'badge-warning' : 'badge-success'}`}>
-                      {entry.kind === 'debit' ? '+ Owed' : '− Paid'}
-                    </span>
-                    <span
-                      className={`payment-history-amount ${
-                        entry.kind === 'debit' ? 'payment-history-amount-debit' : 'payment-history-amount-payment'
-                      }`}
-                    >
-                      {entry.kind === 'debit' ? '+' : '−'} {formatCurrency(entry.amount)}
-                    </span>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -413,7 +568,103 @@ export default function FactoryPayables() {
             </div>
           )}
 
-          {!activeForm && (
+          {entryAction && (
+            <div className="card">
+              <h2 className="card-title">
+                {entryAction.mode === 'delete'
+                  ? `Delete ${entryAction.kind === 'debit' ? 'amount owed' : 'payment'} entry`
+                  : `Edit ${entryAction.kind === 'debit' ? 'amount owed' : 'payment'} entry`}
+              </h2>
+              {/* Same lightweight inline PIN prompt as the creation forms above (requirement
+                  1) — no separate confirm-modal on top of this one, the PIN entry IS the
+                  confirmation step, for delete exactly as much as for edit. */}
+              <form onSubmit={handleSubmitEntryAction}>
+                {entryAction.mode === 'edit' ? (
+                  <>
+                    <label className="field">
+                      <span className="field-label">Amount</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0.01"
+                        step="0.01"
+                        value={entryAmount}
+                        onChange={(e) => setEntryAmount(e.target.value)}
+                        disabled={entrySubmitting}
+                        required
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span className="field-label">Date</span>
+                      <input
+                        type="date"
+                        value={entryDate}
+                        onChange={(e) => setEntryDate(e.target.value)}
+                        disabled={entrySubmitting}
+                        required
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span className="field-label">Note (optional)</span>
+                      <input
+                        type="text"
+                        value={entryNote}
+                        onChange={(e) => setEntryNote(e.target.value)}
+                        disabled={entrySubmitting}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <p className="muted">
+                    This permanently deletes the {formatDate(entryAction.entry.date)} entry of{' '}
+                    {formatCurrency(entryAction.entry.amount)}. This cannot be undone.
+                  </p>
+                )}
+
+                <label className="field">
+                  <span className="field-label">Your PIN</span>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={entryPin}
+                    onChange={(e) => setEntryPin(e.target.value)}
+                    autoComplete="off"
+                    disabled={entrySubmitting}
+                    required
+                  />
+                </label>
+
+                {entrySubmitError && (
+                  <p className="error-banner" role="alert">
+                    {entrySubmitError}
+                    {entryAttemptsRemaining != null &&
+                      ` (${entryAttemptsRemaining} attempt${entryAttemptsRemaining === 1 ? '' : 's'} remaining)`}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  className={entryAction.mode === 'delete' ? 'btn-danger' : 'btn-primary'}
+                  disabled={entrySubmitting}
+                >
+                  {entrySubmitting
+                    ? entryAction.mode === 'delete'
+                      ? 'Deleting…'
+                      : 'Saving…'
+                    : entryAction.mode === 'delete'
+                      ? 'Confirm delete'
+                      : 'Save changes'}
+                </button>
+                <button type="button" className="btn-secondary" onClick={handleCancelEntryAction} disabled={entrySubmitting}>
+                  Cancel
+                </button>
+              </form>
+            </div>
+          )}
+
+          {!activeForm && !entryAction && (
             <div className="sticky-action-bar sticky-action-row">
               <button
                 type="button"

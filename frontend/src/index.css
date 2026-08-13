@@ -285,7 +285,8 @@ body {
 
 /* --- Buttons --- */
 .btn-primary,
-.btn-secondary {
+.btn-secondary,
+.btn-danger {
   width: 100%;
   /* ~40px minimum tap target for one-handed thumb use (§2). */
   min-height: 44px;
@@ -310,8 +311,19 @@ body {
   margin-top: 16px;
 }
 
+/* First real use of a standalone (non-modal) danger action button — Factory Payables' delete
+   confirm. §3.1: danger = negative/removal, so this stays visually distinct from .btn-primary's
+   accent fill rather than reusing it for a destructive action. */
+.btn-danger {
+  background: var(--danger-text);
+  border: 1px solid var(--danger-text);
+  color: #fff;
+  margin-top: 6px;
+}
+
 .btn-primary:disabled,
-.btn-secondary:disabled {
+.btn-secondary:disabled,
+.btn-danger:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1030,6 +1042,16 @@ body {
   font-weight: 700;
 }
 
+/* A factual annotation, not a status needing attention — deliberately muted/plain rather than
+   a coloured badge, so it doesn't compete with the "+ Owed"/"− Paid" badge for the eye. */
+.payment-history-edited {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text-tertiary);
+}
+
 .payment-history-note {
   font-size: 11.5px;
   color: var(--text-secondary);
@@ -1044,11 +1066,16 @@ body {
   flex-shrink: 0;
 }
 
-/* Groups the "+ Owed"/"− Paid" badge with its amount on the row's right side, keeping the
-   original two-group (meta | value) layout .payment-history-row's space-between relies on. */
+/* Groups the "+ Owed"/"− Paid" badge with its amount (and now the Edit/Delete actions) on the
+   row's right side, keeping the original two-group (meta | value) layout .payment-history-row's
+   space-between relies on. flex-wrap lets Edit/Delete drop to their own line on a narrow phone
+   screen rather than squeezing four elements onto one row — badge/amount stay together since
+   they're what a glance actually needs first; the actions are secondary. */
 .payment-history-value {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   flex-shrink: 0;
 }

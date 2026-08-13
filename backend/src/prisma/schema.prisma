@@ -303,6 +303,19 @@ model FactoryPayment {
   note        String?
   createdById String
   createdAt   DateTime @default(now())
+  // Lightweight — exists only so an edited entry can show it was changed (frontend's "edited"
+  // label), not a formal audit trail (no before/after values kept, no editor identity recorded
+  // beyond createdById). Same "not a formal ledger" framing already established for this whole
+  // feature (rules 81/96). @updatedAt is maintained by Prisma itself on every update — never
+  // set manually.
+  updatedAt   DateTime @updatedAt
+  // Explicit, unambiguous "was this ever edited" flag — replaces an earlier updatedAt-vs-
+  // createdAt-plus-60-seconds heuristic that missed a real edit made within a minute of
+  // creation (see LEARNING_LOG.md). Set true by updateFactoryPayment the moment any edit is
+  // saved, never reset back to false — a corrected entry stays marked as corrected permanently,
+  // matching this feature's "not a formal ledger, but a correction is never silently invisible"
+  // framing.
+  wasEdited   Boolean  @default(false)
 }
 
 model FactoryDebit {
@@ -320,6 +333,8 @@ model FactoryDebit {
   note        String?
   createdById String
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wasEdited   Boolean  @default(false)
 }
 // Amount payable to a Factory = SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot for that factory's products)
 //                                + SUM(FactoryDebit.amount for that factory)
