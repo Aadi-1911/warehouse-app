@@ -197,6 +197,16 @@ A component's background/border/text should always share the same role tint toge
 - Recording a payment uses a lightweight inline PIN prompt, not the standard confirm-modal — the same deliberate exception already established for price edits (§8), extended here because it's a real money-movement action, not because payments are pricing.
 - Switching the Factory dropdown must synchronously reset the visible stats/history — no stale numbers from a previous selection should ever remain on screen, same principle already logged for Receive Stock's Factory switch.
 
+### 5.9 Transfer — added 2026-08-13, documented now for the first time
+**Provenance note**: Transfer was never in this brief's original §5 screen list — it was an accepted Phase 1 limitation (rule 46) when this document was first written, and the screen that eventually shipped (own Home tile, a flat list of concrete Stock rows scoped to a chosen source Location, no "+ create" affordance — see `Transfer.jsx`'s own header comment and `LEARNING_LOG.md`) followed the app's established conventions rather than a spec written here. This entry documents that existing shape plus a genuinely new addition, staged batching, decided and built on the date above — not backfilled as if either had been specified all along.
+- Selecting a Stock row + a quantity **stages it locally** instead of submitting immediately, mirroring Receive Stock/New Order's "Staged batching, precisely" pattern (§7) — pick, set a quantity, repeat, then one commit action pushes the whole group.
+- A visible staged list shows every queued line (article, colour, quantity, destination) before commit, growing across any number of different articles — unlike Receive Stock, a Transfer line needs no article-level grouping step, since one Stock row + one quantity + one destination is already a complete, self-contained line.
+- Each staged line is individually removable before commit.
+- One "Transfer stock" action commits the whole staged batch, submitting each line as its own individual `POST /api/transfers` call, sequentially — a line that succeeds stays committed even if a different line in the same batch fails; failed lines remain staged for retry, never silently dropped.
+- Switching the source Location resets the staged list and reloads available stock for the new location, since a staged line's validity is tied to the source it was picked from.
+- Each staged line's quantity is capped by that row's real remaining availability — accounting for quantity already staged against the same row in the current batch, not just the raw last-fetched figure.
+- Kept the base screen's single confirm modal (not Receive Stock's two-step summary → final) — a Transfer moves stock between the business's own locations without changing the company-wide total, so a mistake is corrected by transferring back, unlike a receipt that invents inventory. That reasoning is unchanged by batching.
+
 ## 7. Round 7 Refinements (Claude Design staff prototype)
 
 - **Factory disambiguation copy**: when a searched article number matches more than one Factory, show one chip per match labeled with both factory and article name (e.g. "Round Neck Tee — Jyoti Creations" vs "Kurta Set — Comeco"), not just the bare factory name — the article name itself is often the fastest way for staff to recognize which one they mean.
