@@ -64,9 +64,9 @@ Response: `{ factoryId, totalOwed, totalPaid, amountPayable, payments: [{ id, am
 **Owner-only, not any-role** — corrected from an earlier draft. This total is computed from `costPriceSnapshot`, and staff already know exact quantities received (they log the STOCK_IN transactions themselves), so an open payable figure would be trivially reverse-engineerable into the actual cost price per piece — the same information the PIN gate and role check exist to protect, just reached through arithmetic instead of a direct field read.
 Computed from `SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot)` minus `SUM(FactoryPayment.amount)`, both scoped to this Factory. Lightweight, same pattern as the party-facing dues tracker — not a formal ledger.
 
-### `POST /api/factory-payments` 👑
-Body: `{ factoryId, amount, date, note? }`
-Records a payment made to a Factory, reducing `amountPayable`. Owner-only, mirrors the reasoning for Payment allocation being a deliberate, logged action.
+### `POST /api/factory-payments` 📌
+Body: `{ factoryId, amount, date, note?, pin }`
+Records a payment made to a Factory, reducing `amountPayable`. Owner-only, mirrors the reasoning for Payment allocation being a deliberate, logged action. **PIN required as of the Factory Payables screen** (§5.8 of `07_UI_DESIGN_BRIEF.md`) — originally shipped role-only, revisited so a real financial action isn't gated by role alone, same `requirePin` middleware and lockout behavior as price edits. `403` on missing/invalid/locked PIN, same codes as `PATCH /api/products/:id`.
 
 ---
 

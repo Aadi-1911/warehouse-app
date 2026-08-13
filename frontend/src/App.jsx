@@ -9,6 +9,7 @@ import LiveStock from './pages/LiveStock';
 import Transfer from './pages/Transfer';
 import ManageUsers from './pages/ManageUsers';
 import SetPin from './pages/SetPin';
+import FactoryPayables from './pages/FactoryPayables';
 
 export default function App() {
   return (
@@ -64,6 +65,14 @@ export default function App() {
             element={
               <ProtectedRoute requireRole="OWNER">
                 <SetPin />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/factory-payables"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <FactoryPayables />
               </ProtectedRoute>
             }
           />

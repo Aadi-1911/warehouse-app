@@ -3,8 +3,14 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-// POST /api/factory-payments — OWNER only (👑), no PIN. Records money paid TO a Factory,
-// reducing amountPayable — mirrors the party-facing Payment entity for the reverse direction.
+// POST /api/factory-payments — OWNER only (👑) AND PIN-gated (📌, via requirePin in
+// routes/factoryPayments.js). Records money paid TO a Factory, reducing amountPayable —
+// mirrors the party-facing Payment entity for the reverse direction. Originally shipped
+// role-only, no PIN (real money movement, but not itself a cost/selling-price read or write);
+// revisited when the Factory Payables screen needed a real PIN gate on recording a payment
+// rather than a decorative one, and role-only was judged too weak for a live financial action
+// once the screen made that gap concrete. req.body.pin is read by the requirePin middleware
+// before this handler ever runs — nothing here needs to check it directly.
 async function createFactoryPayment(req, res) {
   const { factoryId, amount, date, note } = req.body;
 

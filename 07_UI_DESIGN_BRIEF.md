@@ -183,6 +183,15 @@ A component's background/border/text should always share the same role tint toge
 ### 5.7 New Screen — Low Stock List
 - A dedicated aggregate view of every article currently at or below the low-stock threshold, so staff/owner don't have to hunt across other screens for this.
 
+### 5.8 New Screen — Factory Payables
+- Owner-only screen, own Home tile (same conditional-render pattern as other owner-only tiles) — doesn't depend on any other screen existing.
+- A Factory selector (dropdown) at the top is the single source of "which factory am I looking at" — no separate Factory list screen needed.
+- Three stat figures below the selector: Total owed and Total paid as two smaller side-by-side stats (neutral background), and Amount payable as the visual hero — larger, full-width, accent-tinted (background + border + text all accent, per §3.1's shared-role rule) — matching how the Owner Dashboard's Stock value KPI already uses accent blue for a computed financial figure (§8).
+- Below that, a Payment history list — reverse-chronological, each row showing date, an optional note ("Bank transfer," "Cash"), amount right-aligned.
+- Sticky bottom action bar: a single accent-filled "Record payment" button (§3.2's standard pattern).
+- Recording a payment uses a lightweight inline PIN prompt, not the standard confirm-modal — the same deliberate exception already established for price edits (§8), extended here because it's a real money-movement action, not because payments are pricing.
+- Switching the Factory dropdown must synchronously reset the visible stats/history — no stale numbers from a previous selection should ever remain on screen, same principle already logged for Receive Stock's Factory switch.
+
 ## 7. Round 7 Refinements (Claude Design staff prototype)
 
 - **Factory disambiguation copy**: when a searched article number matches more than one Factory, show one chip per match labeled with both factory and article name (e.g. "Round Neck Tee — Jyoti Creations" vs "Kurta Set — Comeco"), not just the bare factory name — the article name itself is often the fastest way for staff to recognize which one they mean.

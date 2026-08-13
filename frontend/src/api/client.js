@@ -30,12 +30,15 @@ export function clearToken() {
 
 // Carries the backend's own error `code` alongside the message, so callers can branch on a
 // stable identifier (INVALID_CREDENTIALS, PIN_LOCKED, ...) rather than string-matching prose.
+// `extra` carries any sibling fields sendError() attached beyond { code, message } — e.g.
+// requirePin's attemptsRemaining on an INVALID_PIN response — undefined when there are none.
 export class ApiError extends Error {
-  constructor(message, code, status) {
+  constructor(message, code, status, extra) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
+    this.extra = extra;
   }
 }
 
@@ -75,11 +78,15 @@ export async function apiFetch(path, { method = 'GET', body, ...rest } = {}) {
 
   if (!response.ok) {
     // Every backend endpoint returns { error: { code, message } } (04_API_SPEC.md), so this
-    // unwraps that one shape rather than each caller re-deriving it.
+    // unwraps that one shape rather than each caller re-deriving it. sendError() sometimes
+    // attaches sibling fields alongside `error` (e.g. { error, attemptsRemaining }) — everything
+    // except `error` itself is passed through as `extra`, undefined when there's nothing there.
+    const { error: _error, ...extra } = data ?? {};
     throw new ApiError(
       data?.error?.message ?? `Request failed (${response.status})`,
       data?.error?.code ?? 'UNKNOWN_ERROR',
-      response.status
+      response.status,
+      Object.keys(extra).length ? extra : undefined
     );
   }
 

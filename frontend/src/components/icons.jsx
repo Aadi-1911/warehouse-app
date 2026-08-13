@@ -106,3 +106,17 @@ export function PackageIcon({ size = 20 }) {
     </svg>
   );
 }
+
+// Factory Payables (§5.8) — not part of 07_UI_DESIGN_BRIEF.md's original spec (added later, no
+// icon called out there either), so no icon is spec'd. A wallet is the conventional
+// "money owed/paid" mark — the small circle on the flap reads as a clasp, distinguishing it
+// from PackageIcon's box at a glance despite the similar overall silhouette.
+export function WalletIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v3" />
+      <path d="M3 7v11a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1h-5a2 2 0 0 0 0 4h6" />
+      <circle cx="16.5" cy="14" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
