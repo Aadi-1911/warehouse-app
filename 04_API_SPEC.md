@@ -39,6 +39,12 @@ Sets `isActive: true` — reverses a deactivation.
 ### `PATCH /api/users/me/pin` 🔒 (OWNER only)
 Body: `{ newPin, currentPin? }`. Self-service PIN set/change — **the only way a PIN is ever set, never done by whoever created the account.** If `priceEditPinHash` is currently null (first-time setup), `currentPin` is not required. If a PIN already exists, `currentPin` must be provided and verified before the new one is accepted — same reasoning as a password change, prevents someone with just an active session from silently changing the PIN.
 
+### `PATCH /api/users/:id/password` 📌
+Body: `{ newPassword, pin }`. **Admin password reset — not self-service.** The `pin` verified is the *requester's own* PIN (same `req.user.id` lookup as every other PIN gate), not the target's — it proves who's making the change, not knowledge of the target's current password. This is deliberately the only way to give someone a working login again: there's no separate "forgot password" flow, and no `currentPassword` check, because the whole point is handing out a new password to someone who doesn't have (or doesn't remember) the old one.
+Resetting your own password through this endpoint is allowed — an active session plus a correct PIN is at least as strong as a typical self-service "enter current password" check.
+**Resetting a different OWNER's password requires `isPrimaryOwner: true`** on the requester — same restriction as `POST /api/users`' OWNER-creation gate (rule 74), extended here because letting any secondary OWNER reset another OWNER's password (including the primary owner's) would be a full account takeover, not just an unwanted permission grant. Resetting a STAFF account's password has no such restriction — any OWNER, primary or not, can do it.
+Response: `{ id, name, username, role, isActive, isPrimaryOwner }` — same shape as `GET /api/users`, no password fields.
+
 ---
 
 ## Factories 🔒
@@ -205,8 +211,9 @@ Lists Bundles for a given Product (i.e. its valid colors) — can also be served
 
 ### `GET /api/stock` 🔒
 Query params: `?articleNo=`, `?colorId=`, `?locationId=` — supports the Live Stock View's search/filter requirement.
-Response: `[{ bundleId, productId, productArticleNo, colorName, locationId, locationName, qtySets }]`
+Response: `[{ bundleId, productId, productArticleNo, factoryId, factoryName, colorName, locationId, locationName, qtySets }]`
 **No direct write endpoint exists for Stock** — quantities only change via `POST /api/transactions` (see below). This is intentional; do not add a `PATCH /api/stock/:id`.
+`factoryId`/`factoryName` added for §5.9's Factory-grouped Transfer picker — every row already traces back through a Product to exactly one Factory, so this is a same-query addition, not a new join. Existing callers unaffected.
 
 ---
 

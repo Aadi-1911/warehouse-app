@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TransferIcon } from '../components/icons';
+import { TransferIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listLocations } from '../api/locations';
@@ -33,6 +33,18 @@ import { createTransfer } from '../api/transfers';
 // Consequently there is deliberately NO "+ Create new article/colour/location" anywhere on
 // this screen. That absence is the clearest expression of what a Transfer is, and is not an
 // oversight to be "fixed" later by pattern-matching Receive Stock's CreatableSelect.
+//
+// FACTORY → ARTICLE GROUPING (07_UI_DESIGN_BRIEF.md §5.9 amendment) — NOT a reversal of the above
+// -----------------------------------------------------------------------------------------------
+// The reasoning above is about SELECTION: a flat list of concrete Stock rows means every visible
+// option is real and transferable, with no cascade that can dead-end. That guarantee is about
+// what data is allowed to appear, not about how it's laid out on screen — grouping the exact same
+// rows by Factory, then by Article (collapsible, matching Live Stock's accordion), changes only
+// the second thing. Nothing here is looked up or matched into existence: the Factory dropdown's
+// own options are derived from the Factories actually present in the already-fetched, already-
+// transferable row set (see factoryOptions below), not from a separate factory list that could
+// offer a Factory with zero stock at this Location. A colour row nested three levels deep is
+// still exactly one Stock row, selected the same way a flat row always was — see LEARNING_LOG.md.
 export default function Transfer() {
   const [locations, setLocations] = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(true);
@@ -51,6 +63,17 @@ export default function Transfer() {
   const [sourceStockError, setSourceStockError] = useState(null);
 
   const [search, setSearch] = useState('');
+
+  // Which Factory the browsing hierarchy is currently scoped to — '' means none chosen yet.
+  // Only meaningful when search is empty; a search term bypasses Factory scoping entirely (see
+  // searchResults below) since a search is already a narrower, more direct way to find one row.
+  const [factoryId, setFactoryId] = useState('');
+  // Which Article-level accordion sections are open — a Set of productId, same shape as Live
+  // Stock's own expandedArticles (LiveStock.jsx). Both start collapsed; there's no Factory-level
+  // accordion here the way Live Stock has one, since Factory is a single-select dropdown instead
+  // (07_UI_DESIGN_BRIEF.md §5.9 amendment) — only one Factory's articles are ever on screen.
+  const [expandedArticles, setExpandedArticles] = useState(new Set());
+
   // The row currently being configured — kept whole rather than as a bare bundleId, same
   // reasoning as before. Not yet staged; "+ Add to transfer" (or picking a different row) is
   // what folds it into stagedLines.
@@ -140,9 +163,38 @@ export default function Transfer() {
     setNote('');
     setSearch('');
     setStagedLines([]);
+    // The Factory dropdown's own options are derived from THIS location's rows (see
+    // factoryOptions below) — a new location can offer an entirely different set of Factories,
+    // so the previous selection (and whichever articles were left expanded under it) can't
+    // carry over meaningfully.
+    setFactoryId('');
+    setExpandedArticles(new Set());
     // Clearing a to-location that now equals the new from-location is what keeps the two
     // dropdowns from ever agreeing (the backend rejects it, but the UI shouldn't offer it).
     if (newId === toLocationId) setToLocationId('');
+  }
+
+  // A new Factory means an entirely different set of Articles on screen — collapse everything
+  // and drop any in-progress row selection, the same reasoning handleFromLocationChange uses
+  // for a Location switch. stagedLines is deliberately left untouched: a staged line is tied to
+  // the source Location it was picked from (fromLocationId), not to which Factory is currently
+  // being BROWSED, so a line staged while looking at a different Factory stays perfectly valid
+  // and stays staged — this task's own instruction that staging is unaffected by the new picker.
+  function handleFactoryChange(newFactoryId) {
+    setFactoryId(newFactoryId);
+    setExpandedArticles(new Set());
+    setSelectedRow(null);
+    setQtySets(0);
+    setNote('');
+  }
+
+  function toggleArticle(productId) {
+    setExpandedArticles((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
   }
 
   // Shared by row-switching and "Transfer stock": folds the currently active row (if it has a
@@ -275,15 +327,51 @@ export default function Transfer() {
   }
 
   const searchText = search.trim().toLowerCase();
-  const visibleRows = (
-    searchText
-      ? sourceStock.filter(
-          (r) =>
-            r.productArticleNo.toLowerCase().includes(searchText) ||
-            r.colorName.toLowerCase().includes(searchText)
-        )
-      : sourceStock
-  ).filter((r) => remainingForRow(r) > 0 || r.bundleId === selectedRow?.bundleId);
+
+  // The base set behind everything below: real, currently-transferable rows at this Location —
+  // same "remaining > 0, or currently being configured" filter the flat list has always applied
+  // (requirement 6's staged-quantity cap), computed once so search results, Factory options, and
+  // the Article groups are all derived from an identical, consistent set of rows.
+  const availableRows = sourceStock.filter(
+    (r) => remainingForRow(r) > 0 || r.bundleId === selectedRow?.bundleId
+  );
+
+  // A search term bypasses Factory/Article grouping entirely and searches across the WHOLE
+  // location, unchanged from this screen's original behavior — narrowing by typing is already a
+  // more direct way to find one specific row than picking a Factory first would be, so there's
+  // no reason to make search Factory-scoped too.
+  const searchResults = searchText
+    ? availableRows.filter(
+        (r) =>
+          r.productArticleNo.toLowerCase().includes(searchText) ||
+          r.colorName.toLowerCase().includes(searchText)
+      )
+    : [];
+
+  // Factory options come from the Factories actually present in availableRows — never a
+  // separate listFactories() call. That's what keeps "every visible choice is real" true one
+  // level up: a fetched-independently Factory list could offer a Factory with zero transferable
+  // stock at this Location, which would be its own small dead end, exactly what the flat-list
+  // design at the top of this file exists to avoid for individual rows (LEARNING_LOG.md).
+  const factoryOptions = Array.from(new Map(availableRows.map((r) => [r.factoryId, r.factoryName])).entries())
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Grouped by Article for the accordion (07_UI_DESIGN_BRIEF.md §5.9 amendment) — only the rows
+  // under the currently selected Factory. Array.from(Map.values()) preserves first-seen order;
+  // sorted by articleNo afterward for a stable, predictable list rather than raw fetch order.
+  const articleGroups = (() => {
+    if (!factoryId) return [];
+    const byProduct = new Map();
+    for (const row of availableRows) {
+      if (row.factoryId !== factoryId) continue;
+      if (!byProduct.has(row.productId)) {
+        byProduct.set(row.productId, { productId: row.productId, articleNo: row.productArticleNo, rows: [] });
+      }
+      byProduct.get(row.productId).rows.push(row);
+    }
+    return Array.from(byProduct.values()).sort((a, b) => a.articleNo.localeCompare(b.articleNo));
+  })();
 
   // The source location is removed from the destination list entirely — the backend rejects a
   // same-location transfer with SAME_LOCATION, but an option that can only ever produce an
@@ -308,8 +396,37 @@ export default function Transfer() {
     if (!fromLocationId) return 'Select a source location to see what it holds.';
     if (sourceStockStatus !== 'loaded') return 'Loading…';
     if (sourceStock.length === 0) return 'This location holds no stock to transfer.';
-    if (visibleRows.length === 0) return 'No stock here matches your search.';
+    if (searchText) return searchResults.length === 0 ? 'No stock here matches your search.' : null;
+    if (!factoryId) return 'Select a factory to see its articles.';
     return null;
+  }
+
+  // Shared by the search-results list, a single-colour article (no pointless accordion for one
+  // item — requirement), and colour rows nested inside an expanded Article. showArticle is false
+  // only in that last case, where the Article No is already shown once in the accordion header
+  // and repeating it on every colour row underneath would be redundant. Selection/staging
+  // behavior is identical in all three places — this is still exactly the same row-picking
+  // mechanism the flat list always used, just reached through a different path on screen.
+  function renderStockRow(row, { showArticle }) {
+    const selected = selectedRow?.bundleId === row.bundleId;
+    return (
+      <button
+        key={row.bundleId}
+        type="button"
+        className={`transfer-stock-row ${selected ? 'transfer-stock-row-selected' : ''}`}
+        onClick={() => handleSelectRow(row)}
+        aria-pressed={selected}
+        // Disabled while a batch is submitting — staging a new line here would land in the same
+        // stagedLines array handleConfirmedSubmit is mid-flight on.
+        disabled={submitting}
+      >
+        {showArticle && <span className="transfer-row-article">{row.productArticleNo}</span>}
+        <span className="transfer-row-color">{row.colorName}</span>
+        <span className="transfer-row-qty">
+          {remainingForRow(row)} set{remainingForRow(row) === 1 ? '' : 's'}
+        </span>
+      </button>
+    );
   }
 
   return (
@@ -422,29 +539,73 @@ export default function Transfer() {
           </p>
         )}
 
+        {/* Factory dropdown — appears once a Location is chosen and its stock has loaded
+            (07_UI_DESIGN_BRIEF.md §5.9 amendment), matching Receive Stock's Factory-first
+            pattern. Hidden while searching: a search term already scopes across the whole
+            Location on its own, so a Factory filter sitting inert alongside it would be
+            confusing rather than helpful. */}
+        {!searchText && fromLocationId && sourceStockStatus === 'loaded' && sourceStock.length > 0 && (
+          <label className="field">
+            <span className="field-label">Factory</span>
+            <select value={factoryId} onChange={(e) => handleFactoryChange(e.target.value)} disabled={submitting}>
+              <option value="">Select factory</option>
+              {factoryOptions.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         {stockListMessage() ? (
           <p className="muted centered-empty-state">{stockListMessage()}</p>
-        ) : (
+        ) : searchText ? (
+          // Flat search-result list — unchanged behavior, works across every Factory at once.
           <div className="transfer-stock-list">
-            {visibleRows.map((row) => {
-              const selected = selectedRow?.bundleId === row.bundleId;
+            {searchResults.map((row) => renderStockRow(row, { showArticle: true }))}
+          </div>
+        ) : (
+          // Factory → Article (collapsible) → Colour hierarchy (07_UI_DESIGN_BRIEF.md §5.9
+          // amendment), scoped to the chosen Factory. Reuses Live Stock's shared accordion
+          // classes as-is (LiveStock.jsx/index.css) — this is a single level of accordion, not
+          // Live Stock's two (Factory here is a dropdown, not its own accordion layer, since
+          // only one Factory's articles are ever visible at a time).
+          <div className="transfer-stock-list">
+            {articleGroups.map((article) => {
+              // An article with exactly one colour has nothing to disambiguate — collapsing it
+              // behind a header + chevron would be a click for no reason, so it renders as a
+              // plain row directly, same as Live Stock's single-Location collapse (§5.5).
+              if (article.rows.length === 1) {
+                return renderStockRow(article.rows[0], { showArticle: true });
+              }
+
+              const expanded = expandedArticles.has(article.productId);
               return (
-                <button
-                  key={row.bundleId}
-                  type="button"
-                  className={`transfer-stock-row ${selected ? 'transfer-stock-row-selected' : ''}`}
-                  onClick={() => handleSelectRow(row)}
-                  aria-pressed={selected}
-                  // Disabled while a batch is submitting — staging a new line here would land in
-                  // the same stagedLines array handleConfirmedSubmit is mid-flight on.
-                  disabled={submitting}
-                >
-                  <span className="transfer-row-article">{row.productArticleNo}</span>
-                  <span className="transfer-row-color">{row.colorName}</span>
-                  <span className="transfer-row-qty">
-                    {remainingForRow(row)} set{remainingForRow(row) === 1 ? '' : 's'}
-                  </span>
-                </button>
+                <div key={article.productId} className="accordion-section nested">
+                  <button
+                    type="button"
+                    className="accordion-header nested"
+                    onClick={() => toggleArticle(article.productId)}
+                    aria-expanded={expanded}
+                  >
+                    <div className="accordion-header-text">
+                      <div className="accordion-title-sm">{article.articleNo}</div>
+                      <div className="accordion-subtitle">
+                        <span className="badge badge-accent">
+                          {article.rows.length} colour{article.rows.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </div>
+                    <ChevronIcon className={expanded ? 'chevron chevron-open' : 'chevron'} />
+                  </button>
+
+                  {expanded && (
+                    <div className="accordion-body nested">
+                      {article.rows.map((row) => renderStockRow(row, { showArticle: false }))}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

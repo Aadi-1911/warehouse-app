@@ -25,7 +25,7 @@ async function listStock(req, res) {
       qtySets: true,
       bundle: {
         select: {
-          product: { select: { id: true, articleNo: true } },
+          product: { select: { id: true, articleNo: true, factoryId: true, factory: { select: { name: true } } } },
           color: { select: { name: true } },
         },
       },
@@ -39,10 +39,19 @@ async function listStock(req, res) {
   // safely, since article numbers are only unique per Factory, never globally (CLAUDE.md's
   // non-negotiable rule) — matching by the bare string would silently misattribute stock to
   // the wrong Factory the moment two Factories share an article number.
+  //
+  // factoryId/factoryName ride along too — added for Transfer's Factory-grouped picker
+  // (07_UI_DESIGN_BRIEF.md §5.9 amendment). Selected directly here rather than making Transfer
+  // do its own separate listProducts()/listFactories() join the way LiveStock.jsx does, since
+  // every consumer of this endpoint needs a Location→Factory→Article→Colour hierarchy sooner
+  // or later and the join is already sitting right here. Purely additive — existing callers
+  // that don't reference these two fields are unaffected.
   const response = stock.map((s) => ({
     bundleId: s.bundleId,
     productId: s.bundle.product.id,
     productArticleNo: s.bundle.product.articleNo,
+    factoryId: s.bundle.product.factoryId,
+    factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,
     locationId: s.locationId,
     locationName: s.location.name,
