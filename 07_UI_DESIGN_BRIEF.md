@@ -149,6 +149,11 @@ A component's background/border/text should always share the same role tint toge
 
 ## 6. Round 6 Refinements (supersede/extend Section 5 where they conflict)
 
+### 5.1 Home — updated
+- Only core, frequent, semantically-distinct actions get a colored tile — the grid holds just **Receive Stock (green/Success)** and **Live Stock (blue/Accent)** for now. **New Order (purple)** and **Pack Order (amber)** are confirmed for the same tile treatment once Phase 2 exists — not built until then, captured here for later only.
+- Everything else — **Transfer, Manage Users, Set PIN, Factory Payables** — moves into a plain **"More" list** below the colored tiles: icon + label only, no color tint, simple list rows (same treatment the reference gives Transfer/Low Stock/History).
+- Owner-only items in that list (**Manage Users, Set PIN, Factory Payables**) still only render for the OWNER role — same conditional-render pattern already used on this screen.
+
 ### 5.2 Receive Stock — updated
 - Rename the lookup button from "Check" to **"Add"** (two-step flow unchanged: Add to look up, then Add to receipt to commit).
 - Article lookup must always offer a **"Change"** action to re-search — never leave a dead-end disabled input after a wrong/failed search.

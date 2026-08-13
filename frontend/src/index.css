@@ -820,8 +820,11 @@ body {
   color: var(--warning-text);
 }
 
-/* A quieter entry point than the tile grid's big colourful actions — appropriate for
-   "owner-only, low-frequency use" (01_PRD.md §95), not competing with daily staff workflows. */
+/* A quieter entry point than the tile grid's big colourful actions — icon + label, no color
+   tint. Originally just Manage Users' "owner-only, low-frequency use" row (01_PRD.md §95); now
+   also every row in Home's "More" list (§5.1 — updated), including Transfer, which is neither
+   owner-only nor low-frequency — the shared trait this class actually captures is "not a core
+   enough action to earn a colored tile," not "owner-only." */
 .secondary-link-row {
   display: flex;
   align-items: center;
@@ -832,6 +835,15 @@ body {
   color: var(--text-primary);
   text-decoration: none;
   border-top: 1px solid var(--divider);
+}
+
+/* --- Home: "More" list (§5.1 — updated) --- */
+.more-list {
+  margin-bottom: 16px;
+}
+
+.more-list-label {
+  margin-bottom: 2px;
 }
 
 /* --- Live Stock View: stat cards (§5.5) --- */

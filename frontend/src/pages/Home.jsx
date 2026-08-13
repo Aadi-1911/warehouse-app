@@ -1,20 +1,49 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { TruckIcon, ListIcon, TransferIcon, PackageIcon, UsersIcon, KeyIcon } from '../components/icons';
+import {
+  TruckIcon,
+  ListIcon,
+  TransferIcon,
+  PackageIcon,
+  UsersIcon,
+  KeyIcon,
+  WalletIcon,
+} from '../components/icons';
 
-// Home screen — 07_UI_DESIGN_BRIEF.md §5.1.
+// Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
 //
-// The brief specifies a 2x2 grid of four tiles (Receive Stock, Live Stock, New Order, Pack
-// Order), but the two Order screens are Phase 2 entities (06_ROADMAP.md) and don't exist yet —
-// dead tiles for unbuilt screens aren't rendered. Transfer takes the third slot: it wasn't in
-// the brief at all (transfers were an accepted Phase 1 limitation, 05_BUSINESS_RULES.md rule
-// 46, and only became real in rule 93), but it's a daily-use staff action that moves live
-// stock, which is exactly what this grid is for. The grid is two columns, so the Phase 2 pair
-// still slots in later without a layout change.
+// Colored tiles are reserved for core, frequent, semantically-distinct actions only — Receive
+// Stock (green) and Live Stock (blue) today. New Order (purple) and Pack Order (amber) are
+// confirmed for the same treatment once Phase 2 exists, but aren't built yet, so they're not
+// rendered (a dead tile for an unbuilt screen was already the rule before this change; it just
+// used to apply to two DIFFERENT screens). Everything else that used to compete for a colored
+// tile slot — Transfer, plus the owner-only admin screens — now lives in the plain "More" list
+// below instead: icon + label only, no color tint, same treatment §5.1 gives Transfer/Low
+// Stock/History in the reference. Colored tiles stay a flat, unconditional array (nothing in
+// it is ever role-gated); the More list is where per-item visibility logic now lives, since
+// that's the only place it still applies.
 const TILES = [
   { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
   { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
-  { to: '/transfer', label: 'Transfer Stock', tone: 'accent', Icon: TransferIcon },
+];
+
+// Each entry decides its own visibility from `user` — Transfer is unconditional (any
+// authenticated role), the other three are owner-only, and Set PIN additionally disappears
+// once a PIN is already set (its own screen redirects home in that case — SetPin.jsx has no
+// "change an existing PIN" mode yet, so a permanently-visible row would be a dead link most of
+// the time). Kept alongside the existing prompt-banner-warning below rather than replacing it:
+// that banner is a higher-visibility nudge for a blocking action (no PIN means no price edits,
+// now no Factory Payments either), which is a different job than a plain list row.
+const MORE_ITEMS = [
+  { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
+  { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: (user) => user.role === 'OWNER' },
+  {
+    to: '/set-pin',
+    label: 'Set PIN',
+    Icon: KeyIcon,
+    show: (user) => user.role === 'OWNER' && !user.hasPinSet,
+  },
+  { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
 ];
 
 export default function Home() {
@@ -73,14 +102,23 @@ export default function Home() {
         </Link>
       )}
 
-      {/* Owner-only, deliberately NOT in the tile grid above — 01_PRD.md §95 calls this
-          "owner-only, low-frequency use," which argues against a large tile competing
-          visually with the daily-use staff actions. */}
-      {isOwner && (
-        <Link to="/users" className="secondary-link-row">
-          <UsersIcon size={18} />
-          <span>Manage Users</span>
-        </Link>
+      {/* §5.1's "More" list — everything that isn't a core, frequent, semantically-distinct
+          action lives here instead of competing for a colored tile: Transfer (any role) plus
+          the owner-only admin/finance screens. Each item's own `show(user)` decides inclusion,
+          since the conditions genuinely differ per item (Set PIN's is stricter than the rest —
+          see MORE_ITEMS' own comment for why). The `some(...)` guard means a "More" label never
+          renders above zero rows — not reachable today (Transfer always shows), but free
+          insurance against that changing later. */}
+      {MORE_ITEMS.some((item) => item.show(user)) && (
+        <div className="more-list">
+          <div className="eyebrow more-list-label">More</div>
+          {MORE_ITEMS.filter((item) => item.show(user)).map(({ to, label, Icon }) => (
+            <Link key={to} to={to} className="secondary-link-row">
+              <Icon size={18} />
+              <span>{label}</span>
+            </Link>
+          ))}
+        </div>
       )}
 
       <button type="button" className="btn-secondary" onClick={logout}>
