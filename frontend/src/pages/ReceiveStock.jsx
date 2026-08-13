@@ -192,21 +192,19 @@ export default function ReceiveStock() {
   const [resolvedColorsStatus, setResolvedColorsStatus] = useState('idle');
   const [resolvedColorsError, setResolvedColorsError] = useState(null);
 
-  // Set once per lookup, not recomputed live from resolvedColors.length: whether this article
-  // started its color-staging session with zero colors of its own — justCreated always does; a
-  // matched article does too if getValidColors comes back empty (see the fetch effect below).
-  // Deliberately a snapshot, not a live check — resolvedColors legitimately GROWS as colors get
-  // picked during a bootstrap session (X, then Y, then Z, all still drawn from the global list),
-  // and re-deriving this from "is it empty right now" would flip the picker's source away from
-  // the global list after the very first pick, hiding every other not-yet-resolved color.
-  const [colorBootstrapMode, setColorBootstrapMode] = useState(false);
-
-  // Only populated while colorBootstrapMode is true — the full picker list a color gets chosen
-  // FROM, before it has a Bundle (and therefore before it belongs in resolvedColors).
+  // The full global color list — ALWAYS fetched alongside resolvedColors for a matched/
+  // justCreated article, not just when the article starts with zero colors of its own. This is
+  // what makes "+ Add new color" a genuine, permanently-reachable escape hatch rather than a
+  // one-time bootstrap path: an article that already has real colors can still reach every
+  // OTHER color in the system, not just the ones already bundled to it (the REAL GAP this
+  // replaced — see LEARNING_LOG.md). An earlier version of this screen only ever fetched this
+  // list while a `colorBootstrapMode` flag was true, itself only ever set for a zero-color
+  // article — meaning the moment an article got its first real color, the fallback list became
+  // permanently unreachable for that article, forever, including on every future re-search.
   const [globalColors, setGlobalColors] = useState([]);
-  // Same three states, for the same reason: colorBootstrapMode flipping true and this list
-  // actually arriving are two different moments, and the render in between was claiming "no
-  // colors exist in the system yet" while the fetch hadn't started.
+  // Same three states, for the same reason: the fetch kicking off and this list actually
+  // arriving are two different moments, and the render in between must not claim "no colors
+  // exist in the system yet" while the fetch hasn't even started.
   const [globalColorsStatus, setGlobalColorsStatus] = useState('idle');
   const [globalColorsError, setGlobalColorsError] = useState(null);
   const [bundleCreating, setBundleCreating] = useState(false);
@@ -282,12 +280,6 @@ export default function ReceiveStock() {
       .then((colors) => {
         if (cancelled) return;
         setResolvedColors(colors);
-        // A matched article found with zero existing Bundles needs exactly the same bootstrap
-        // treatment as a justCreated one — see article 6056 in LEARNING_LOG.md for why this
-        // matters: without it, an article that was created but abandoned before its first color
-        // stays permanently stuck the next time it's looked up, since "matched" alone no longer
-        // implies "has colors."
-        if (colors.length === 0) setColorBootstrapMode(true);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -306,8 +298,13 @@ export default function ReceiveStock() {
     };
   }, [lookup]);
 
+  // The REAL GAP fix: this now runs on the exact same condition as resolvedColors' own fetch
+  // above (any matched/justCreated article), not on a one-time "started with zero colors" flag.
+  // A previous version gated this behind `colorBootstrapMode`, which only ever turned on for a
+  // zero-color article and never turned back off — so an article with even one real color could
+  // never reach this list again, on this lookup or any future re-search of the same article.
   useEffect(() => {
-    if (!colorBootstrapMode) {
+    if (lookup?.status !== 'matched') {
       setGlobalColorsStatus('idle');
       return;
     }
@@ -332,7 +329,7 @@ export default function ReceiveStock() {
     return () => {
       cancelled = true;
     };
-  }, [colorBootstrapMode]);
+  }, [lookup]);
 
   // Changing Factory OR Location invalidates any lookup already on screen — matching is
   // scoped to a single Factory (Critical Interaction Rule #3), and rule 52 requires each
@@ -399,7 +396,6 @@ export default function ReceiveStock() {
     // known" for an article it has never queried, which is the exact confusion this replaced.
     setResolvedColorsStatus('idle');
     setResolvedColorsError(null);
-    setColorBootstrapMode(false);
     setGlobalColors([]);
     setGlobalColorsStatus('idle');
     setGlobalColorsError(null);
@@ -505,9 +501,9 @@ export default function ReceiveStock() {
         sizes,
       });
       // Transition into the SAME color-staging UI the Matched branch uses — justCreated is
-      // what tells the effects/handlers above this Product has no Bundles yet.
+      // what tells the effects/handlers above this Product has no Bundles yet. The globalColors
+      // effect fires from this same `lookup` change, same as for any other matched article.
       setLookup({ status: 'matched', product, justCreated: true });
-      setColorBootstrapMode(true);
     } catch (err) {
       setCreateArticleError(err.message);
     } finally {
@@ -582,6 +578,19 @@ export default function ReceiveStock() {
     setStagedColors((prev) => prev.filter((s) => s.colorId !== colorId));
   }
 
+  // Makes "stage this color, then pick another" an explicit, visible action rather than
+  // something only discoverable by already knowing that picking a different color from the
+  // dropdown silently finalizes whatever was active before it (finalizeActiveColor already runs
+  // there too — this button does the exact same thing, just as its own first-class step). Per
+  // the standing rule that a non-obvious interaction needs its own visible affordance: without
+  // this, the only way to learn multi-color staging works is to already know to try it.
+  function handleStageAnother() {
+    setStagedColors((prev) => finalizeActiveColor(prev));
+    setSelectedColorId('');
+    setCurrentSets(0);
+    setCurrentDamaged(false);
+  }
+
   function handleAddToReceipt() {
     // Rule 51: a color picked but never explicitly staged must still be included, not dropped.
     const finalColors = finalizeActiveColor(stagedColors);
@@ -629,34 +638,37 @@ export default function ReceiveStock() {
 
   const lookupDone = lookup !== null;
   const sessionReady = !!factoryId && !!locationId;
-  // The picker source: this article's own colors, unless colorBootstrapMode says it started this
-  // session with zero of them (rule 5/5.5 — stock-entry for an established article stays scoped
-  // to its real Bundles, never the noisy full global list; the fallback exists only to bootstrap
-  // an article's very first color, whether it's brand new or just never got one).
-  const usingGlobalColorFallback = colorBootstrapMode;
-  const colorPickerSource = usingGlobalColorFallback ? globalColors : resolvedColors;
+  // The picker source is ALWAYS the union of this article's own real colors (resolvedColors)
+  // and every color that exists in the system (globalColors), deduplicated by id — this is the
+  // REAL GAP fix. The article's own colors still surface first in practice (resolvedColors is
+  // spread first), but a color that only exists in globalColors is reachable too, always, not
+  // just while an article happens to have zero colors of its own. Picking one that isn't yet
+  // resolved runs through the exact same auto-Bundle-creation path handleColorChange already
+  // has (it checks resolvedColors, not "am I in some fallback mode") — nothing downstream of
+  // the picker itself needed to change for this fix.
+  const colorPickerSource = (() => {
+    const seen = new Set();
+    const merged = [];
+    for (const c of [...resolvedColors, ...globalColors]) {
+      if (!seen.has(c.id)) {
+        seen.add(c.id);
+        merged.push(c);
+      }
+    }
+    return merged;
+  })();
   const availableColors = colorPickerSource.filter((c) => !stagedColors.some((s) => s.colorId === c.id));
-  // The gate is "has every list this article actually depends on finished being fetched",
-  // expressed positively — NOT "is nothing currently in flight". Those differ precisely at the
-  // 'idle' moments, which is the whole point: an un-started fetch has nothing in flight either.
-  // Which lists matter depends on the source: in bootstrap mode the picker is populated from
-  // globalColors, so resolvedColors having settled says nothing useful on its own — and
-  // colorBootstrapMode flips true in the same batch that resolvedColors settles, one render
-  // BEFORE the globalColors request starts, which is when the UI used to claim "no colors
-  // exist in the system yet" while a color did exist.
-  const colorListsSettled = usingGlobalColorFallback
-    ? resolvedColorsStatus === 'loaded' && globalColorsStatus === 'loaded'
-    : resolvedColorsStatus === 'loaded';
-  // Disabled only when genuinely nothing can be done: still loading, mid-create, or (the
-  // non-fallback case) this article's own colors are all already staged with no "+ Create new"
-  // offered to fall back on. In the fallback case the select stays enabled even at zero real
-  // options, purely so "+ Create new color" remains reachable — that's the whole fix.
-  const colorSelectDisabled = !colorListsSettled || bundleCreating || (availableColors.length === 0 && !usingGlobalColorFallback);
-  // Two genuinely different empty states, needing different guidance (rule: never say "no
-  // colors for this article" when the real problem is "no colors exist anywhere yet", and vice
-  // versa — the person reading it can't act correctly on the wrong one). Both only apply while
-  // usingGlobalColorFallback is true (this article has zero colors of its own) — an established
-  // article with real colors just gets the plain "Select color"/"All colors staged" it always did.
+  // Both lists matter now, always — there's no more mode where only one of them is the picker's
+  // real source, so both must have settled before the picker can honestly report anything.
+  const colorListsSettled = resolvedColorsStatus === 'loaded' && globalColorsStatus === 'loaded';
+  // "+ Create new color" is always offered now (canCreate is unconditional below), so the
+  // select never needs disabling just because availableColors is empty — that escape hatch is
+  // always the way forward. Only genuine blockers disable it: still loading, or mid-create.
+  const colorSelectDisabled = !colorListsSettled || bundleCreating;
+  // Two genuinely different empty states, needing different guidance (never say "no colors for
+  // this article" when the real problem is "no colors exist anywhere yet", and vice versa — the
+  // person reading it can't act correctly on the wrong one). No longer gated to a one-time
+  // bootstrap mode — either can be true for any article, at any point, including a re-search.
   function colorSelectPlaceholder() {
     // Every branch below this line asserts something specific about what colors exist. None of
     // them may be reached until the lists have actually settled — otherwise the message is a
@@ -665,11 +677,10 @@ export default function ReceiveStock() {
     // both are honest, which "All colors staged" was not.
     if (!colorListsSettled) return 'Loading…';
     if (bundleCreating) return 'Adding color…';
-    if (!usingGlobalColorFallback) return availableColors.length === 0 ? 'All colors staged' : 'Select color';
-    if (globalColors.length === 0) return 'No colors exist in the system yet — create the first one below';
-    return availableColors.length === 0
-      ? 'All colors staged' // every existing color has already been picked for this article
-      : 'This article has no colors yet — pick one below, or create a new one';
+    if (availableColors.length > 0) return 'Select color';
+    return colorPickerSource.length === 0
+      ? 'No colors exist in the system yet — create the first one below'
+      : 'All colors staged'; // every existing color (this article's own + global) already picked
   }
   const canAddToReceipt = stagedColors.length > 0 || (!!selectedColorId && currentSets > 0);
   // Adult: counting-based, unchanged. Kids: a direct lookup the moment a category is picked —
@@ -902,7 +913,7 @@ export default function ReceiveStock() {
                 options={availableColors}
                 disabled={colorSelectDisabled}
                 placeholder={colorSelectPlaceholder()}
-                canCreate={usingGlobalColorFallback}
+                canCreate // REAL GAP fix: always reachable, not just while an article has zero colors of its own
                 onCreate={handleCreateColor}
               />
 
@@ -978,6 +989,18 @@ export default function ReceiveStock() {
                   ))}
                 </div>
               )}
+
+              {/* Explicit, always-visible "stage more" step — distinct from "Add to receipt"
+                  below, which commits the WHOLE group. Disabled until there's an active color +
+                  quantity actually worth staging, same guard finalizeActiveColor itself uses. */}
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleStageAnother}
+                disabled={!selectedColorId || currentSets <= 0}
+              >
+                + Add another color
+              </button>
 
               <button
                 type="button"

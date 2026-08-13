@@ -199,7 +199,13 @@ body {
   margin-bottom: 6px;
 }
 
-.field input {
+/* :not([type="checkbox"]) matters: without it, this rule and .checkbox-field input (defined
+   above) have IDENTICAL specificity (one class + one type selector each), so the cascade falls
+   back to source order — and this rule, being later, would win. That's exactly what was
+   stretching the "Damaged on arrival" checkbox to width: 100% (plus a border/padding/
+   background meant for text fields): the checkbox lives inside a .field div, so this selector
+   matched it too, and nothing here scoped it away from checkbox-specific styling. */
+.field input:not([type='checkbox']) {
   width: 100%;
   /* 1.5px border on inputs, per the brief's shape spec. */
   border: 1.5px solid var(--card-border);
@@ -236,11 +242,18 @@ body {
   cursor: default;
 }
 
-/* Article No. input sits next to the Add button rather than stacked above it. */
+/* Article No. input sits next to the Add button rather than stacked above it. Spacing below
+   the row lives HERE, on the row itself, not on a child — align-items: flex-end aligns each
+   child's own margin box, so a margin-bottom on just one child (the label, previously) offsets
+   that child's visible bottom edge from its sibling's by exactly that margin. That was the Add
+   button misalignment bug: .article-no-field carried margin-bottom: 14px while the button had
+   none, so their bottoms only LOOKED aligned by coincidence of unrelated heights, not because
+   flex-end was actually lining up the input and the button. */
 .article-lookup-row {
   display: flex;
   align-items: flex-end;
   gap: 10px;
+  margin-bottom: 14px;
 }
 
 /* Reuses .article-lookup-row's input-next-to-button layout for CreatableSelect's inline
@@ -251,7 +264,6 @@ body {
 
 .article-no-field {
   flex: 1;
-  margin-bottom: 14px;
 }
 
 /* --- Buttons --- */
