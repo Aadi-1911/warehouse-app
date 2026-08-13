@@ -132,3 +132,16 @@ export function WalletIcon({ size = 26 }) {
     </svg>
   );
 }
+
+// Article Pricing (§5.10) — not part of 07_UI_DESIGN_BRIEF.md's original spec (added later, no
+// icon called out there either), same reasoning as WalletIcon above. A price tag is the
+// conventional "cost/pricing" mark, distinguishing this from WalletIcon's "money owed" meaning
+// at a glance despite both being finance-adjacent screens.
+export function TagIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3.24L3 3l.24 6.59a2 2 0 0 0 .59 1.42l9.59 9.58a2 2 0 0 0 2.82 0l4.35-4.35a2 2 0 0 0 0-2.83z" />
+      <circle cx="7.5" cy="7.5" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

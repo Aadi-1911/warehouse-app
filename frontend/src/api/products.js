@@ -36,3 +36,12 @@ export function getValidColors(productId) {
 export function createProduct({ articleNo, factoryId, name, categoryId, isKids, sizes }) {
   return apiFetch('/api/products', { method: 'POST', body: { articleNo, factoryId, name, categoryId, isKids, sizes } });
 }
+
+// PATCH /api/products/:id -> the updated Product. Used here for Article Pricing's price edits —
+// costPrice/sellingPrice in the body means the backend requires OWNER role AND a PIN match
+// (`pin` in the body), enforced by requirePinForPriceEdits (routes/products.js). Same endpoint
+// Receive Stock/every other Product edit would use for non-price fields; nothing new invented
+// for pricing specifically.
+export function updateProduct(id, { costPrice, sellingPrice, pin }) {
+  return apiFetch(`/api/products/${id}`, { method: 'PATCH', body: { costPrice, sellingPrice, pin } });
+}

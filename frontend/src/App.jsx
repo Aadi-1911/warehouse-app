@@ -10,6 +10,7 @@ import Transfer from './pages/Transfer';
 import ManageUsers from './pages/ManageUsers';
 import SetPin from './pages/SetPin';
 import FactoryPayables from './pages/FactoryPayables';
+import ArticlePricing from './pages/ArticlePricing';
 
 export default function App() {
   return (
@@ -73,6 +74,14 @@ export default function App() {
             element={
               <ProtectedRoute requireRole="OWNER">
                 <FactoryPayables />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/article-pricing"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <ArticlePricing />
               </ProtectedRoute>
             }
           />

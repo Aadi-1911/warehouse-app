@@ -1,0 +1,386 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import { TagIcon, KeyIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
+import { listFactories } from '../api/factories';
+import { listProducts, updateProduct } from '../api/products';
+
+function formatCurrency(amount) {
+  return `₹${Number(amount).toLocaleString('en-IN')}`;
+}
+
+// isPending is the same "no price set yet" state 05_BUSINESS_RULES.md rule 8/71 already
+// describes (nullable costPrice/sellingPrice) — not a new concept, just the first screen that
+// actually surfaces it as something fixable rather than a dead end after Receive Stock.
+function isPending(product) {
+  return product.costPrice == null || product.sellingPrice == null;
+}
+
+// Article Pricing — 07_UI_DESIGN_BRIEF.md §5.10. Owner-only screen, added to Home's "More"
+// list. Backed entirely by endpoints that already existed and already enforce the right rules:
+// GET /api/products?factoryId= (already role-aware — costPrice is never fetched from Postgres
+// for a STAFF request, productSelect() in productController.js) and PATCH /api/products/:id
+// (already OWNER+PIN gated the moment costPrice/sellingPrice appear in the body). No new
+// backend code exists for this screen at all — see LEARNING_LOG.md for why reusing
+// productSelect() here, rather than writing a second role-aware select, was the whole point.
+export default function ArticlePricing() {
+  const { user } = useAuth();
+
+  // 'idle' | 'loading' | 'loaded' — same three-state shape used everywhere else in this
+  // codebase for a fetch that starts from an effect, never a bare boolean.
+  const [factories, setFactories] = useState([]);
+  const [factoriesStatus, setFactoriesStatus] = useState('idle');
+  const [factoriesError, setFactoriesError] = useState(null);
+
+  const [factoryId, setFactoryId] = useState('');
+
+  const [products, setProducts] = useState([]);
+  const [productsStatus, setProductsStatus] = useState('idle');
+  const [productsError, setProductsError] = useState(null);
+
+  // The product currently being edited (the whole object, not just an id) — null means no form
+  // is open. Only one edit form exists at a time, mirroring Factory Payables' activeForm, but a
+  // nullable object rather than an enum: there's only one kind of form here ("edit this
+  // article's price"), so "which product, if any" is the only thing that varies.
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [costPrice, setCostPrice] = useState('');
+  const [sellingPrice, setSellingPrice] = useState('');
+  const [pin, setPin] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [attemptsRemaining, setAttemptsRemaining] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFactoriesStatus('loading');
+    listFactories()
+      .then((list) => {
+        if (!cancelled) setFactories(list.filter((f) => f.isActive));
+      })
+      .catch((err) => {
+        if (!cancelled) setFactoriesError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setFactoriesStatus('loaded');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Re-fetches whenever the selected factory changes — same discipline as Factory Payables'
+  // own factory switch: drop back to 'loading' with the list cleared on the SAME render that
+  // reacts to the id changing, so a slow response for Factory A can never render while Factory
+  // B is selected.
+  useEffect(() => {
+    if (!factoryId) {
+      setProductsStatus('idle');
+      setProducts([]);
+      setProductsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setProductsStatus('loading');
+    setProducts([]);
+    setProductsError(null);
+
+    listProducts({ factoryId })
+      .then((list) => {
+        if (!cancelled) setProducts(list.filter((p) => p.isActive));
+      })
+      .catch((err) => {
+        if (!cancelled) setProductsError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setProductsStatus('loaded');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [factoryId]);
+
+  function handleFactoryChange(newId) {
+    setFactoryId(newId);
+    // Any in-progress edit belonged to the PREVIOUS factory's article list — closing it rather
+    // than leaving it open avoids saving a price against a row that's no longer even visible.
+    setEditingProduct(null);
+    setSuccessMessage(null);
+  }
+
+  function handleStartEdit(product) {
+    setEditingProduct(product);
+    // Pre-filled with the row's current prices (requirement 5.10) — null (pending) becomes an
+    // empty field to type into, not "0", which would read as a real zero price if left untouched.
+    setCostPrice(product.costPrice != null ? String(product.costPrice) : '');
+    setSellingPrice(product.sellingPrice != null ? String(product.sellingPrice) : '');
+    setPin('');
+    setSubmitError(null);
+    setAttemptsRemaining(null);
+  }
+
+  function handleCancelEdit() {
+    setEditingProduct(null);
+    setPin('');
+    setSubmitError(null);
+    setAttemptsRemaining(null);
+  }
+
+  async function handleSubmitEdit(event) {
+    event.preventDefault();
+    setSubmitError(null);
+    setAttemptsRemaining(null);
+
+    const parsedCost = Number(costPrice);
+    const parsedSelling = Number(sellingPrice);
+    if (!costPrice || !parsedCost || parsedCost <= 0) {
+      setSubmitError('Enter a valid cost price.');
+      return;
+    }
+    if (!sellingPrice || !parsedSelling || parsedSelling <= 0) {
+      setSubmitError('Enter a valid selling price.');
+      return;
+    }
+    if (!pin) {
+      setSubmitError('Enter your PIN.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await updateProduct(editingProduct.id, { costPrice: parsedCost, sellingPrice: parsedSelling, pin });
+      setSuccessMessage(`${editingProduct.articleNo} — ${editingProduct.name} updated.`);
+      setEditingProduct(null);
+      setPin('');
+      // Re-fetch so the table reflects the edit just made, rather than showing prices that are
+      // now stale by exactly the values just saved.
+      setProductsStatus('loading');
+      const fresh = await listProducts({ factoryId });
+      setProducts(fresh.filter((p) => p.isActive));
+      setProductsStatus('loaded');
+    } catch (err) {
+      // INVALID_PIN carries attemptsRemaining as a sibling field (see client.js's ApiError.extra)
+      // — surfacing it here is the whole reason that field exists, for a lockout-prone action.
+      if (err.code === 'INVALID_PIN' && err.extra?.attemptsRemaining != null) {
+        setAttemptsRemaining(err.extra.attemptsRemaining);
+      }
+      setSubmitError(err.message);
+      // Never leave a wrong PIN sitting in the field for a retry, same reasoning already
+      // applied to Factory Payables and Set PIN.
+      setPin('');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Pending rows sort first (requirement 5.10) — this screen is the direct fix for articles
+  // stuck pending after Receive Stock, so surfacing exactly those rows first is the whole point,
+  // not a cosmetic sort choice. Ties (both pending, or both priced) fall back to articleNo so
+  // the table has a stable, predictable order rather than whatever order the API happened to
+  // return.
+  const sortedProducts = [...products].sort((a, b) => {
+    const aPending = isPending(a);
+    const bPending = isPending(b);
+    if (aPending !== bPending) return aPending ? -1 : 1;
+    return a.articleNo.localeCompare(b.articleNo);
+  });
+
+  const showTable = factoryId && productsStatus === 'loaded' && !productsError;
+
+  return (
+    <div className="page">
+      <ScreenHeader icon={<TagIcon size={20} />} title="Article Pricing" />
+
+      {factoriesError && (
+        <p className="error-banner" role="alert">
+          Could not load factories: {factoriesError}
+        </p>
+      )}
+
+      <label className="field">
+        <span className="field-label">Factory</span>
+        <select
+          value={factoryId}
+          onChange={(e) => handleFactoryChange(e.target.value)}
+          disabled={factoriesStatus !== 'loaded' || submitting}
+        >
+          <option value="">{factoriesStatus !== 'loaded' ? 'Loading…' : 'Select a factory'}</option>
+          {factories.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {successMessage && (
+        <div className="result-banner result-banner-success">
+          <p>{successMessage}</p>
+          <button type="button" className="link-button" onClick={() => setSuccessMessage(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {!factoryId && <p className="muted centered-empty-state">Select a factory to see its articles.</p>}
+
+      {factoryId && productsStatus !== 'loaded' && <p className="muted centered-empty-state">Loading…</p>}
+
+      {factoryId && productsStatus === 'loaded' && productsError && (
+        <p className="error-banner" role="alert">
+          Could not load articles: {productsError}
+        </p>
+      )}
+
+      {showTable && (
+        <>
+          {sortedProducts.length === 0 ? (
+            <p className="muted centered-empty-state">This factory has no articles yet.</p>
+          ) : (
+            <div className="table-scroll">
+              <table className="pricing-table">
+                <thead>
+                  <tr>
+                    <th className="pricing-table-sno">S.No.</th>
+                    <th>Name</th>
+                    <th>Article No</th>
+                    <th className="pricing-table-num">Cost Price</th>
+                    <th className="pricing-table-num">Selling Price</th>
+                    <th className="pricing-table-num">Margin</th>
+                    <th className="pricing-table-action">
+                      <span className="visually-hidden">Edit</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedProducts.map((product, index) => {
+                    const pending = isPending(product);
+                    return (
+                      <tr key={product.id}>
+                        <td className="pricing-table-sno">{index + 1}</td>
+                        <td>{product.name}</td>
+                        <td>{product.articleNo}</td>
+                        {pending ? (
+                          <>
+                            <td className="pricing-table-num">
+                              <span className="badge badge-warning">Pending</span>
+                            </td>
+                            <td className="pricing-table-num">
+                              <span className="badge badge-warning">Pending</span>
+                            </td>
+                            <td className="pricing-table-num">
+                              <span className="badge badge-warning">Pending</span>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="pricing-table-num">{formatCurrency(product.costPrice)}</td>
+                            <td className="pricing-table-num">{formatCurrency(product.sellingPrice)}</td>
+                            {/* costPrice/sellingPrice are raw Prisma Decimals — arrive as
+                                STRINGS ("250.5"), not numbers — Number() both before
+                                subtracting, never string-concatenate them. */}
+                            <td className="pricing-table-num">
+                              {formatCurrency(Number(product.sellingPrice) - Number(product.costPrice))}
+                            </td>
+                          </>
+                        )}
+                        <td className="pricing-table-action">
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => handleStartEdit(product)}
+                            disabled={!user.hasPinSet || (editingProduct && editingProduct.id === product.id)}
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!editingProduct && !user.hasPinSet && (
+            <Link to="/set-pin" className="prompt-banner prompt-banner-warning">
+              <KeyIcon size={18} />
+              <span>Set your price-edit PIN to edit article prices.</span>
+            </Link>
+          )}
+
+          {editingProduct && (
+            <div className="card">
+              <h2 className="card-title">
+                Edit price — {editingProduct.articleNo} · {editingProduct.name}
+              </h2>
+              {/* Same lightweight inline PIN prompt as Factory Payables' Record Payment (§5.8),
+                  not a modal — the PIN field IS the confirmation step. Second real user of that
+                  pattern, per 5.10. */}
+              <form onSubmit={handleSubmitEdit}>
+                <label className="field">
+                  <span className="field-label">Cost Price</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    step="0.01"
+                    value={costPrice}
+                    onChange={(e) => setCostPrice(e.target.value)}
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field-label">Selling Price</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    step="0.01"
+                    value={sellingPrice}
+                    onChange={(e) => setSellingPrice(e.target.value)}
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field-label">Your PIN</span>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    autoComplete="off"
+                    disabled={submitting}
+                    required
+                  />
+                </label>
+
+                {submitError && (
+                  <p className="error-banner" role="alert">
+                    {submitError}
+                    {attemptsRemaining != null &&
+                      ` (${attemptsRemaining} attempt${attemptsRemaining === 1 ? '' : 's'} remaining)`}
+                  </p>
+                )}
+
+                <button type="submit" className="btn-primary" disabled={submitting}>
+                  {submitting ? 'Saving…' : 'Save price'}
+                </button>
+                <button type="button" className="btn-secondary" onClick={handleCancelEdit} disabled={submitting}>
+                  Cancel
+                </button>
+              </form>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

@@ -208,6 +208,14 @@ A component's background/border/text should always share the same role tint toge
 - Each staged line's quantity is capped by that row's real remaining availability — accounting for quantity already staged against the same row in the current batch, not just the raw last-fetched figure.
 - Kept the base screen's single confirm modal (not Receive Stock's two-step summary → final) — a Transfer moves stock between the business's own locations without changing the company-wide total, so a mistake is corrected by transferring back, unlike a receipt that invents inventory. That reasoning is unchanged by batching.
 
+### 5.10 New Screen — Article Pricing
+- Owner-only, added to Home's "More" list (per 5.1's updated tile hierarchy) — not a primary colored tile, since price-setting isn't a daily action.
+- A Factory selector (dropdown) at the top, same pattern as Factory Payables.
+- Below it, a flat matrix table of every article under the selected Factory: columns S.No. (row index, not a real id), Name, Article No, Cost Price, Selling Price, Margin (Selling − Cost, computed, not stored).
+- Any article with no price set yet renders its Cost/Selling/Margin cells with the existing "pending price" badge treatment instead of blank cells, and pending-price rows sort to the top of the table — this screen is the direct fix for a real gap (no UI existed anywhere to resolve a pending-price article after receiving).
+- Each row has an Edit action that opens the same lightweight inline PIN-prompt pattern already used for Factory Payables' Record Payment (not a modal) — pre-filled with that row's current Cost/Selling price, PIN required to save, matching the existing non-negotiable rule that price edits require OWNER role AND PIN regardless of when they happen.
+- This screen is the second real user of that lightweight inline-PIN pattern, same as Factory Payables was the first.
+
 ## 7. Round 7 Refinements (Claude Design staff prototype)
 
 - **Factory disambiguation copy**: when a searched article number matches more than one Factory, show one chip per match labeled with both factory and article name (e.g. "Round Neck Tee — Jyoti Creations" vs "Kurta Set — Comeco"), not just the bare factory name — the article name itself is often the fastest way for staff to recognize which one they mean.

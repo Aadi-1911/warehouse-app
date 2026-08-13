@@ -9,6 +9,7 @@ import {
   UsersIcon,
   KeyIcon,
   WalletIcon,
+  TagIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -45,6 +46,7 @@ const MORE_ITEMS = [
     show: (user) => user.role === 'OWNER' && !user.hasPinSet,
   },
   { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
+  { to: '/article-pricing', label: 'Article Pricing', Icon: TagIcon, show: (user) => user.role === 'OWNER' },
 ];
 
 export default function Home() {

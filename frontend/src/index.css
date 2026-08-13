@@ -712,6 +712,72 @@ body {
   margin-left: 8px;
 }
 
+/* Standard offscreen-but-announced technique — content stays in the accessibility tree (screen
+   readers still get a label for the Article Pricing table's Edit-action column) without taking
+   up visible layout space. Not used anywhere else in this codebase yet; nothing else has had an
+   otherwise-unlabelled column header before now. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Article Pricing (§5.10): factory-scoped price matrix --- */
+/* More columns and more varied per-column alignment than .receipt-table's simple 3-column
+   case, so this is its own class rather than forcing a "everything but the first column is
+   right-aligned" rule onto a 7-column table — S.No/Name/Article No stay left-aligned,
+   Cost/Selling/Margin are explicitly numeric, and the trailing Edit column is its own thing. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.pricing-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 10px 6px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.pricing-table td {
+  padding: 8px 10px 8px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.pricing-table tr:last-child td {
+  border-bottom: none;
+}
+
+.pricing-table-num {
+  text-align: right;
+}
+
+.pricing-table-sno {
+  color: var(--text-tertiary);
+}
+
+.pricing-table-action {
+  text-align: right;
+  padding-right: 0;
+}
+
 /* --- Manage Users: account list rows --- */
 .user-list {
   padding: 4px 20px;
