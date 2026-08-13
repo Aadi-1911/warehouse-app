@@ -795,15 +795,37 @@ body {
   padding: 4px 20px;
 }
 
+/* Tap-to-expand, same visual pattern as Live Stock's article accordion (.accordion-*) — kept
+   as its own set of classes rather than reused directly, since a user row's collapsed header
+   (name/username/badges) doesn't share Live Stock's title/subtitle/count-badge shape. Only one
+   row expands at a time (ManageUsers.jsx's expandedUserId), so unlike Live Stock's accordion
+   there's no need for independently-open sections. */
 .user-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 13px 0;
 }
 
 .user-row + .user-row {
   border-top: 1px solid var(--divider);
+}
+
+.user-row-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Deactivate/Reactivate/Reset Password, revealed on expand instead of always visible — the
+   cramped-on-phone problem this whole pattern exists to fix. */
+.user-row-body {
+  margin-top: 12px;
 }
 
 .user-row-info {
@@ -835,6 +857,15 @@ body {
   font-size: 11px;
   font-style: italic;
   flex-shrink: 0;
+}
+
+/* Holds Deactivate/Reactivate alongside Reset Password — a plain horizontal row now that both
+   live inside the expanded .user-row-body's full width, not squeezed next to badges on the
+   collapsed header the way they used to be. */
+.user-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 /* --- Confirm modal (§3.4): centered, dark scrim, ~300px card, two full-width buttons --- */
