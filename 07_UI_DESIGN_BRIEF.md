@@ -179,6 +179,7 @@ A component's background/border/text should always share the same role tint toge
 - Top summary shows total sets AND total pieces; each factory section repeats article count / sets / pieces / low-stock count, scoped to that factory.
 - Article-level detail collapses behind a dropdown-style row (tap to expand/resize open, chevron rotates) rather than always-visible colour rows.
 - Low stock threshold: **≤2 sets = red flag**, consistent with Pack Order and New Order.
+- **Within an expanded Article, if its stock spans more than one Location, sub-group by Location first, then Colour within each Location** — not a flat colour-sorted list with location as a per-row column. Each Location becomes its own visible sub-header inside the article. If an article's stock is only at a single Location, this collapses back to the existing flat colour list — no sub-header when there's nothing to disambiguate. Real reported readability problem this fixes: two rows for the same colour name sitting visually adjacent with location as the only distinguishing fact is easy to misread, especially for the near-empty ≤2-set articles common at this project's scale (e.g. article 6023 — 3 colours × 2 locations — was rendering interleaved).
 
 ### 5.6 New Screen — History
 - Reverse-chronological activity log, grouped by date.

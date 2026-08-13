@@ -1064,6 +1064,26 @@ body {
   font-weight: 700;
 }
 
+/* --- Live Stock: Location sub-groups within an expanded article (§5.5 — updated) ---
+   Only rendered when an article's stock spans more than one Location — see locationGroups in
+   LiveStock.jsx. Section-fill background is the same muted token used for other section-group
+   headers in the app, so this reads as a sub-header rather than another stock-row. */
+.location-subgroup + .location-subgroup {
+  margin-top: 10px;
+}
+
+.location-subgroup-header {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-tertiary);
+  background: var(--section-fill);
+  padding: 5px 8px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+}
+
 /* --- Transfer: selectable in-stock rows ---
    Unlike Live Stock's .stock-row (read-only display) these are real buttons — the row IS the
    selection control, since on this screen the thing being picked is a concrete Stock row, not

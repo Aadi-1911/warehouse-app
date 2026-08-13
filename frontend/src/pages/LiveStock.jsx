@@ -109,6 +109,7 @@ export default function LiveStock() {
     factoryGroup.articles.get(row.productId).rows.push({
       key: `${row.bundleId}-${row.locationId}`,
       colorName: row.colorName,
+      locationId: row.locationId,
       locationName: row.locationName,
       qtySets: row.qtySets,
       low: row.qtySets <= LOW_STOCK_THRESHOLD,
@@ -120,12 +121,37 @@ export default function LiveStock() {
       const articles = [...factory.articles.values()]
         .map((article) => {
           const totalSets = article.rows.reduce((sum, r) => sum + r.qtySets, 0);
+          const distinctLocationIds = new Set(article.rows.map((r) => r.locationId));
+
+          // §5.5 — updated: only sub-group by Location when an article's stock actually spans
+          // more than one Location. A single-location article has nothing to disambiguate, so
+          // it stays the original flat colour list rather than growing a pointless one-item
+          // sub-header. locationGroups is null in that case — the render below branches on it.
+          let locationGroups = null;
+          if (distinctLocationIds.size > 1) {
+            const byLocation = new Map();
+            article.rows.forEach((row) => {
+              if (!byLocation.has(row.locationId)) {
+                byLocation.set(row.locationId, {
+                  locationId: row.locationId,
+                  locationName: row.locationName,
+                  rows: [],
+                });
+              }
+              byLocation.get(row.locationId).rows.push(row);
+            });
+            locationGroups = [...byLocation.values()].sort((a, b) =>
+              a.locationName.localeCompare(b.locationName)
+            );
+          }
+
           return {
             ...article,
             distinctColors: new Set(article.rows.map((r) => r.colorName)).size,
             lowRowCount: article.rows.filter((r) => r.low).length,
             totalSets,
             totalPieces: totalSets * article.piecesPerSet,
+            locationGroups,
           };
         })
         .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
@@ -251,14 +277,36 @@ export default function LiveStock() {
 
                             {articleOpen && (
                               <div className="accordion-body nested">
-                                {article.rows.map((row) => (
-                                  <div key={row.key} className="stock-row">
-                                    <span className="stock-row-color">{row.colorName}</span>
-                                    <span className="muted">{row.locationName}</span>
-                                    <span className="stock-row-qty">{row.qtySets} sets</span>
-                                    {row.low && <span className="badge badge-danger">Low</span>}
-                                  </div>
-                                ))}
+                                {/* §5.5 — updated: sub-group by Location first when an article's stock
+                                    spans more than one, so two same-colour rows distinguished only by
+                                    location never sit visually adjacent. Location is now the sub-header
+                                    itself, so per-row location text would just repeat it — dropped in
+                                    this branch only. A single-location article has nothing to
+                                    disambiguate, so locationGroups is null and it renders exactly as
+                                    before: a flat list with location spelled out on each row. */}
+                                {article.locationGroups ? (
+                                  article.locationGroups.map((group) => (
+                                    <div key={group.locationId} className="location-subgroup">
+                                      <div className="location-subgroup-header">{group.locationName}</div>
+                                      {group.rows.map((row) => (
+                                        <div key={row.key} className="stock-row">
+                                          <span className="stock-row-color">{row.colorName}</span>
+                                          <span className="stock-row-qty">{row.qtySets} sets</span>
+                                          {row.low && <span className="badge badge-danger">Low</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))
+                                ) : (
+                                  article.rows.map((row) => (
+                                    <div key={row.key} className="stock-row">
+                                      <span className="stock-row-color">{row.colorName}</span>
+                                      <span className="muted">{row.locationName}</span>
+                                      <span className="stock-row-qty">{row.qtySets} sets</span>
+                                      {row.low && <span className="badge badge-danger">Low</span>}
+                                    </div>
+                                  ))
+                                )}
                               </div>
                             )}
                           </div>
