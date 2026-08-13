@@ -581,6 +581,12 @@ body {
   color: var(--danger-text);
 }
 
+.badge-warning {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+
 /* --- Home tile grid (§5.1) ---
    Two columns even though only two Phase 1 tiles exist today: when New Order and Pack Order
    arrive in Phase 2 they wrap onto a second row, producing the specified 2x2 with no change
@@ -972,6 +978,26 @@ body {
   flex-shrink: 0;
 }
 
+/* Groups the "+ Owed"/"− Paid" badge with its amount on the row's right side, keeping the
+   original two-group (meta | value) layout .payment-history-row's space-between relies on. */
+.payment-history-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Merged payment/debit history (05_BUSINESS_RULES.md rule 96): the badge alone already carries
+   the "+ Owed" / "− Paid" distinction, but colouring the amount too means it reads correctly
+   even at a glance that skips straight past the badge. */
+.payment-history-amount-payment {
+  color: var(--success-text);
+}
+
+.payment-history-amount-debit {
+  color: var(--warning-text);
+}
+
 /* --- Sticky bottom action bar (§3.2) ---
    position: sticky (not fixed) so it participates in .page's own document flow rather than
    needing separate logic to stay centred within .page's max-width column on wide viewports. */
@@ -982,6 +1008,20 @@ body {
   padding-top: 12px;
   padding-bottom: 4px;
   margin-top: 4px;
+}
+
+/* Factory Payables' two actions (Record payment / Record amount owed) sit side by side rather
+   than one full-width button — .sticky-action-row is additive to .sticky-action-bar, not a
+   replacement, so a screen with only one action (everywhere else this pattern is used) is
+   completely unaffected. */
+.sticky-action-row {
+  display: flex;
+  gap: 10px;
+}
+
+.sticky-action-row .btn-primary,
+.sticky-action-row .btn-secondary {
+  flex: 1;
 }
 
 .centered-empty-state {

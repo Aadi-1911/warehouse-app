@@ -136,9 +136,13 @@ async function reactivateFactory(req, res) {
 }
 
 // GET /api/factories/:id/payable — OWNER only (👑). Computed, not stored: SUM(STOCK_IN
-// qtySets × piecesPerSet × costPriceSnapshot) minus SUM(FactoryPayment.amount), both scoped to
-// this Factory. costPriceSnapshot (not a live join to Product.costPrice) is what makes this
-// number stable against a later price change — see createTransaction for where it's captured.
+// qtySets × piecesPerSet × costPriceSnapshot) PLUS SUM(FactoryDebit.amount), minus
+// SUM(FactoryPayment.amount), all scoped to this Factory. costPriceSnapshot (not a live join
+// to Product.costPrice) is what makes the transaction-derived part stable against a later price
+// change — see createTransaction for where it's captured. FactoryDebit folds into totalOwed
+// itself, not a separate figure alongside it — 05_BUSINESS_RULES.md rule 96 explains why a
+// manual "amount owed" entry has to raise the same totalOwed the transaction sum contributes
+// to, not sit next to it as something amountPayable would have to separately account for.
 async function getFactoryPayable(req, res) {
   const { id } = req.params;
 
@@ -172,19 +176,28 @@ async function getFactoryPayable(req, res) {
   // A snapshot of null (the article was still pending-price at the moment it was received)
   // contributes 0 forever — correct, not a bug: this transaction genuinely had no recorded
   // cost at receiving time, and a price set weeks later shouldn't retroactively invent one.
-  const totalOwed = stockInTransactions.reduce((sum, t) => {
+  const transactionOwed = stockInTransactions.reduce((sum, t) => {
     const piecesPerSet = piecesPerSetFor(t.stock.bundle.product);
     const price = t.costPriceSnapshot != null ? Number(t.costPriceSnapshot) : 0;
     return sum + t.qtySets * piecesPerSet * price;
   }, 0);
 
-  const payments = await prisma.factoryPayment.findMany({
-    where: { factoryId: id },
-    select: { id: true, amount: true, date: true, note: true },
-    orderBy: { date: 'desc' },
-  });
+  const [payments, debits] = await Promise.all([
+    prisma.factoryPayment.findMany({
+      where: { factoryId: id },
+      select: { id: true, amount: true, date: true, note: true },
+      orderBy: { date: 'desc' },
+    }),
+    prisma.factoryDebit.findMany({
+      where: { factoryId: id },
+      select: { id: true, amount: true, date: true, note: true },
+      orderBy: { date: 'desc' },
+    }),
+  ]);
 
   const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const totalDebited = debits.reduce((sum, d) => sum + Number(d.amount), 0);
+  const totalOwed = transactionOwed + totalDebited;
 
   res.json({
     factoryId: id,
@@ -192,6 +205,7 @@ async function getFactoryPayable(req, res) {
     totalPaid,
     amountPayable: totalOwed - totalPaid,
     payments,
+    debits,
   });
 }
 

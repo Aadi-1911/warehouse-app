@@ -5,6 +5,7 @@ import { WalletIcon, KeyIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listFactories, getFactoryPayable } from '../api/factories';
 import { createFactoryPayment } from '../api/factoryPayments';
+import { createFactoryDebit } from '../api/factoryDebits';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -29,8 +30,9 @@ function todayInputValue() {
 }
 
 // Factory Payables — 07_UI_DESIGN_BRIEF.md §5.8. Owner-only screen, own Home tile. Backed by
-// GET /api/factories/:id/payable and POST /api/factory-payments (both owner-only; the POST is
-// now also PIN-gated — see LEARNING_LOG.md for why that changed mid-task).
+// GET /api/factories/:id/payable, POST /api/factory-payments, and POST /api/factory-debits
+// (all owner-only and PIN-gated — see LEARNING_LOG.md for why the payment POST's gate changed
+// mid-task, and 05_BUSINESS_RULES.md rule 96 for why the debit endpoint exists at all).
 export default function FactoryPayables() {
   const { user } = useAuth();
 
@@ -49,7 +51,13 @@ export default function FactoryPayables() {
   const [payableStatus, setPayableStatus] = useState('idle');
   const [payableError, setPayableError] = useState(null);
 
-  const [formOpen, setFormOpen] = useState(false);
+  // Which of the two identical-shaped forms is open — null | 'payment' | 'debit' — rather than
+  // two separate booleans. Two booleans could both be true at once with nothing to stop it,
+  // silently implying two forms open simultaneously when only one set of amount/date/note/pin
+  // fields actually exists below; a single enum makes "which one, if any" the only representable
+  // states, the same "make the bad state unrepresentable" reasoning already applied elsewhere in
+  // this codebase (e.g. Receive Stock's three-state colour loading).
+  const [activeForm, setActiveForm] = useState(null);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayInputValue);
   const [note, setNote] = useState('');
@@ -117,14 +125,14 @@ export default function FactoryPayables() {
 
   function handleFactoryChange(newId) {
     setFactoryId(newId);
-    // Any in-progress payment form belonged to the PREVIOUS factory's context — closing it
-    // rather than silently re-pointing it at a different factory avoids paying the wrong one.
-    setFormOpen(false);
-    resetPaymentForm();
+    // Any in-progress form belonged to the PREVIOUS factory's context — closing it rather than
+    // silently re-pointing it at a different factory avoids recording against the wrong one.
+    setActiveForm(null);
+    resetForm();
     setSuccessMessage(null);
   }
 
-  function resetPaymentForm() {
+  function resetForm() {
     setAmount('');
     setDate(todayInputValue());
     setNote('');
@@ -133,7 +141,14 @@ export default function FactoryPayables() {
     setAttemptsRemaining(null);
   }
 
-  async function handleSubmitPayment(event) {
+  // Shared by both "Record payment" and "Record amount owed" — the two actions differ only in
+  // which endpoint gets called and what the success message says; amount/date/note/pin
+  // validation and PIN-failure handling are identical, matching FactoryPayment/FactoryDebit's
+  // identical shape on the backend. Kept as one function branching on `activeForm` rather than
+  // two near-duplicate handlers, for the same reason ScreenHeader was extracted instead of
+  // copied: identical logic living in two places is a standing invitation for the two copies to
+  // quietly drift (LEARNING_LOG.md).
+  async function handleSubmitForm(event) {
     event.preventDefault();
     setSubmitError(null);
     setAttemptsRemaining(null);
@@ -152,20 +167,27 @@ export default function FactoryPayables() {
       return;
     }
 
+    const isDebit = activeForm === 'debit';
+    const submit = isDebit ? createFactoryDebit : createFactoryPayment;
+
     setSubmitting(true);
     try {
-      await createFactoryPayment({
+      await submit({
         factoryId,
         amount: parsedAmount,
         date,
         note: note.trim() || undefined,
         pin,
       });
-      setSuccessMessage(`Payment of ${formatCurrency(parsedAmount)} recorded.`);
-      setFormOpen(false);
-      resetPaymentForm();
-      // Re-fetch so the stats/history reflect the payment just made, rather than showing
-      // totals that are now stale by exactly the amount just recorded.
+      setSuccessMessage(
+        isDebit
+          ? `Amount owed of ${formatCurrency(parsedAmount)} recorded.`
+          : `Payment of ${formatCurrency(parsedAmount)} recorded.`
+      );
+      setActiveForm(null);
+      resetForm();
+      // Re-fetch so the stats/history reflect the entry just made, rather than showing totals
+      // that are now stale by exactly the amount just recorded.
       setPayableStatus('loading');
       const fresh = await getFactoryPayable(factoryId);
       setPayable(fresh);
@@ -186,6 +208,17 @@ export default function FactoryPayables() {
   }
 
   const showStats = factoryId && payableStatus === 'loaded' && !payableError && payable;
+
+  // One chronological timeline instead of two separate lists to scroll through — each entry
+  // tagged with its own kind so the row can render "+ Owed"/"− Paid" distinctly. Sorted by date
+  // descending regardless of kind, so a debit and a payment interleave correctly by when they
+  // actually happened, not grouped by type.
+  const history = showStats
+    ? [
+        ...payable.payments.map((p) => ({ ...p, kind: 'payment' })),
+        ...payable.debits.map((d) => ({ ...d, kind: 'debit' })),
+      ].sort((a, b) => new Date(b.date) - new Date(a.date))
+    : [];
 
   return (
     <div className="page">
@@ -251,38 +284,56 @@ export default function FactoryPayables() {
           </div>
 
           <div className="card">
-            <h2 className="card-title">Payment history</h2>
-            {payable.payments.length === 0 ? (
-              <p className="muted centered-empty-state">No payments recorded yet.</p>
+            <h2 className="card-title">History</h2>
+            {history.length === 0 ? (
+              <p className="muted centered-empty-state">Nothing recorded yet.</p>
             ) : (
-              payable.payments.map((p) => (
-                <div key={p.id} className="payment-history-row">
+              history.map((entry) => (
+                <div key={`${entry.kind}-${entry.id}`} className="payment-history-row">
                   <div className="payment-history-meta">
-                    <span className="payment-history-date">{formatDate(p.date)}</span>
-                    {p.note && <span className="payment-history-note">{p.note}</span>}
+                    <span className="payment-history-date">{formatDate(entry.date)}</span>
+                    {entry.note && <span className="payment-history-note">{entry.note}</span>}
                   </div>
-                  {/* p.amount is a raw Prisma Decimal — arrives as a STRING ("250.5"), not a
-                      number (see api/factories.js). formatCurrency() Number()s it internally. */}
-                  <span className="payment-history-amount">{formatCurrency(p.amount)}</span>
+                  {/* entry.amount is a raw Prisma Decimal — arrives as a STRING ("250.5"), not
+                      a number (see api/factories.js). formatCurrency() Number()s it internally.
+                      Sign + badge + tint together distinguish the two kinds in one glance,
+                      rather than requiring a second look at which list a row came from — there
+                      is no second list anymore, this is the whole point of merging them. */}
+                  <div className="payment-history-value">
+                    <span className={`badge ${entry.kind === 'debit' ? 'badge-warning' : 'badge-success'}`}>
+                      {entry.kind === 'debit' ? '+ Owed' : '− Paid'}
+                    </span>
+                    <span
+                      className={`payment-history-amount ${
+                        entry.kind === 'debit' ? 'payment-history-amount-debit' : 'payment-history-amount-payment'
+                      }`}
+                    >
+                      {entry.kind === 'debit' ? '+' : '−'} {formatCurrency(entry.amount)}
+                    </span>
+                  </div>
                 </div>
               ))
             )}
           </div>
 
-          {!formOpen && !user.hasPinSet && (
+          {!activeForm && !user.hasPinSet && (
             <Link to="/set-pin" className="prompt-banner prompt-banner-warning">
               <KeyIcon size={18} />
-              <span>Set your price-edit PIN to record a factory payment.</span>
+              <span>Set your price-edit PIN to record a payment or amount owed.</span>
             </Link>
           )}
 
-          {formOpen && (
+          {activeForm && (
             <div className="card">
-              <h2 className="card-title">Record payment</h2>
+              <h2 className="card-title">
+                {activeForm === 'debit' ? 'Record amount owed' : 'Record payment'}
+              </h2>
               {/* Lightweight inline PIN prompt, not the standard ConfirmModal (§5.8) — the PIN
                   field IS the confirmation step here, one form and one button rather than a
-                  form followed by a separate overlay. */}
-              <form onSubmit={handleSubmitPayment}>
+                  form followed by a separate overlay. Same form for both actions (only the
+                  title, submit label, and which endpoint gets called differ) — see
+                  handleSubmitForm. */}
+              <form onSubmit={handleSubmitForm}>
                 <label className="field">
                   <span className="field-label">Amount</span>
                   <input
@@ -314,7 +365,7 @@ export default function FactoryPayables() {
                     type="text"
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
-                    placeholder="e.g. Bank transfer, Cash"
+                    placeholder={activeForm === 'debit' ? 'e.g. Pre-app opening balance' : 'e.g. Bank transfer, Cash'}
                     disabled={submitting}
                   />
                 </label>
@@ -341,14 +392,18 @@ export default function FactoryPayables() {
                 )}
 
                 <button type="submit" className="btn-primary" disabled={submitting}>
-                  {submitting ? 'Recording…' : 'Confirm payment'}
+                  {submitting
+                    ? 'Recording…'
+                    : activeForm === 'debit'
+                      ? 'Confirm amount owed'
+                      : 'Confirm payment'}
                 </button>
                 <button
                   type="button"
                   className="btn-secondary"
                   onClick={() => {
-                    setFormOpen(false);
-                    resetPaymentForm();
+                    setActiveForm(null);
+                    resetForm();
                   }}
                   disabled={submitting}
                 >
@@ -358,15 +413,23 @@ export default function FactoryPayables() {
             </div>
           )}
 
-          {!formOpen && (
-            <div className="sticky-action-bar">
+          {!activeForm && (
+            <div className="sticky-action-bar sticky-action-row">
               <button
                 type="button"
                 className="btn-primary"
-                onClick={() => setFormOpen(true)}
+                onClick={() => setActiveForm('payment')}
                 disabled={!user.hasPinSet}
               >
                 Record payment
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setActiveForm('debit')}
+                disabled={!user.hasPinSet}
+              >
+                Record amount owed
               </button>
             </div>
           )}

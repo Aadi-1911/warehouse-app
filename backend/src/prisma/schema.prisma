@@ -60,6 +60,7 @@ model Factory {
 
   products  Product[]
   payments  FactoryPayment[]
+  debits    FactoryDebit[]
 }
 
 model Product {
@@ -303,5 +304,23 @@ model FactoryPayment {
   createdById String
   createdAt   DateTime @default(now())
 }
+
+model FactoryDebit {
+  // The mirror of FactoryPayment in the other direction — a manual increase to amount owed,
+  // same shape on purpose. Exists because totalOwed was originally ONLY derived from STOCK_IN
+  // transaction history, which is correct for stock received through the app but has no way to
+  // represent real, pre-app debt for a factory whose receiving history was never logged here
+  // (05_BUSINESS_RULES.md rule 96) — a factory in exactly that position could show a negative
+  // Amount payable purely because payments existed against a totalOwed of zero.
+  id          String   @id @default(cuid())
+  factoryId   String
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  amount      Decimal
+  date        DateTime
+  note        String?
+  createdById String
+  createdAt   DateTime @default(now())
+}
 // Amount payable to a Factory = SUM(STOCK_IN transactions' qtySets × piecesPerSet × costPriceSnapshot for that factory's products)
+//                                + SUM(FactoryDebit.amount for that factory)
 //                                − SUM(FactoryPayment.amount for that factory).
