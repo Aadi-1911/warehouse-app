@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TruckIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { listFactories, createFactory } from '../api/factories';
@@ -801,15 +802,7 @@ export default function ReceiveStock() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark success">
-          <TruckIcon size={20} />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          <h1 className="screen-title">Receive Stock</h1>
-        </div>
-      </header>
+      <ScreenHeader icon={<TruckIcon size={20} />} tone="success" title="Receive Stock" />
 
       {listsError && (
         <p className="error-banner" role="alert">

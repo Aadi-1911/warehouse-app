@@ -72,6 +72,23 @@ body {
   margin-bottom: 20px;
 }
 
+/* Back-to-Home link (ScreenHeader.jsx) — leads the row, before the icon mark. Neutral/muted
+   rather than role-tinted: this is plain navigation chrome, not one of the screen's own actions,
+   so it shouldn't compete with the icon mark's role color for attention. Sized for a comfortable
+   thumb target on a phone (per 02_ARCHITECTURE.md's staff-on-mobile assumption), not just the
+   bare 20px icon. */
+.screen-header-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: -6px; /* optically aligns the arrow's glyph, not its full tap target, to the edge */
+  border-radius: 8px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
 /* A badge inside the header (e.g. the role chip on Home) sits hard right, away from the
    icon-mark + text block that leads the row. */
 .screen-header .badge {

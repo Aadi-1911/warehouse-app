@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ListIcon, ChevronIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { listStock } from '../api/stock';
 import { listProducts } from '../api/products';
 import { listFactories } from '../api/factories';
@@ -176,15 +177,7 @@ export default function LiveStock() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark accent">
-          <ListIcon size={20} />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          <h1 className="screen-title">Live Stock</h1>
-        </div>
-      </header>
+      <ScreenHeader icon={<ListIcon size={20} />} title="Live Stock" />
 
       {error && (
         <p className="error-banner" role="alert">

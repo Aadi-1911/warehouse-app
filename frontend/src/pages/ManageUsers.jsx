@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { UsersIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listUsers, createUser, deactivateUser, reactivateUser } from '../api/users';
 
@@ -95,15 +96,7 @@ export default function ManageUsers() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark accent">
-          <UsersIcon size={20} />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          <h1 className="screen-title">Manage Users</h1>
-        </div>
-      </header>
+      <ScreenHeader icon={<UsersIcon size={20} />} title="Manage Users" />
 
       <div className="card">
         <h2 className="card-title">Create account</h2>

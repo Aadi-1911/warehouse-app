@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import ScreenHeader from '../components/ScreenHeader';
 
 export default function Login() {
   const { login, status } = useAuth();
@@ -48,13 +49,15 @@ export default function Login() {
   return (
     <div className="centered-screen">
       <div className="card login-card">
-        <div className="screen-header">
-          <div className="icon-mark accent" aria-hidden="true">◧</div>
-          <div>
-            <div className="eyebrow">Warehouse</div>
-            <h1 className="screen-title">Sign in</h1>
-          </div>
-        </div>
+        {/* Login is unauthenticated and isn't behind ProtectedRoute, so it also opts out of the
+            default back-to-Home link (showBackLink={false}) — a link to "/" here would just hit
+            ProtectedRoute's redirect and bounce straight back to this same screen. See
+            ScreenHeader.jsx. */}
+        <ScreenHeader
+          icon={<span aria-hidden="true">◧</span>}
+          title="Sign in"
+          showBackLink={false}
+        />
 
         <form onSubmit={handleSubmit}>
           <label className="field">

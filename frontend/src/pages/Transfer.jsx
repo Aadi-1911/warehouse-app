@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TransferIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listLocations } from '../api/locations';
 import { listStock } from '../api/stock';
@@ -313,15 +314,7 @@ export default function Transfer() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark accent">
-          <TransferIcon size={20} />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          <h1 className="screen-title">Transfer Stock</h1>
-        </div>
-      </header>
+      <ScreenHeader icon={<TransferIcon size={20} />} title="Transfer Stock" />
 
       {locationsError && (
         <p className="error-banner" role="alert">

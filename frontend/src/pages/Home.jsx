@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import ScreenHeader from '../components/ScreenHeader';
 import {
   TruckIcon,
   ListIcon,
@@ -56,20 +57,22 @@ export default function Home() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark accent">
-          <PackageIcon />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          {/* The brief gives the Home greeting its own larger type size (21px) than the
-              standard 18px screen title, so it uses a distinct class. */}
-          <h1 className="greeting">Hello, {user.name}</h1>
-        </div>
+      {/* Home is the one screen with nothing to go back to, so it opts out of ScreenHeader's
+          default back-to-Home link (showBackLink={false}) — see ScreenHeader.jsx. The brief
+          gives Home's greeting its own larger type size (21px) than the standard 18px screen
+          title, hence titleClassName="greeting" instead of the default. The role badge is
+          Home-specific extra content, passed as children rather than built into ScreenHeader
+          itself, so the shared component stays generic. */}
+      <ScreenHeader
+        icon={<PackageIcon />}
+        title={`Hello, ${user.name}`}
+        titleClassName="greeting"
+        showBackLink={false}
+      >
         <span className={`badge ${user.role === 'OWNER' ? 'badge-purple' : 'badge-accent'}`}>
           {user.role}
         </span>
-      </header>
+      </ScreenHeader>
 
       <nav className="tile-grid">
         {TILES.map(({ to, label, tone, Icon }) => (

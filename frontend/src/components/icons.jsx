@@ -80,6 +80,18 @@ export function ChevronIcon({ size = 18, className }) {
   );
 }
 
+// Back-to-Home arrow — ScreenHeader's fixed navigation-home link, not a breadcrumb/back-history
+// control (see ScreenHeader.jsx for why). A plain left arrow reads as "go back" without implying
+// "undo the last thing," which a full arrow-in-circle or house icon would risk suggesting.
+export function BackIcon({ size = 20 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </svg>
+  );
+}
+
 // Transfer — not in 07_UI_DESIGN_BRIEF.md (Transfer was an accepted Phase 1 limitation when
 // that brief was written, per 05_BUSINESS_RULES.md rule 46, and only became real in rule 93),
 // so no icon is spec'd. Two opposing arrows are the conventional "move between two places"

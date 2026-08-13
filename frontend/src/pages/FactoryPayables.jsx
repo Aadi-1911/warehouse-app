@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { WalletIcon, KeyIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { listFactories, getFactoryPayable } from '../api/factories';
 import { createFactoryPayment } from '../api/factoryPayments';
 
@@ -188,15 +189,7 @@ export default function FactoryPayables() {
 
   return (
     <div className="page">
-      <header className="screen-header">
-        <div className="icon-mark accent">
-          <WalletIcon size={20} />
-        </div>
-        <div>
-          <div className="eyebrow">Warehouse</div>
-          <h1 className="screen-title">Factory Payables</h1>
-        </div>
-      </header>
+      <ScreenHeader icon={<WalletIcon size={20} />} title="Factory Payables" />
 
       {factoriesError && (
         <p className="error-banner" role="alert">

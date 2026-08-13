@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { KeyIcon } from '../components/icons';
+import ScreenHeader from '../components/ScreenHeader';
 import { setOwnPin } from '../api/users';
 
 // Set your PIN — self-service first-time PIN setup, for an owner whose priceEditPinHash is
@@ -50,15 +51,7 @@ export default function SetPin() {
   return (
     <div className="centered-screen">
       <div className="card login-card">
-        <div className="screen-header">
-          <div className="icon-mark warning">
-            <KeyIcon size={20} />
-          </div>
-          <div>
-            <div className="eyebrow">Warehouse</div>
-            <h1 className="screen-title">Set your PIN</h1>
-          </div>
-        </div>
+        <ScreenHeader icon={<KeyIcon size={20} />} tone="warning" title="Set your PIN" />
 
         <p className="muted hint-text">
           This PIN is required whenever you edit a cost price or selling price. Only you will
