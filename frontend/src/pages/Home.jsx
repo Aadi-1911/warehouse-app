@@ -30,12 +30,15 @@ const TILES = [
 ];
 
 // Each entry decides its own visibility from `user` — Transfer is unconditional (any
-// authenticated role), the other three are owner-only, and Set PIN additionally disappears
-// once a PIN is already set (its own screen redirects home in that case — SetPin.jsx has no
-// "change an existing PIN" mode yet, so a permanently-visible row would be a dead link most of
-// the time). Kept alongside the existing prompt-banner-warning below rather than replacing it:
+// authenticated role), the other four are owner-only. Set PIN/Change PIN are a deliberately
+// exclusive pair — exact inverse conditions on the same hasPinSet flag, routing to the same
+// SetPin.jsx screen, which now branches on hasPinSet itself to decide which mode to render (no
+// currentPin field for first-time setup, currentPin required once a PIN already exists — see
+// SetPin.jsx). Exactly one of the two is ever visible for a given owner, never both, never
+// neither. Kept alongside the existing prompt-banner-warning below rather than replacing it:
 // that banner is a higher-visibility nudge for a blocking action (no PIN means no price edits,
-// now no Factory Payments either), which is a different job than a plain list row.
+// now no Factory Payments either), which is a different job than a plain list row — the banner
+// only ever mirrors Set PIN's condition, never Change PIN's.
 const MORE_ITEMS = [
   { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
   { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: (user) => user.role === 'OWNER' },
@@ -44,6 +47,12 @@ const MORE_ITEMS = [
     label: 'Set PIN',
     Icon: KeyIcon,
     show: (user) => user.role === 'OWNER' && !user.hasPinSet,
+  },
+  {
+    to: '/set-pin',
+    label: 'Change PIN',
+    Icon: KeyIcon,
+    show: (user) => user.role === 'OWNER' && user.hasPinSet,
   },
   { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
   { to: '/article-pricing', label: 'Article Pricing', Icon: TagIcon, show: (user) => user.role === 'OWNER' },
