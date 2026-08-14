@@ -145,4 +145,46 @@ async function updateOwnPin(req, res) {
   res.json({ message: 'PIN updated successfully' });
 }
 
-module.exports = { listUsers, createUser, deactivateUser, reactivateUser, updateOwnPin };
+// PATCH /api/users/:id/password — OWNER only (👑) AND PIN-gated (📌, via requirePin in
+// routes/users.js), unconditionally. This is an ADMIN reset, not a self-service change: the
+// actor proves who THEY are (their own PIN, checked against req.user.id by requirePin — same
+// as every other PIN gate in this app), then sets a brand-new password directly, no knowledge
+// of the target's current password required. That's the whole point — it's how you hand a
+// working login to someone who forgot theirs, or issue the first real password for an account
+// whose password only the creator ever knew.
+//
+// Resetting your OWN password through this endpoint is allowed with no special-casing: you've
+// already proven both an active session and your own PIN, which is at least as strong a bar as
+// a typical "enter your current password" self-service flow would be, so there's no real gap
+// to guard against.
+//
+// Resetting a DIFFERENT account's password is where this gets sensitive, and only in one case:
+// if the target is an OWNER (not STAFF). Same restriction as createUser's OWNER-creation gate
+// (rule 74) — a non-primary OWNER can fully manage STAFF, but cannot act on another OWNER
+// account, including the primary owner's own. Without this check, any secondary OWNER could
+// silently reset the primary owner's password and lock them out of their own account entirely
+// — arguably a bigger risk than the OWNER-creation case rule 74 already covers, since this acts
+// on an account that already exists rather than merely creating a new one.
+async function resetUserPassword(req, res) {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'newPassword is required');
+  }
+
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) {
+    return sendError(res, 404, 'USER_NOT_FOUND', `No user with id ${id}`);
+  }
+
+  if (target.role === 'OWNER' && target.id !== req.user.id && !req.user.isPrimaryOwner) {
+    return sendError(res, 403, 'FORBIDDEN_ROLE', 'Only the primary owner can reset another OWNER\'s password');
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  const user = await prisma.user.update({ where: { id }, data: { passwordHash }, select: SELECT });
+  res.json(user);
+}
+
+module.exports = { listUsers, createUser, deactivateUser, reactivateUser, updateOwnPin, resetUserPassword };

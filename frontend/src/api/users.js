@@ -27,3 +27,13 @@ export function setOwnPin({ newPin, currentPin } = {}) {
   if (currentPin) body.currentPin = currentPin;
   return apiFetch('/api/users/me/pin', { method: 'PATCH', body });
 }
+
+// PATCH /api/users/:id/password -> the updated user (same shape as GET/POST above, no password
+// fields). Admin reset, not self-service: `pin` is the REQUESTING owner's own PIN, proving who's
+// making the change — not the target's password, which this endpoint exists precisely to
+// overwrite without needing to know. A 403 here can carry the same INVALID_PIN/PIN_LOCKED/
+// FORBIDDEN_ROLE codes as everywhere else (04_API_SPEC.md, 05_BUSINESS_RULES.md rule 97) — the
+// last one specifically when a non-primary OWNER targets a different OWNER account.
+export function resetUserPassword(id, { newPassword, pin }) {
+  return apiFetch(`/api/users/${id}/password`, { method: 'PATCH', body: { newPassword, pin } });
+}
