@@ -33,7 +33,33 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 
 // CORS_ORIGIN restricts which frontend origin can call this API — without it, any site could.
-app.use(cors({ origin: process.env.CORS_ORIGIN }));
+//
+// In production this is the ONLY thing checked, unchanged from before: origin must match
+// CORS_ORIGIN exactly, full stop.
+//
+// In dev, a bare CORS_ORIGIN match would block a phone or any other device testing over the
+// LAN — the request arrives with Origin: http://<phone's-view-of-this-machine's-LAN-IP>:5173,
+// which is never equal to http://localhost:5173. Rather than widen CORS_ORIGIN itself (which
+// would also affect production), a LAN IP is accepted ONLY when NODE_ENV !== 'production', and
+// ONLY if it's a private-network address (192.168.x.x / 10.x.x.x / 172.16-31.x.x) on port 5173
+// over plain http — the same port Vite is pinned to (vite.config.js). This is not an open
+// wildcard: a public origin still gets rejected in dev exactly as it would in prod.
+const LAN_ORIGIN_PATTERN = /^http:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):5173$/;
+
+function corsOrigin(origin, callback) {
+  // No Origin header at all (curl, server-to-server, same-origin) — let cors' own default
+  // through by passing `true`, matching how a bare `origin: process.env.CORS_ORIGIN` string
+  // already behaved for these requests.
+  if (!origin || origin === process.env.CORS_ORIGIN) {
+    return callback(null, true);
+  }
+  if (process.env.NODE_ENV !== 'production' && LAN_ORIGIN_PATTERN.test(origin)) {
+    return callback(null, true);
+  }
+  return callback(null, false);
+}
+
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 
 // Simple liveness check — confirms the server is up before any real routes exist.
