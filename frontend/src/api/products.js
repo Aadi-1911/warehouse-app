@@ -45,3 +45,16 @@ export function createProduct({ articleNo, factoryId, name, categoryId, isKids, 
 export function updateProduct(id, { costPrice, sellingPrice, pin }) {
   return apiFetch(`/api/products/${id}`, { method: 'PATCH', body: { costPrice, sellingPrice, pin } });
 }
+
+// PATCH /api/products/:id/deactivate -> the updated Product ({ ...fields, isActive }). Any
+// authenticated role, no PIN — deactivate is never a price action, matching every other
+// archive/reactivate action in this app. Archives the WHOLE article, all its colors together
+// (never per-color) — see productController.js.
+export function deactivateProduct(id) {
+  return apiFetch(`/api/products/${id}/deactivate`, { method: 'PATCH' });
+}
+
+// PATCH /api/products/:id/reactivate -> the updated Product ({ ...fields, isActive }).
+export function reactivateProduct(id) {
+  return apiFetch(`/api/products/${id}/reactivate`, { method: 'PATCH' });
+}

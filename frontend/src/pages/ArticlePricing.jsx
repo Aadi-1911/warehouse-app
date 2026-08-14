@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { TagIcon, KeyIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
+import ConfirmModal from '../components/ConfirmModal';
 import { listFactories } from '../api/factories';
-import { listProducts, updateProduct } from '../api/products';
+import { listProducts, updateProduct, deactivateProduct, reactivateProduct } from '../api/products';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -52,6 +53,19 @@ export default function ArticlePricing() {
   const [attemptsRemaining, setAttemptsRemaining] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
+  // Show archived — when on, the table shows currently-archived articles for this Factory
+  // instead of active ones (requirement 3). Off by default: this screen's primary job is
+  // pricing active articles, same "hidden from daily pickers by default" convention rule 85
+  // already establishes for every other archivable entity.
+  const [showArchived, setShowArchived] = useState(false);
+
+  // Archive/Reactivate — a plain ConfirmModal (no PIN, requirement 4), separate from
+  // editingProduct/the price-edit form above, which this task must not touch. null | { product,
+  // action: 'archive' | 'reactivate' }.
+  const [confirmTarget, setConfirmTarget] = useState(null);
+  const [actionInFlight, setActionInFlight] = useState(false);
+  const [actionError, setActionError] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     setFactoriesStatus('loading');
@@ -89,7 +103,11 @@ export default function ArticlePricing() {
 
     listProducts({ factoryId })
       .then((list) => {
-        if (!cancelled) setProducts(list.filter((p) => p.isActive));
+        // Unfiltered — active and archived articles alike, same "backend returns everything,
+        // the frontend decides what's visible" pattern already used for Category. showArchived
+        // (requirement 3) picks which subset renders; keeping both in one fetch means toggling
+        // it never needs a re-fetch.
+        if (!cancelled) setProducts(list);
       })
       .catch((err) => {
         if (!cancelled) setProductsError(err.message);
@@ -109,6 +127,12 @@ export default function ArticlePricing() {
     // than leaving it open avoids saving a price against a row that's no longer even visible.
     setEditingProduct(null);
     setSuccessMessage(null);
+    // Same reasoning extends to an in-progress archive/reactivate confirm and the archived-view
+    // toggle itself — a new factory means an entirely different article list, so returning to
+    // the default (active) view avoids showing a stale "archived" list from the last factory.
+    setConfirmTarget(null);
+    setActionError(null);
+    setShowArchived(false);
   }
 
   function handleStartEdit(product) {
@@ -159,7 +183,7 @@ export default function ArticlePricing() {
       // now stale by exactly the values just saved.
       setProductsStatus('loading');
       const fresh = await listProducts({ factoryId });
-      setProducts(fresh.filter((p) => p.isActive));
+      setProducts(fresh);
       setProductsStatus('loaded');
     } catch (err) {
       // INVALID_PIN carries attemptsRemaining as a sibling field (see client.js's ApiError.extra)
@@ -176,12 +200,49 @@ export default function ArticlePricing() {
     }
   }
 
+  // Opens the archive/reactivate confirm (requirement 4: a plain ConfirmModal, no PIN — this
+  // isn't a price action). Kept as its own handler pair, deliberately not touching
+  // handleStartEdit/handleSubmitEdit above.
+  function handleStartArchiveAction(product, action) {
+    setConfirmTarget({ product, action });
+    setActionError(null);
+  }
+
+  async function handleConfirmArchiveAction() {
+    if (!confirmTarget) return;
+    setActionError(null);
+    setActionInFlight(true);
+    try {
+      const { product, action } = confirmTarget;
+      const call = action === 'archive' ? deactivateProduct : reactivateProduct;
+      await call(product.id);
+      setConfirmTarget(null);
+      // Re-fetch so the table reflects the real, current state — never patch local state
+      // optimistically, same discipline used everywhere else in this app (Factory Payables,
+      // Manage Users).
+      setProductsStatus('loading');
+      const fresh = await listProducts({ factoryId });
+      setProducts(fresh);
+      setProductsStatus('loaded');
+    } catch (err) {
+      setActionError(err.message);
+      setConfirmTarget(null);
+    } finally {
+      setActionInFlight(false);
+    }
+  }
+
+  // Which subset of the fetched list is on screen — active articles by default, archived ones
+  // when the toggle is on (requirement 3). Derived here rather than re-fetched, since the
+  // unfiltered list already has both.
+  const visibleProducts = products.filter((p) => (showArchived ? !p.isActive : p.isActive));
+
   // Pending rows sort first (requirement 5.10) — this screen is the direct fix for articles
   // stuck pending after Receive Stock, so surfacing exactly those rows first is the whole point,
   // not a cosmetic sort choice. Ties (both pending, or both priced) fall back to articleNo so
   // the table has a stable, predictable order rather than whatever order the API happened to
   // return.
-  const sortedProducts = [...products].sort((a, b) => {
+  const sortedProducts = [...visibleProducts].sort((a, b) => {
     const aPending = isPending(a);
     const bPending = isPending(b);
     if (aPending !== bPending) return aPending ? -1 : 1;
@@ -235,10 +296,31 @@ export default function ArticlePricing() {
         </p>
       )}
 
+      {actionError && (
+        <p className="error-banner" role="alert">
+          {actionError}
+        </p>
+      )}
+
       {showTable && (
         <>
+          {/* Off by default — this screen's primary job is pricing active articles (rule 85's
+              "hidden from daily pickers by default" convention). Switching it changes which
+              subset of the same already-fetched list is shown, and swaps each row's actions
+              from Edit/Archive to Reactivate (requirement 3). */}
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+
           {sortedProducts.length === 0 ? (
-            <p className="muted centered-empty-state">This factory has no articles yet.</p>
+            <p className="muted centered-empty-state">
+              {showArchived ? 'No archived articles for this factory.' : 'This factory has no articles yet.'}
+            </p>
           ) : (
             <div className="table-scroll">
               <table className="pricing-table">
@@ -251,7 +333,7 @@ export default function ArticlePricing() {
                     <th className="pricing-table-num">Selling Price</th>
                     <th className="pricing-table-num">Margin</th>
                     <th className="pricing-table-action">
-                      <span className="visually-hidden">Edit</span>
+                      <span className="visually-hidden">Actions</span>
                     </th>
                   </tr>
                 </thead>
@@ -288,14 +370,35 @@ export default function ArticlePricing() {
                           </>
                         )}
                         <td className="pricing-table-action">
-                          <button
-                            type="button"
-                            className="link-button"
-                            onClick={() => handleStartEdit(product)}
-                            disabled={!user.hasPinSet || (editingProduct && editingProduct.id === product.id)}
-                          >
-                            Edit
-                          </button>
+                          {showArchived ? (
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => handleStartArchiveAction(product, 'reactivate')}
+                              disabled={actionInFlight}
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => handleStartEdit(product)}
+                                disabled={!user.hasPinSet || actionInFlight || (editingProduct && editingProduct.id === product.id)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="link-button danger-text"
+                                onClick={() => handleStartArchiveAction(product, 'archive')}
+                                disabled={actionInFlight || !!editingProduct}
+                              >
+                                Archive
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     );
@@ -381,6 +484,25 @@ export default function ArticlePricing() {
           )}
         </>
       )}
+
+      {/* Plain confirm, no PIN (requirement 4) — archiving/reactivating isn't a price action.
+          Body copy is explicit that this is a whole-article action, not per-colour (requirement
+          5) — the one thing about this action most likely to be misread at a glance. */}
+      <ConfirmModal
+        open={!!confirmTarget}
+        title={confirmTarget?.action === 'archive' ? 'Archive this article?' : 'Reactivate this article?'}
+        body={
+          confirmTarget?.action === 'archive'
+            ? `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} will be hidden from Article Pricing and Receive Stock, along with ALL of its colours together — archiving isn't done per colour. Every past receipt and transaction stays fully intact, and it can be reactivated anytime.`
+            : `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} (and all of its colours) will be visible again in Article Pricing and available to pick during Receive Stock.`
+        }
+        confirmLabel={
+          actionInFlight ? 'Working…' : confirmTarget?.action === 'archive' ? 'Archive' : 'Reactivate'
+        }
+        tone={confirmTarget?.action === 'archive' ? 'danger' : 'success'}
+        onConfirm={handleConfirmArchiveAction}
+        onCancel={() => setConfirmTarget(null)}
+      />
     </div>
   );
 }

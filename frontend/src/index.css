@@ -208,6 +208,40 @@ body {
   cursor: pointer;
 }
 
+/* Category archive/reactivate (rule 85) — tucked behind "Manage categories" in Receive Stock's
+   New-article form, since this form is mainly about picking a category quickly, not managing
+   them. Muted background sets it apart as a secondary, admin-adjacent area rather than another
+   step in the main flow. */
+.category-manager {
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  background: var(--section-fill);
+  border-radius: 10px;
+}
+
+/* "Show archived" isn't a danger-role flag the way "Damaged on arrival" is — overrides
+   .checkbox-field input's danger-red accent with a neutral one. */
+.category-manager .checkbox-field input {
+  accent-color: var(--text-secondary);
+}
+
+.category-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.category-manager-row + .category-manager-row {
+  border-top: 1px solid var(--divider);
+}
+
+.category-manager-row > span:first-child {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 .field-label {
   display: block;
   font-size: 11.5px;
@@ -788,6 +822,12 @@ body {
 .pricing-table-action {
   text-align: right;
   padding-right: 0;
+}
+
+/* Edit + Archive now share this cell (requirement 2) — a plain margin rather than flex/gap,
+   since the cell's own text-align: right already lays inline buttons out correctly. */
+.pricing-table-action .link-button + .link-button {
+  margin-left: 14px;
 }
 
 /* --- Manage Users: account list rows --- */
