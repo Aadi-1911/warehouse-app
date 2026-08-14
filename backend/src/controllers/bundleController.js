@@ -16,7 +16,9 @@ async function listBundles(req, res) {
   res.json(bundles);
 }
 
-// POST /api/bundles — OWNER only (👑). Pre-checks Product and Color existence explicitly
+// POST /api/bundles — any authenticated role (🔒), matching Product/Color/Transaction creation
+// (see routes/bundles.js — this was incorrectly OWNER-only from the project's second commit
+// until fixed; see LEARNING_LOG.md). Pre-checks Product and Color existence explicitly
 // (rather than relying on catching Prisma's P2003) because there are TWO foreign keys here —
 // a single FK-violation error code can't reliably tell you which of the two failed, so a
 // generic 404 would leave the client guessing. The (productId, colorId) uniqueness itself is

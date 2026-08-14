@@ -198,9 +198,10 @@ Sets `isActive: true` — reverses a deactivation.
 
 ## Bundles 🔒
 
-### `POST /api/bundles` 👑
+### `POST /api/bundles` 🔒
 Body: `{ productId, colorId }`
 Creates a Product+Color combination. Validation: `(productId, colorId)` must be unique — `409` on conflict.
+**Any authenticated role** — matches `POST /api/products`/`POST /api/colors`/`POST /api/transactions`, the other three steps of the same "staff receives a brand-new article" flow (rule 71). A Bundle carries no price. *(Corrected from an incorrect `👑` that stood from this project's second commit — see `LEARNING_LOG.md` for the full incident writeup.)*
 
 ### `GET /api/bundles?productId=` 🔒
 Lists Bundles for a given Product (i.e. its valid colors) — can also be served via the `/products/:id/valid-colors` shortcut above.
