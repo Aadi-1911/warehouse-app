@@ -145,3 +145,16 @@ export function TagIcon({ size = 26 }) {
     </svg>
   );
 }
+
+// Party List (07_UI_DESIGN_BRIEF.md §5.1's "More" list) — not part of the brief's original icon
+// set either. A single-person mark, deliberately distinct from UsersIcon's two-person mark:
+// UsersIcon means "this app's own accounts" (Manage Users), PartyIcon means an external
+// contact — the same distinction the schema itself already draws between User and Party.
+export function PartyIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2" />
+    </svg>
+  );
+}

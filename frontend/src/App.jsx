@@ -11,6 +11,7 @@ import ManageUsers from './pages/ManageUsers';
 import SetPin from './pages/SetPin';
 import FactoryPayables from './pages/FactoryPayables';
 import ArticlePricing from './pages/ArticlePricing';
+import Parties from './pages/Parties';
 
 export default function App() {
   return (
@@ -82,6 +83,15 @@ export default function App() {
             element={
               <ProtectedRoute requireRole="OWNER">
                 <ArticlePricing />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/parties"
+            element={
+              // No requireRole — GET /api/parties is any authenticated role, same as /transfer.
+              <ProtectedRoute>
+                <Parties />
               </ProtectedRoute>
             }
           />
