@@ -30,8 +30,8 @@ const TILES = [
   { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
 ];
 
-// Each entry decides its own visibility from `user` — Transfer and Manage Parties are
-// unconditional (any authenticated role), the other four are owner-only. Set PIN/Change PIN are a deliberately
+// Each entry decides its own visibility from `user` — Transfer is unconditional (any
+// authenticated role), the other five are owner-only. Set PIN/Change PIN are a deliberately
 // exclusive pair — exact inverse conditions on the same hasPinSet flag, routing to the same
 // SetPin.jsx screen, which now branches on hasPinSet itself to decide which mode to render (no
 // currentPin field for first-time setup, currentPin required once a PIN already exists — see
@@ -42,10 +42,12 @@ const TILES = [
 // only ever mirrors Set PIN's condition, never Change PIN's.
 const MORE_ITEMS = [
   { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
-  // GET /api/parties is any authenticated role (04_API_SPEC.md), so this is unconditional like
-  // Transfer above — not owner-only like every other item in this list. Read-only screen for
-  // now; create/archive land in a separate follow-up task.
-  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: () => true },
+  // Owner-only, same as Manage Users/Factory Payables/Article Pricing below — GET /api/parties
+  // is any authenticated role at the API level (04_API_SPEC.md), but this screen has no
+  // staff-facing purpose today (not wired into New Order, which doesn't exist yet), so until
+  // then it's just a contact directory. Corrected from an initial `show: () => true` that
+  // shipped this to STAFF too — see LEARNING_LOG.md.
+  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: (user) => user.role === 'OWNER' },
   { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: (user) => user.role === 'OWNER' },
   {
     to: '/set-pin',

@@ -89,8 +89,11 @@ export default function App() {
           <Route
             path="/parties"
             element={
-              // No requireRole — GET /api/parties is any authenticated role, same as /transfer.
-              <ProtectedRoute>
+              // Owner-only at the route level even though GET /api/parties itself is any-role
+              // (04_API_SPEC.md) — this screen has no staff-facing purpose today (not wired
+              // into New Order, which doesn't exist yet), so until then it's just a contact
+              // directory, same category as Manage Users/Factory Payables/Article Pricing.
+              <ProtectedRoute requireRole="OWNER">
                 <Parties />
               </ProtectedRoute>
             }
