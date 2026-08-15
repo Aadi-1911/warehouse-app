@@ -168,6 +168,7 @@ A component's background/border/text should always share the same role tint toge
 - If a searched article number exists under more than one Factory, show **factory-disambiguation chips** before resolving.
 - Show pieces alongside sets in both the per-colour picker and the order summary (pieces-per-set is already known from receiving).
 - Never show exact stock numbers here — only a "Low stock" badge (see updated threshold below).
+- **Party dropdown behavior** *(added 2026-08-15)*: a row of filter chips sits above the party list — "All", one chip per Party `location` currently in use, plus a trailing "Other" chip for parties with no `location` set. Below the chips, the list itself is grouped by location: one section header per location, parties listed alphabetically within each group, with a trailing "Other" group (also alphabetical within it) for parties with no location. Tapping a chip narrows the visible groups to just that one ("Other" shows only the no-location group); "All" shows every group. The dropdown always opens with "All" selected as the default state.
 
 ### 5.4 Pack Order — updated
 - Two views, toggled from the header: **Tally** (flat checklist of all open order lines, for physical counting only — does not change order status) and **Pack List** (the existing grouped-by-order view).
@@ -240,7 +241,7 @@ A component's background/border/text should always share the same role tint toge
 **Scope note:** depends on Orders existing (Phase 2). This is documented now so it's designed once, correctly, rather than built ad hoc later — but nothing here gets implemented while Phase 1 frontend work is still in progress. It's a desktop-optimized *additional* experience for owner, supplementing — not replacing — the mobile-usable baseline required by rule 15 (owner also checks the app from a phone; this dashboard is for when they're actually at their PC).
 
 ### Layout shell
-Fixed 240px dark sidebar (logo tile, "Garment Manager"/"Owner" label, nav: Overview/Orders/Low Stock/History, active-row highlight, owner avatar+name pinned to bottom) + main content area, 100vh, only the content pane scrolls. 64px top bar (page title left, today's date right). Same design tokens as the rest of the app (§3.4) — same canvas color, same semantic role colors, no new palette.
+Fixed 240px dark sidebar (logo tile, "Garment Manager"/"Owner" label, nav: Overview/Orders/Low Stock/History/Parties, active-row highlight, owner avatar+name pinned to bottom) + main content area, 100vh, only the content pane scrolls. 64px top bar (page title left, today's date right). Same design tokens as the rest of the app (§3.4) — same canvas color, same semantic role colors, no new palette.
 
 ### Overview (default landing)
 - **KPI row**, 6 cards: Stock value (blue, computed from `costPrice` — inventory cost basis), Sets in stock (neutral), Pieces in stock (neutral), Open orders — Placed+Packed count (purple), Low stock lines — count of stock rows ≤2 sets (red), Revenue from Billed+Shipped orders (green, computed from `sellingPrice` — deliberately a different field than Stock Value, since one is cost and one is what the business actually collects).
@@ -259,6 +260,16 @@ Full, untruncated version of the Overview widget — same red theme, same ≤2 t
 
 ### History page
 Same shared, append-only log the staff app writes to. **Read-only for owner — no correction/edit affordance on this surface**, even though staff's History screen has one. Owner actions (marking billed) write into this same log, authored as the owner.
+
+### Parties page *(added 2026-08-15 — designed now, not buildable yet)*
+**Dependency note:** this subsection depends on `Order`/`OrderLineItem` existing (Phase 2 core, not yet built) for its content, and on the Dashboard shell itself existing (also not yet built, see "Layout shell" above) as its container. It's documented now so the design doesn't need re-litigating later, but it should not be scheduled before both dependencies land.
+- **Master-detail layout**: a grid of party cards on the left (rectangular, name + location, tap/click to select), a detail panel on the right for the currently-selected party.
+- **Detail panel, top to bottom:**
+  - Header: avatar-initials + name + location.
+  - Contact block: phone, full address, and GSTIN. The GSTIN row gets a small copy-to-clipboard icon button next to the number itself (not next to the "GSTIN" label) — copies just the number and shows a brief checkmark confirmation.
+  - **Sales summary** section: four preset chips (This month / Last 6 months / This FY / All time) plus a free-form From/To month picker — both driven by the same underlying calculation (rule 98).
+  - **Orders and bills** list below that: date, status pill using the existing order-status color mapping, value. Empty state: "No orders yet." until Order data exists.
+- **Mobile gap, explicitly not solved here**: this master-detail pattern (side panel on click) is desktop-only per rule 15 — mobile needs push-navigation to a full detail screen instead of a side panel. This is a real, known gap that still needs its own design pass when responsive/mobile Owner Dashboard work happens; no mobile version is invented here.
 
 ### Rules carried over unchanged from the staff app (do not deviate)
 - `(no, factory)` is still the true article identity — never assume article number alone is unique, same as everywhere else.
