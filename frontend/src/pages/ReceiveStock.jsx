@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import { listFactories, createFactory } from '../api/factories';
 import { listLocations, createLocation } from '../api/locations';
 import { listColors, createColor } from '../api/colors';
-import { listCategories, createCategory } from '../api/categories';
+import { listCategories, createCategory, deactivateCategory, reactivateCategory } from '../api/categories';
 import { createBundle } from '../api/bundles';
 import { findExactMatch, getValidColors, createProduct } from '../api/products';
 import { createTransaction } from '../api/transactions';
@@ -154,6 +154,15 @@ export default function ReceiveStock() {
   const [categories, setCategories] = useState([]);
   const [listsLoading, setListsLoading] = useState(true);
   const [listsError, setListsError] = useState(null);
+
+  // Category archive/reactivate (rule 85) — tucked behind its own toggle since this form is
+  // mainly about picking a category quickly, not managing them. Deliberately separate from
+  // categoryId/categories above: this is admin housekeeping on the underlying list, not part of
+  // picking one for the article being created.
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [showArchivedCategories, setShowArchivedCategories] = useState(false);
+  const [categoryActionBusyId, setCategoryActionBusyId] = useState(null);
+  const [categoryActionError, setCategoryActionError] = useState(null);
 
   const [factoryId, setFactoryId] = useState('');
   const [locationId, setLocationId] = useState('');
@@ -372,6 +381,37 @@ export default function ReceiveStock() {
     const category = await createCategory({ name });
     setCategories((prev) => [...prev, category]);
     setCategoryId(category.id);
+  }
+
+  // Archive/reactivate a Category (rule 85) — no PIN, matching every other archive/reactivate
+  // action in this app (only price edits require one). Updates the same categories list the
+  // picker reads from, so an archived category drops out of it immediately without a re-fetch.
+  async function handleArchiveCategory(category) {
+    setCategoryActionBusyId(category.id);
+    setCategoryActionError(null);
+    try {
+      const updated = await deactivateCategory(category.id);
+      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      // An archived category shouldn't stay silently selected for the article being created.
+      if (categoryId === category.id) setCategoryId('');
+    } catch (err) {
+      setCategoryActionError(err.message);
+    } finally {
+      setCategoryActionBusyId(null);
+    }
+  }
+
+  async function handleReactivateCategory(category) {
+    setCategoryActionBusyId(category.id);
+    setCategoryActionError(null);
+    try {
+      const updated = await reactivateCategory(category.id);
+      setCategories((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    } catch (err) {
+      setCategoryActionError(err.message);
+    } finally {
+      setCategoryActionBusyId(null);
+    }
   }
 
   // Full reset for the current article attempt: used by "Change" (abandon a wrong lookup) and
@@ -1039,12 +1079,73 @@ export default function ReceiveStock() {
                 fieldLabel="Category"
                 value={categoryId}
                 onChange={setCategoryId}
-                options={categories}
+                // Archived categories drop out of the default picker (rule 85), matching how an
+                // archived Color/Factory/Location already behaves elsewhere in this app.
+                options={categories.filter((c) => c.isActive)}
                 disabled={listsLoading}
                 placeholder={listsLoading ? 'Loading…' : 'Select category'}
                 canCreate
                 onCreate={handleCreateCategory}
               />
+
+              {/* Deliberately small and tucked away — this form is mainly about picking a
+                  category quickly, not managing them, so archive/reactivate lives behind its
+                  own toggle rather than sitting inline with every category all the time. No PIN
+                  needed, matching every other archive/reactivate action in the app. */}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setCategoryManagerOpen((v) => !v)}
+              >
+                {categoryManagerOpen ? 'Hide categories' : 'Manage categories'}
+              </button>
+
+              {categoryManagerOpen && (
+                <div className="category-manager">
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={showArchivedCategories}
+                      onChange={(e) => setShowArchivedCategories(e.target.checked)}
+                    />
+                    Show archived
+                  </label>
+
+                  {categoryActionError && (
+                    <p className="error-banner" role="alert">
+                      {categoryActionError}
+                    </p>
+                  )}
+
+                  {categories
+                    .filter((c) => showArchivedCategories || c.isActive)
+                    .map((c) => (
+                      <div key={c.id} className="category-manager-row">
+                        <span className={c.isActive ? '' : 'muted'}>{c.name}</span>
+                        {!c.isActive && <span className="badge badge-danger">Archived</span>}
+                        {c.isActive ? (
+                          <button
+                            type="button"
+                            className="link-button danger-text"
+                            onClick={() => handleArchiveCategory(c)}
+                            disabled={categoryActionBusyId === c.id}
+                          >
+                            {categoryActionBusyId === c.id ? 'Archiving…' : 'Archive'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => handleReactivateCategory(c)}
+                            disabled={categoryActionBusyId === c.id}
+                          >
+                            {categoryActionBusyId === c.id ? 'Reactivating…' : 'Reactivate'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
 
               <div className="field">
                 <span className="field-label">Sizes</span>
