@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PartyIcon } from '../components/icons';
+import { PartyIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listParties, createParty, deactivateParty, reactivateParty } from '../api/parties';
@@ -22,7 +22,11 @@ export default function Parties() {
   // join the list when this is on — unioned in, not swapped to an archived-only view.
   const [showArchived, setShowArchived] = useState(false);
 
-  // Create — a plain form, no modal, matching Manage Users' own Create account card.
+  // Create — collapsed behind the shared accordion pattern (Live Stock's .accordion-header/
+  // .accordion-body, own top-level .card.accordion-section, same tier as a Factory row) rather
+  // than an always-open form. Closed by default; collapses back to closed after a successful
+  // create, since the success banner below already confirms the result.
+  const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [shopName, setShopName] = useState('');
   const [location, setLocation] = useState('');
@@ -32,6 +36,10 @@ export default function Parties() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
   const [createSuccess, setCreateSuccess] = useState(null);
+
+  // Which party rows are expanded — a Set, not a single id, matching Live Stock's own accordion
+  // exactly (toggleFactory/toggleArticle) so any number of rows can be open independently.
+  const [expandedPartyIds, setExpandedPartyIds] = useState(new Set());
 
   // Archive/Reactivate — same confirmTarget/ConfirmModal shape as Manage Users and Article
   // Pricing: null | { party, action: 'archive' | 'reactivate' }. No PIN — not a price action.
@@ -74,11 +82,31 @@ export default function Parties() {
       setAddress('');
       setContact('');
       setGstNo('');
+      // Collapse back — only on success. An error stays open so the message and the
+      // already-typed fields remain visible for a retry, same reasoning ManageUsers/
+      // ArticlePricing use for their own error paths.
+      setCreateOpen(false);
     } catch (err) {
       setCreateError(err.message);
     } finally {
       setCreating(false);
     }
+  }
+
+  // Rule 99 (05_BUSINESS_RULES.md): digits only, max 10 — stripped on every keystroke rather
+  // than validated after the fact. Since this is a controlled input, a rejected character never
+  // actually lands in state, not even for a frame.
+  function handleContactChange(event) {
+    setContact(event.target.value.replace(/\D/g, '').slice(0, 10));
+  }
+
+  function toggleParty(id) {
+    setExpandedPartyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function handleStartArchiveAction(party, action) {
@@ -123,50 +151,70 @@ export default function Parties() {
     <div className="page">
       <ScreenHeader icon={<PartyIcon size={20} />} title="Manage Parties" />
 
-      <div className="card">
-        <h2 className="card-title">Create party</h2>
+      <div className="card accordion-section">
+        <button
+          type="button"
+          className="accordion-header"
+          onClick={() => setCreateOpen((v) => !v)}
+          aria-expanded={createOpen}
+        >
+          <div className="accordion-header-text">
+            <div className="accordion-title">Create party</div>
+          </div>
+          <ChevronIcon className={createOpen ? 'chevron chevron-open' : 'chevron'} />
+        </button>
 
-        <form onSubmit={handleCreate}>
-          <label className="field">
-            <span className="field-label">Name</span>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
+        {createOpen && (
+          <div className="accordion-body">
+            <form onSubmit={handleCreate}>
+              <label className="field">
+                <span className="field-label">Name</span>
+                <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+              </label>
 
-          <label className="field">
-            <span className="field-label">Shop name</span>
-            <input type="text" value={shopName} onChange={(e) => setShopName(e.target.value)} />
-          </label>
+              <label className="field">
+                <span className="field-label">Shop name</span>
+                <input type="text" value={shopName} onChange={(e) => setShopName(e.target.value)} />
+              </label>
 
-          <label className="field">
-            <span className="field-label">Location</span>
-            <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} />
-          </label>
+              <label className="field">
+                <span className="field-label">Location</span>
+                <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} />
+              </label>
 
-          <label className="field">
-            <span className="field-label">Address</span>
-            <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} />
-          </label>
+              <label className="field">
+                <span className="field-label">Address</span>
+                <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} />
+              </label>
 
-          <label className="field">
-            <span className="field-label">Contact</span>
-            <input type="text" value={contact} onChange={(e) => setContact(e.target.value)} />
-          </label>
+              <label className="field">
+                <span className="field-label">Contact</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={contact}
+                  onChange={handleContactChange}
+                  maxLength={10}
+                />
+              </label>
 
-          <label className="field">
-            <span className="field-label">GSTIN</span>
-            <input type="text" value={gstNo} onChange={(e) => setGstNo(e.target.value)} />
-          </label>
+              <label className="field">
+                <span className="field-label">GSTIN</span>
+                <input type="text" value={gstNo} onChange={(e) => setGstNo(e.target.value)} />
+              </label>
 
-          {createError && (
-            <p className="error-banner" role="alert">
-              {createError}
-            </p>
-          )}
+              {createError && (
+                <p className="error-banner" role="alert">
+                  {createError}
+                </p>
+              )}
 
-          <button type="submit" className="btn-primary" disabled={creating}>
-            {creating ? 'Creating…' : 'Create party'}
-          </button>
-        </form>
+              <button type="submit" className="btn-primary" disabled={creating}>
+                {creating ? 'Creating…' : 'Create party'}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
 
       {createSuccess && (
@@ -226,35 +274,80 @@ export default function Parties() {
           <p className="muted centered-empty-state">No results match your search.</p>
         ) : (
           <div className="card">
-            {sortedParties.map((p) => (
-              <div key={p.id} className="party-row">
-                <div className="party-row-name">
-                  <span className="party-row-primary">{p.name}</span>
-                  {p.shopName && <span className="muted party-row-shopname">{p.shopName}</span>}
+            {sortedParties.map((p) => {
+              const expanded = expandedPartyIds.has(p.id);
+              const subtitle = [p.shopName, p.location].filter(Boolean).join(' · ');
+              const hasDetails = p.address || p.contact || p.gstNo;
+              return (
+                <div key={p.id} className="accordion-section nested">
+                  <button
+                    type="button"
+                    className="accordion-header nested"
+                    onClick={() => toggleParty(p.id)}
+                    aria-expanded={expanded}
+                  >
+                    <div className="accordion-header-text">
+                      <div className="accordion-title-sm">{p.name}</div>
+                      {(subtitle || !p.isActive) && (
+                        <div className="muted accordion-subtitle">
+                          {subtitle}
+                          {!p.isActive && (
+                            <span className="badge badge-danger accordion-low-badge">Archived</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <ChevronIcon className={expanded ? 'chevron chevron-open' : 'chevron'} />
+                  </button>
+
+                  {expanded && (
+                    <div className="accordion-body nested">
+                      {p.address && (
+                        <div className="party-detail-row">
+                          <span className="party-detail-label">Address</span>
+                          <span>{p.address}</span>
+                        </div>
+                      )}
+                      {p.contact && (
+                        <div className="party-detail-row">
+                          <span className="party-detail-label">Contact</span>
+                          <span>{p.contact}</span>
+                        </div>
+                      )}
+                      {p.gstNo && (
+                        <div className="party-detail-row">
+                          <span className="party-detail-label">GSTIN</span>
+                          <span>{p.gstNo}</span>
+                        </div>
+                      )}
+                      {!hasDetails && <p className="muted">No additional details on file.</p>}
+
+                      <div className="party-detail-actions">
+                        {p.isActive ? (
+                          <button
+                            type="button"
+                            className="link-button danger-text"
+                            onClick={() => handleStartArchiveAction(p, 'archive')}
+                            disabled={actionInFlight}
+                          >
+                            Archive
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => handleStartArchiveAction(p, 'reactivate')}
+                            disabled={actionInFlight}
+                          >
+                            Reactivate
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {p.location && <span className="muted">{p.location}</span>}
-                {!p.isActive && <span className="badge badge-danger">Archived</span>}
-                {p.isActive ? (
-                  <button
-                    type="button"
-                    className="link-button danger-text"
-                    onClick={() => handleStartArchiveAction(p, 'archive')}
-                    disabled={actionInFlight}
-                  >
-                    Archive
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => handleStartArchiveAction(p, 'reactivate')}
-                    disabled={actionInFlight}
-                  >
-                    Reactivate
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )
       )}

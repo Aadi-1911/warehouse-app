@@ -1297,32 +1297,27 @@ body {
   font-weight: 700;
 }
 
-/* --- Party List rows: Name / Shop name / Location — same visual pattern as .stock-row above,
-   own class names since the fields (party identity, not colour/qty) don't match stock-row's
-   naming, but deliberately identical layout rather than a new one. --- */
-.party-row {
+/* --- Party List rows: now the shared accordion pattern (.accordion-section.nested etc, see
+   above) instead of a bespoke flat row — collapsed header shows name/shop name/location,
+   expanded body reveals address/contact/GSTIN plus the Archive/Reactivate action. These two
+   classes are only for that expanded body's label:value lines, which the accordion pattern
+   itself has no equivalent for. --- */
+.party-detail-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
+  gap: 8px;
+  padding: 4px 0;
   font-size: 12.5px;
 }
 
-.party-row + .party-row {
-  border-top: 1px solid var(--divider);
+.party-detail-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 70px;
+  flex-shrink: 0;
 }
 
-.party-row-name {
-  flex: 1;
-  min-width: 0;
-}
-
-.party-row-primary {
-  font-weight: 700;
-}
-
-.party-row-shopname {
-  display: block;
+.party-detail-actions {
+  margin-top: 10px;
 }
 
 /* --- Live Stock: Location sub-groups within an expanded article (§5.5 — updated) ---
