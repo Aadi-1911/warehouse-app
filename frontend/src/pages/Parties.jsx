@@ -264,7 +264,7 @@ export default function Parties() {
         title={confirmTarget?.action === 'archive' ? 'Archive this party?' : 'Reactivate this party?'}
         body={
           confirmTarget?.action === 'archive'
-            ? `${confirmTarget?.party.name} will be hidden from the default list. Every past order and transaction stays fully intact, and it can be reactivated anytime.`
+            ? `${confirmTarget?.party.name} will be hidden from the default list. It can be reactivated anytime.`
             : `${confirmTarget?.party.name} will be visible again in the default list immediately.`
         }
         confirmLabel={
