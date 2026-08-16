@@ -32,6 +32,32 @@ enum TransactionType {
   TRANSFER_IN  // leg of a Transfer — increases stock at the destination location
 }
 
+// Phase 2 — Orders & Parties (03_DATABASE_SCHEMA.md §2, reconciled 2026-08-16, commit 56477cf).
+enum PartyTier {
+  REGULAR
+  ONE_OFF
+}
+
+enum OrderStatus {
+  PLACED
+  PACKED
+  BILLED
+  SHIPPED
+}
+
+// Fixed set, not free text — same fixed-categories-plus-Other design already established by
+// 05_BUSINESS_RULES.md rule 65 for History corrections (Miscount/Wrong colour/Wrong
+// customer/Other), applied here to Order adjustments specifically. Deliberately a DIFFERENT
+// category list than History's own — an order adjustment routinely covers real business events
+// (a Party changing their mind), not just data-entry mistakes.
+enum OrderAdjustmentReason {
+  QUANTITY_REDUCED       // "Quantity reduced by Party"
+  ORDER_CANCELLED        // "Order cancelled (full or a line)"
+  RETURN_AFTER_DELIVERY  // "Return after delivery"
+  MISCALCULATION         // "Miscalculation / data-entry error"
+  OTHER                  // escape hatch, same reasoning as rule 65's own "Other" category
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -48,6 +74,8 @@ model User {
   transactions        Transaction[]
   partyStockReturns   PartyStockReturn[]
   transfers           Transfer[]
+  orders              Order[]            // orders this user logged (Order.createdById)
+  orderAdjustments    OrderAdjustment[]  // adjustments this user made (OrderAdjustment.changedById)
 }
 
 model Factory {
@@ -141,6 +169,7 @@ model Bundle {
   loosePieces       LoosePieces[]
   partyStockReturns PartyStockReturn[]
   transfers         Transfer[]
+  orderLineItems    OrderLineItem[]
 
   @@unique([productId, colorId]) // defines which colors are valid for a given article
 }
@@ -158,21 +187,21 @@ model Location {
 }
 
 model Party {
-  id        String   @id @default(cuid())
-  name      String
-  shopName  String?
-  location  String?
-  address   String?  // full address, distinct from the general "location" (city/area) field above
-  contact   String?  // phone number
-  gstNo     String?
-  isActive  Boolean  @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
-  createdAt DateTime @default(now())
-  // runningDueBalance and tier deliberately NOT included here — those depend on the Order/Bill
-  // system (Phase 2/3), which doesn't exist yet. This is Party pulled forward in minimal form,
-  // real enough for Phase 1's custom-composition orders and returns, extended later, not replaced.
+  id                String     @id @default(cuid())
+  name              String
+  shopName          String?
+  location          String?
+  address           String?    // full address, distinct from the general "location" (city/area) field above
+  contact           String?    // phone number
+  gstNo             String?
+  runningDueBalance Decimal    @default(0) // added by the Phase 2 Order migration (03_DATABASE_SCHEMA.md §2) — was deliberately absent until the Order system existed to compute against
+  tier              PartyTier? // nullable, deviating from 03_DATABASE_SCHEMA.md's literal `tier PartyTier` (non-nullable, no default) — the real table already had 9 rows, including a genuine party ("SAI"), and nothing in any doc specifies a tier for them. See LEARNING_LOG.md.
+  isActive          Boolean    @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+  createdAt         DateTime   @default(now())
 
   transactions      Transaction[]
   partyStockReturns PartyStockReturn[]
+  orders            Order[]
 }
 
 model Stock {
@@ -212,6 +241,8 @@ model Transaction {
   partyStockReturn     PartyStockReturn? @relation(fields: [partyStockReturnId], references: [id])
   transferId           String?           // populated only for TRANSFER_OUT / TRANSFER_IN — links the two paired legs of a single Transfer back to that Transfer record. Null for every other type.
   transfer             Transfer?         @relation(fields: [transferId], references: [id])
+  orderLineItemId      String?           // populated only when this movement fulfills an Order line (Phase 2) — most Transactions won't have one. Same nullable-scalar-plus-optional-relation shape as partyId above. Added so a custom-composition Transaction (and its TransactionSizeBreakdown) can be traced back to the Order it fulfilled (rule 95) — see 03_DATABASE_SCHEMA.md §2.
+  orderLineItem        OrderLineItem?    @relation(fields: [orderLineItemId], references: [id])
   createdAt            DateTime          @default(now())
 
   sizeBreakdown        TransactionSizeBreakdown[] // populated only when isCustomComposition = true
@@ -291,6 +322,62 @@ model PartyStockReturn {
   createdAt     DateTime      @default(now())
 
   transactions  Transaction[]
+}
+
+// Phase 2 — Orders (03_DATABASE_SCHEMA.md §2, reconciled 2026-08-16, commit 56477cf).
+model Order {
+  id          String            @id @default(cuid())
+  partyId     String
+  party       Party             @relation(fields: [partyId], references: [id])
+  status      OrderStatus       @default(PLACED)
+  createdById String            // whoever logged the order — live capture (rule 25) or the "Log Order from Photo" fallback (rule 26)
+  createdBy   User              @relation(fields: [createdById], references: [id])
+  createdAt   DateTime          @default(now())
+  packedAt    DateTime?         // set when status transitions to PACKED
+  billedAt    DateTime?         // set when status transitions to BILLED
+  shippedAt   DateTime?         // set when status transitions to SHIPPED
+  // No packedById/billedById/shippedById: WHO performed a status transition is already fully
+  // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
+  // one canonical audit trail, not two.
+
+  lineItems   OrderLineItem[]
+  adjustments OrderAdjustment[]
+}
+// Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
+// status value (rule 23) — see OrderAdjustment below.
+// Billed requires the (separate, not-yet-designed) formal Bill entity to exist for this order.
+// A lightweight "outstanding amount" view can be computed directly from OrderLineItem pricing
+// for owner convenience before formal billing exists.
+
+model OrderLineItem {
+  id               String            @id @default(cuid())
+  orderId          String
+  order            Order             @relation(fields: [orderId], references: [id])
+  bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at packing (rule 64's FIFO-across-locations), not at order time.
+  bundle           Bundle            @relation(fields: [bundleId], references: [id])
+  qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
+  qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives both the packing stepper's clamp and the "will adjust for the shortfall" messaging when packed < requested.
+  priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
+
+  adjustments      OrderAdjustment[]
+  transactions     Transaction[]     // packing-time STOCK_OUT rows that fulfilled this line (Transaction.orderLineItemId)
+}
+
+model OrderAdjustment {
+  // Append-only log. "Adjusted" is an event layered on top of Order.status,
+  // not a status value itself — Order.status stays linear (Placed → Packed → Billed → Shipped).
+  id          String                @id @default(cuid())
+  orderId     String
+  order       Order                 @relation(fields: [orderId], references: [id])
+  lineItemId  String?               // nullable — which specific line changed, for multi-line orders. Null = order-level change (e.g. a status transition), not tied to one line.
+  lineItem    OrderLineItem?        @relation(fields: [lineItemId], references: [id])
+  changedById String
+  changedBy   User                  @relation(fields: [changedById], references: [id])
+  changedAt   DateTime              @default(now())
+  field       String
+  oldValue    String
+  newValue    String
+  reason      OrderAdjustmentReason // rule 65: structured reason, not free text — same fixed-categories-plus-Other pattern already established there for History corrections.
 }
 
 model FactoryPayment {
