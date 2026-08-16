@@ -269,6 +269,37 @@ Response: `[{ id, bundleId, productId, productArticleNo, productName, colorId, c
 
 ---
 
+## Orders 🔒 (creation and basic read only — status transitions, packing, and adjustments are separate follow-up work)
+
+Order/OrderLineItem/OrderAdjustment schema: `03_DATABASE_SCHEMA.md` §2. `costPrice` never appears anywhere in this section's responses, at any role — Orders is a selling-price-facing feature (rule 10).
+
+### `POST /api/orders` 🔒
+Body: `{ partyId, lineItems: [{ bundleId, qtySetsRequested }] }`
+
+**Any authenticated role, deliberately** — staff creating orders during a sample visit is the primary real-world use case (rule 25), not an owner action. Every line item is fully validated (Party active, every Bundle real, every Product actually priced) before the database is touched at all — one bad line rejects the whole request with zero rows created, not a partial order.
+
+Server-side logic:
+1. Validate `partyId` and a non-empty `lineItems` array; each line needs a `bundleId` and a positive integer `qtySetsRequested` — `400 VALIDATION_ERROR` otherwise.
+2. Party must exist (`404 PARTY_NOT_FOUND`) and be active (`409 PARTY_ARCHIVED`).
+3. Every `bundleId` must resolve to a real Bundle (`404 BUNDLE_NOT_FOUND`).
+4. Every referenced Product must have a non-null `sellingPrice` (`400 UNPRICED_PRODUCT`) — a pending-price article can't be ordered.
+5. `priceAtOrder` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body**, same principle as `Transaction.costPriceSnapshot`.
+6. `Order.createdById` comes from the authenticated session, never the request body. `status` defaults to `PLACED`.
+
+Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`
+Errors: `400 VALIDATION_ERROR`, `400 UNPRICED_PRODUCT`, `404 PARTY_NOT_FOUND`, `404 BUNDLE_NOT_FOUND`, `409 PARTY_ARCHIVED`.
+
+### `GET /api/orders` 🔒
+Query params: `?partyId=`, `?status=`, `?from=`, `?to=`.
+Lightweight list — party name and a line-item summary, not full nested detail (same "line count, value" shape `07_UI_DESIGN_BRIEF.md`'s Owner Dashboard Orders widget already documents).
+Response: `[{ id, partyId, partyName, status, createdAt, lineItemCount, totalValue }]`. Default order: newest first.
+
+### `GET /api/orders/:id` 🔒
+Full detail, same shape `POST` returns — every line item included, each with the article/color info needed to actually display it.
+Errors: `404 ORDER_NOT_FOUND`.
+
+---
+
 ## General Error Conventions
 
 - `400` — validation failure (bad input shape, would-be-negative stock, etc.)
