@@ -12,6 +12,7 @@ import SetPin from './pages/SetPin';
 import FactoryPayables from './pages/FactoryPayables';
 import ArticlePricing from './pages/ArticlePricing';
 import Parties from './pages/Parties';
+import NewOrder from './pages/NewOrder';
 
 export default function App() {
   return (
@@ -95,6 +96,16 @@ export default function App() {
               // directory, same category as Manage Users/Factory Payables/Article Pricing.
               <ProtectedRoute requireRole="OWNER">
                 <Parties />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/new-order"
+            element={
+              // No requireRole — rule 25: staff creating orders during a sample visit is the
+              // primary real-world use case, same reasoning as POST /api/orders itself.
+              <ProtectedRoute>
+                <NewOrder />
               </ProtectedRoute>
             }
           />

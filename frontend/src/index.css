@@ -124,6 +124,12 @@ body {
   color: var(--warning-text);
 }
 
+.icon-mark.purple {
+  background: var(--purple-bg);
+  border: 1px solid var(--purple-border);
+  color: var(--purple-text);
+}
+
 .eyebrow {
   font-size: 11px;
   font-weight: 600;
@@ -676,6 +682,12 @@ body {
   background: var(--accent-bg);
   border-color: var(--accent-border);
   color: var(--accent-text);
+}
+
+.tile-purple {
+  background: var(--purple-bg);
+  border-color: var(--purple-border);
+  color: var(--purple-text);
 }
 
 /* --- Footer note (§5.1): small muted banner, staff only --- */
@@ -1388,4 +1400,62 @@ body {
 .transfer-row-qty {
   font-weight: 700;
   white-space: nowrap;
+}
+
+/* --- New Order: Party picker --- */
+.party-picker-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.party-option-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.party-option-row:hover {
+  background: var(--section-fill);
+}
+
+/* --- New Order: colour chips with a per-colour inline stepper revealed once checked --- */
+.color-chip-block {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.color-chip-block-stepper-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.color-chip-low-badge {
+  margin-left: 6px;
+}
+
+/* --- New Order: review panel — reuses .modal-scrim/.modal-card's shell, not the ConfirmModal
+   component itself, since its body prop is text-only and this needs real structured content. */
+.review-payload {
+  background: var(--section-fill);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
 }

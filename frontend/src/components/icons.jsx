@@ -158,3 +158,14 @@ export function PartyIcon({ size = 26 }) {
     </svg>
   );
 }
+
+// New Order (07_UI_DESIGN_BRIEF.md §5.1: "New Order (purple)... confirmed for the same tile
+// treatment once Phase 2 exists" — a shopping bag, the conventional "placing an order" mark.
+export function ShoppingBagIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M6 8h12l-1 12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8z" />
+      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+    </svg>
+  );
+}
