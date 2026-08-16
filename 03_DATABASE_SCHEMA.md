@@ -357,6 +357,10 @@ model FactoryDebit {
 
 ### Phase 2 — Orders & Parties
 
+**Reconciled 2026-08-16** — the previous draft below predated a close read against rules 21–26, 59, 63–65, and 95, and had drifted in several places: a stale re-declaration of `Party` (see the note replacing it below), a missing packed-vs-ordered field required by rule 64, a missing `reason` field required by rule 65, and every relation field omitted (FK columns present, but no corresponding `@relation` — every Phase 1 model pairs these). See `LEARNING_LOG.md` for the full reconciliation writeup. `Order`/`OrderLineItem`/`OrderAdjustment` below are the corrected, final versions; `Party` itself is intentionally not re-declared here — see the note that replaces it.
+
+**On the real `Party` model:** the model that used to sit here (`runningDueBalance`, `tier`, a `PartyTier` enum) does not match the real, already-migrated `Party` in §1 — it never got updated after rule 83 pulled Party forward into Phase 1 in minimal form, deliberately *without* those two fields, since both depend on the Order/Bill system that didn't exist yet. That dependency is resolved now: once this Phase 2 migration actually runs, it should `ALTER TABLE` the real `Party` to add `runningDueBalance Decimal @default(0)` and `tier PartyTier` (enum below), plus a `orders Order[]` back-relation for the new FK below — not create a second, divergent model.
+
 ```prisma
 enum PartyTier {
   REGULAR
@@ -370,43 +374,53 @@ enum OrderStatus {
   SHIPPED
 }
 
-model Party {
-  id                  String   @id @default(cuid())
-  name                String
-  shopName            String?
-  location            String?
-  address             String?  // full address, distinct from the general "location" (city/area) field above
-  contact             String?  // phone number
-  gstNo               String?
-  runningDueBalance   Decimal  @default(0)
-  tier                PartyTier
-  createdAt           DateTime @default(now())
+// Finalized 2026-08-16. Fixed set, not free text — same fixed-categories-plus-Other design
+// already established by rule 65 for History corrections (Miscount/Wrong colour/Wrong
+// customer/Other); this is that same pattern applied to Order adjustments specifically, not a
+// new one. Deliberately a DIFFERENT category list than History's own, though — an order
+// adjustment routinely covers real business events (a Party changing their mind), not just
+// data-entry mistakes, so History's categories don't fit here.
+enum OrderAdjustmentReason {
+  QUANTITY_REDUCED      // "Quantity reduced by Party"
+  ORDER_CANCELLED        // "Order cancelled (full or a line)"
+  RETURN_AFTER_DELIVERY  // "Return after delivery"
+  MISCALCULATION          // "Miscalculation / data-entry error"
+  OTHER                   // escape hatch, same reasoning as rule 65's own "Other" category
 }
 
 model Order {
-  id          String       @id @default(cuid())
+  id          String            @id @default(cuid())
   partyId     String
-  status      OrderStatus  @default(PLACED)
-  createdById String
-  createdAt   DateTime     @default(now())
-  packedAt    DateTime?    // set when status transitions to PACKED
-  billedAt    DateTime?    // set when status transitions to BILLED
-  shippedAt   DateTime?    // set when status transitions to SHIPPED
+  party       Party             @relation(fields: [partyId], references: [id]) // the real, migrated Party model in §1 — not a re-declaration
+  status      OrderStatus       @default(PLACED)
+  createdById String            // whoever logged the order — live capture (rule 25) or the "Log Order from Photo" fallback (rule 26)
+  createdBy   User              @relation(fields: [createdById], references: [id])
+  createdAt   DateTime          @default(now())
+  packedAt    DateTime?         // set when status transitions to PACKED
+  billedAt    DateTime?         // set when status transitions to BILLED
+  shippedAt   DateTime?         // set when status transitions to SHIPPED
+  // No packedById/billedById/shippedById: WHO performed a status transition is already fully
+  // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
+  // one canonical audit trail, not two. See LEARNING_LOG.md.
 
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
 }
-// Confirmed lifecycle: Placed → Packed → Billed → Shipped.
+// Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
+// status value (rule 23) — see OrderAdjustment below.
 // Billed requires the (separate, not-yet-designed) formal Bill entity below to exist for this order.
 // A lightweight "outstanding amount" view can be computed directly from OrderLineItem pricing
 // for owner convenience before formal billing exists — see note at the top of the Bill model.
 
 model OrderLineItem {
-  id              String  @id @default(cuid())
-  orderId         String
-  bundleId        String
-  qtySetsRequested Int
-  priceAtOrder    Decimal
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id])
+  bundleId         String   // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at packing (rule 64's FIFO-across-locations), not at order time.
+  bundle           Bundle   @relation(fields: [bundleId], references: [id])
+  qtySetsRequested Int      // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
+  qtySetsPacked    Int      @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives both the packing stepper's clamp and the "will adjust for the shortfall" messaging when packed < requested.
+  priceAtOrder     Decimal  // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
 }
 
 model OrderAdjustment {
@@ -414,17 +428,30 @@ model OrderAdjustment {
   // not a status value itself — Order.status stays linear (Placed → Packed → Billed → Shipped).
   id          String   @id @default(cuid())
   orderId     String
-  lineItemId  String?  // nullable — which specific line changed, for multi-line orders (rule 22). Null = order-level change, not tied to one line.
+  order       Order    @relation(fields: [orderId], references: [id])
+  lineItemId  String?  // nullable — which specific line changed, for multi-line orders. Null = order-level change (e.g. a status transition), not tied to one line.
+  lineItem    OrderLineItem? @relation(fields: [lineItemId], references: [id])
   changedById String
+  changedBy   User     @relation(fields: [changedById], references: [id])
   changedAt   DateTime @default(now())
   field       String
   oldValue    String
   newValue    String
+  reason      OrderAdjustmentReason // rule 65: structured reason, not free text — same fixed-categories-plus-Other pattern already established there for History corrections (see the enum above). Finalized 2026-08-16.
 }
 ```
 
+**Hard rules to enforce in application code (not expressible in schema alone)** — same convention as §1.1:
+- `Order.status` can only move forward through `Placed → Packed → Billed → Shipped`, never backward, never skip a stage (rule 23, 59).
+- Once `Order.status` is `Billed`, the order is a hard lock — no further edits to `OrderLineItem.qtySetsRequested`/`priceAtOrder`, no further `OrderAdjustment` rows against it. Any issue after this point routes through Defect/Return or the (not-yet-designed) `BillCorrection`, never back through order edits (rule 23).
+- Staff-facing UI may only ever trigger two of the four transitions: `Placed → Packed` and `Billed → Shipped`. `... → Billed` is owner-only and must never be offered to STAFF (rule 63).
+- `OrderLineItem.qtySetsPacked` must never be set above that line's current `qtySetsRequested` (hard clamp, not a block) — when a pack falls short, the UI must say so explicitly rather than blocking the action (rule 64).
+- Every change to `OrderLineItem.qtySetsRequested`, `priceAtOrder`, or `Order.status` must write a corresponding `OrderAdjustment` row in the same transaction — there is no schema-level trigger enforcing this, it's an application discipline (rule 24).
+- When creating an `OrderLineItem`, only `Bundle` values that already have a valid `Bundle` row for the selected `Product` are valid — same rule as Phase 1 stock entry (already stated below, restated here since it applies equally at order-entry time).
+
+**A required Phase 1 follow-up this reconciliation surfaced, out of this task's own scope:** `Transaction` (§1, already migrated) currently has no field linking it back to an `OrderLineItem`. Rule 95 confirms the custom-composition toggle applies to the *fulfilling* `Transaction` (`Transaction.isCustomComposition`) at packing time, not to the order line itself — correctly, `OrderLineItem` above has no custom-composition field of its own. But without `Transaction.orderLineItemId` (nullable, same pattern as `transferId`/`partyStockReturnId`), there's no way to trace a packing-time `STOCK_OUT` row — or the `TransactionSizeBreakdown` hanging off it — back to the `Order` it fulfilled. This needs adding to `Transaction` when the actual Phase 2 migration runs; it isn't part of this reconciliation since `Transaction` is a Phase 1 model, not one of the three being reconciled here.
+
 Notes for future implementation:
-- Orders can be adjusted at any point up until `Billed`, which is a hard lock.
 - The WhatsApp-photo fallback needs a manual "Log Order from Photo" entry screen so no order permanently exists only as a photo.
 - Color selection at order-entry time must be filtered to only colors with a valid `Bundle` for the selected `Product` (same rule as Phase 1 stock entry).
 
