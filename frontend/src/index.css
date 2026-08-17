@@ -299,13 +299,13 @@ body {
   cursor: default;
 }
 
-/* Article No. input sits next to the Add button rather than stacked above it. Spacing below
-   the row lives HERE, on the row itself, not on a child — align-items: flex-end aligns each
-   child's own margin box, so a margin-bottom on just one child (the label, previously) offsets
-   that child's visible bottom edge from its sibling's by exactly that margin. That was the Add
-   button misalignment bug: .article-no-field carried margin-bottom: 14px while the button had
-   none, so their bottoms only LOOKED aligned by coincidence of unrelated heights, not because
-   flex-end was actually lining up the input and the button. */
+/* Article No. input sits next to the Add/Search button rather than stacked above it. Spacing
+   below the row lives HERE, on the row itself, not on a child — align-items: flex-end aligns
+   each child's own MARGIN box, which is only the same as aligning their VISIBLE bottom edges
+   if both children's margin-bottom actually matches. See .article-no-field's own comment
+   below for the real fix (this note used to claim that fix already existed; it didn't — the
+   input and the Add/Search button were visibly misaligned on both Receive Stock and New Order
+   until it was actually applied). */
 .article-lookup-row {
   display: flex;
   align-items: flex-end;
@@ -321,6 +321,14 @@ body {
 
 .article-no-field {
   flex: 1;
+  /* Overrides .field's own margin-bottom: 14px — without this, the label's margin BOX still
+     extends 14px past its visible content even though this rule never showed it, so
+     align-items: flex-end on .article-lookup-row aligned the input's and button's MARGIN
+     edges (equal), not their VISIBLE bottom edges (14px apart) — the exact misalignment this
+     screen and Receive Stock's own "Add" button both showed, since both share this class.
+     Confirmed by direct measurement before this fix: a real 14px gap between the input's and
+     button's rendered bottom edges on a narrow phone viewport. */
+  margin-bottom: 0;
 }
 
 /* --- Buttons --- */
@@ -1428,12 +1436,18 @@ body {
   background: var(--section-fill);
 }
 
-/* --- New Order: colour chips with a per-colour inline stepper revealed once checked --- */
+/* --- New Order: colour chips with a per-colour inline stepper revealed once checked ---
+   margin-top matches .card's own 20px padding — the same "comfortable breathing room" unit
+   already establishing this page's spacing rhythm (e.g. what visually separates the Party
+   card from the Add Article card, on inspection just their own 20px padding meeting, not a
+   real margin — reused directly here rather than a smaller, cramped 8px). Applies to every
+   block uniformly, so it fixes both the chip-row-to-first-stepper gap and the gap between
+   stacked stepper cards with the one rule. */
 .color-chip-block {
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 10px;
-  margin-top: 8px;
+  margin-top: 20px;
 }
 
 .color-chip-block-stepper-row {
