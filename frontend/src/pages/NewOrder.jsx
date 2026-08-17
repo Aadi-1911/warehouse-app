@@ -5,10 +5,11 @@ import { listParties } from '../api/parties';
 import { listFactories } from '../api/factories';
 import { listProducts, getValidColors } from '../api/products';
 import { listStock } from '../api/stock';
+import { createOrder } from '../api/orders';
 
 // New Order — 07_UI_DESIGN_BRIEF.md §5.3 / §6 Round 6 refinements / §7 Round 7 refinements /
-// 05_BUSINESS_RULES.md rules 21-26, 53-56. Selection and staging only — "Review order" shows
-// the assembled payload but does not call POST /api/orders yet; that's a separate task.
+// 05_BUSINESS_RULES.md rules 21-26, 53-56. "Review order" now genuinely submits via
+// POST /api/orders (previously staging-and-preview only).
 //
 // Rule 25: staff creating orders during a sample visit is the PRIMARY real-world use case here,
 // not an owner action — this screen is reachable by any authenticated role (App.jsx has no
@@ -310,25 +311,77 @@ export default function NewOrder() {
 
   const totalLineCount = orderLines.reduce((sum, e) => sum + e.colors.length, 0);
 
-  // --- Review (this task's stopping point — no POST /api/orders yet). Shows exactly the
-  // payload the follow-up task will submit, both on screen and in the console, so the flow is
-  // genuinely demonstrable rather than a button that silently does nothing.
+  // --- Review + submit. The review modal shows the human-readable summary (party, articles,
+  // colors, quantities) and, on confirm, actually calls POST /api/orders with this payload.
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  // Scoped to the review modal only — a failed submit keeps the modal open with this message
+  // so staff can retry or back out, never a page-level error that could get missed.
+  const [submitError, setSubmitError] = useState(null);
+  // Set only after a successful submit AND the full screen reset below — shown as a dismissible
+  // banner on the now-fresh screen, same "OK to dismiss whenever you're ready" pattern
+  // ReceiveStock's own saveOutcome banner already uses, not an auto-vanishing toast.
+  const [placedOutcome, setPlacedOutcome] = useState(null);
   const reviewPayload = {
     partyId: selectedPartyId,
     lineItems: orderLines.flatMap((e) => e.colors.map((c) => ({ bundleId: c.bundleId, qtySetsRequested: c.sets }))),
   };
 
   function handleOpenReview() {
-    // eslint-disable-next-line no-console
-    console.log('New Order — assembled payload (not yet submitted):', reviewPayload);
+    setSubmitError(null);
     setReviewOpen(true);
+  }
+
+  // Everything staged gets wiped so the screen is genuinely ready for the next order — staff
+  // place several back-to-back during one sales visit (rule 25), so this must not force a
+  // navigation away from the screen.
+  function resetOrderScreen() {
+    setSelectedPartyId('');
+    setPartyPickerOpen(true);
+    setPartyChipFilter('ALL');
+    resetArticleSearch();
+    setOrderLines([]);
+  }
+
+  async function handleConfirmOrder() {
+    setSubmitError(null);
+    setSubmitting(true);
+    // Captured now, before resetOrderScreen below clears the state these read from — closure
+    // values here are frozen at call time, but reading them straight from state AFTER the reset
+    // would just read the now-emptied values.
+    const partyName = selectedParty?.name ?? '';
+    const lineCount = totalLineCount;
+    try {
+      const created = await createOrder(reviewPayload);
+      setReviewOpen(false);
+      resetOrderScreen();
+      setPlacedOutcome({ partyName, lineCount, orderId: created.id });
+    } catch (err) {
+      // Deliberately NOT resetting anything here — a Party archived or a price unset between
+      // staging and submitting (realistic: another session made the change) must never cost
+      // staff their staged work. They fix the underlying issue or back out to edit, then retry.
+      setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
     <div className="page">
       <ScreenHeader icon={<ShoppingBagIcon size={20} />} tone="purple" title="New Order" />
       {selectedParty && <p className="muted">{selectedParty.name}</p>}
+
+      {placedOutcome && (
+        <div className="result-banner result-banner-success">
+          <p>
+            <strong>Order placed for {placedOutcome.partyName}.</strong> {placedOutcome.lineCount} line
+            {placedOutcome.lineCount === 1 ? '' : 's'} — order #{placedOutcome.orderId.slice(-6)}.
+          </p>
+          <button type="button" className="link-button" onClick={() => setPlacedOutcome(null)}>
+            OK
+          </button>
+        </div>
+      )}
 
       {partiesError && (
         <p className="error-banner" role="alert">
@@ -610,11 +663,13 @@ export default function NewOrder() {
       )}
 
       {/* Custom shell, not the ConfirmModal component — its body prop is text-only, and this
-          needs to show real structured content (grouped lines + the raw payload). No submit
-          action here on purpose: this task stops at review, POST /api/orders is a follow-up. */}
+          needs to show real structured content (grouped lines), plus an in-flight/error state
+          around the actual POST /api/orders call. Clicking the scrim is deliberately NOT wired
+          to close/cancel here (unlike other modals) — a mid-submit accidental tap must never
+          silently discard a real order attempt; "Back to edit" is the one explicit way out. */}
       {reviewOpen && (
-        <div className="modal-scrim" onClick={() => setReviewOpen(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-scrim">
+          <div className="modal-card">
             <h2 className="modal-title">Review Order</h2>
             <p className="modal-body">
               <strong>{selectedParty?.name}</strong> — {totalLineCount} line{totalLineCount === 1 ? '' : 's'}
@@ -631,11 +686,29 @@ export default function NewOrder() {
                 ))}
               </div>
             ))}
-            <p className="modal-body muted">Not submitted yet — POST /api/orders is a separate follow-up task.</p>
-            <pre className="review-payload">{JSON.stringify(reviewPayload, null, 2)}</pre>
+
+            {submitError && (
+              <p className="error-banner" role="alert">
+                Could not place this order: {submitError}
+              </p>
+            )}
+
             <div className="modal-actions">
-              <button type="button" className="btn-modal-cancel" onClick={() => setReviewOpen(false)}>
-                Close
+              <button
+                type="button"
+                className="btn-modal-cancel"
+                onClick={() => setReviewOpen(false)}
+                disabled={submitting}
+              >
+                Back to edit
+              </button>
+              <button
+                type="button"
+                className="btn-modal-confirm btn-modal-confirm-accent"
+                onClick={handleConfirmOrder}
+                disabled={submitting}
+              >
+                {submitting ? 'Placing order…' : 'Confirm and place order'}
               </button>
             </div>
           </div>

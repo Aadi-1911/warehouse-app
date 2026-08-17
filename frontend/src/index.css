@@ -1005,6 +1005,15 @@ body {
   border-color: var(--accent-text);
 }
 
+/* First use of a disabled state on these shared buttons — New Order's "Confirm and place
+   order" disables both modal buttons while the POST is in flight, same opacity/cursor
+   treatment .btn-primary:disabled etc. already use elsewhere. */
+.btn-modal-cancel:disabled,
+.btn-modal-confirm:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* --- Home: self-service PIN prompt + Manage Users entry point --- */
 .prompt-banner {
   display: flex;
@@ -1464,17 +1473,4 @@ body {
      separate," one step further to 10px since this pill sits INSIDE another pill (extra visual
      weight from the outer chip's own padding/border competing for the same small gap). */
   margin-left: 10px;
-}
-
-/* --- New Order: review panel — reuses .modal-scrim/.modal-card's shell, not the ConfirmModal
-   component itself, since its body prop is text-only and this needs real structured content. */
-.review-payload {
-  background: var(--section-fill);
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 11px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
 }
