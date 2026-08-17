@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShoppingBagIcon } from '../components/icons';
+import { ShoppingBagIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listParties } from '../api/parties';
 import { listFactories } from '../api/factories';
@@ -311,6 +311,33 @@ export default function NewOrder() {
 
   const totalLineCount = orderLines.reduce((sum, e) => sum + e.colors.length, 0);
 
+  // --- Shared accordion state (Live Stock's own .accordion-header/.accordion-body pattern,
+  // reused rather than a bespoke implementation) grouping the staged lines by article. Order
+  // Summary starts fully collapsed, same "collapsed by default" convention every other
+  // accordion in this app already uses. The Review Order modal below gets its OWN separate Set
+  // — it starts expanded (seeded fresh each time the modal opens, see handleOpenReview), since
+  // that's the final check before submitting and staff shouldn't need extra taps to see it all.
+  const [expandedSummaryArticles, setExpandedSummaryArticles] = useState(() => new Set());
+  const [expandedReviewArticles, setExpandedReviewArticles] = useState(() => new Set());
+
+  function toggleSummaryArticle(productId) {
+    setExpandedSummaryArticles((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }
+
+  function toggleReviewArticle(productId) {
+    setExpandedReviewArticles((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }
+
   // --- Review + submit. The review modal shows the human-readable summary (party, articles,
   // colors, quantities) and, on confirm, actually calls POST /api/orders with this payload.
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -329,6 +356,10 @@ export default function NewOrder() {
 
   function handleOpenReview() {
     setSubmitError(null);
+    // Expanded by default, re-seeded fresh on every open — a staff member collapsing one
+    // article to focus on another during a review shouldn't carry over the next time they open
+    // this same modal (e.g. after backing out to edit and reopening).
+    setExpandedReviewArticles(new Set(groupedOrderLines.map((g) => g.productId)));
     setReviewOpen(true);
   }
 
@@ -623,34 +654,52 @@ export default function NewOrder() {
       {groupedOrderLines.length > 0 && (
         <>
           <h2 className="section-heading">Order Summary</h2>
-          {groupedOrderLines.map((group) => (
-            <div key={group.productId} className="card receipt-group">
-              <div className="receipt-group-header">
-                <div>
-                  <span className="receipt-group-article">{group.articleNo}</span>
-                  <span className="muted"> — {group.productName}</span>
+          <div className="card">
+            {groupedOrderLines.map((group) => {
+              const open = expandedSummaryArticles.has(group.productId);
+              return (
+                <div key={group.productId} className="accordion-section nested">
+                  <button
+                    type="button"
+                    className="accordion-header nested"
+                    onClick={() => toggleSummaryArticle(group.productId)}
+                    aria-expanded={open}
+                  >
+                    <div className="accordion-header-text">
+                      <div className="accordion-title-sm">
+                        {group.articleNo}
+                        <span className="muted"> — {group.productName}</span>
+                      </div>
+                    </div>
+                    <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
+                  </button>
+
+                  {open && (
+                    <div className="accordion-body nested">
+                      <div className="staged-list">
+                        {group.rows.map((row) => (
+                          <div key={`${row.entryId}-${row.colorId}`} className="staged-row">
+                            <span className="staged-color-name">{row.colorName}</span>
+                            <span className="muted">
+                              {row.sets} set{row.sets === 1 ? '' : 's'} · {row.pieces} pc
+                            </span>
+                            <button
+                              type="button"
+                              className="link-button danger-text"
+                              onClick={() => handleRemoveLine(row.entryId, row.colorId)}
+                              aria-label={`Remove ${row.colorName}`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="staged-list">
-                {group.rows.map((row) => (
-                  <div key={`${row.entryId}-${row.colorId}`} className="staged-row">
-                    <span className="staged-color-name">{row.colorName}</span>
-                    <span className="muted">
-                      {row.sets} set{row.sets === 1 ? '' : 's'} · {row.pieces} pc
-                    </span>
-                    <button
-                      type="button"
-                      className="link-button danger-text"
-                      onClick={() => handleRemoveLine(row.entryId, row.colorId)}
-                      aria-label={`Remove ${row.colorName}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
         </>
       )}
 
@@ -674,18 +723,42 @@ export default function NewOrder() {
             <p className="modal-body">
               <strong>{selectedParty?.name}</strong> — {totalLineCount} line{totalLineCount === 1 ? '' : 's'}
             </p>
-            {groupedOrderLines.map((group) => (
-              <div key={group.productId}>
-                <p className="modal-body">
-                  <strong>{group.articleNo}</strong> — {group.productName}
-                </p>
-                {group.rows.map((row) => (
-                  <p key={`${row.entryId}-${row.colorId}`} className="modal-body muted">
-                    {row.colorName} — {row.sets} set{row.sets === 1 ? '' : 's'} ({row.pieces} pc)
-                  </p>
-                ))}
-              </div>
-            ))}
+            {groupedOrderLines.map((group) => {
+              const open = expandedReviewArticles.has(group.productId);
+              return (
+                <div key={group.productId} className="accordion-section nested">
+                  <button
+                    type="button"
+                    className="accordion-header nested"
+                    onClick={() => toggleReviewArticle(group.productId)}
+                    aria-expanded={open}
+                  >
+                    <div className="accordion-header-text">
+                      <div className="accordion-title-sm">
+                        {group.articleNo}
+                        <span className="muted"> — {group.productName}</span>
+                      </div>
+                    </div>
+                    <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
+                  </button>
+
+                  {open && (
+                    <div className="accordion-body nested">
+                      <div className="staged-list">
+                        {group.rows.map((row) => (
+                          <div key={`${row.entryId}-${row.colorId}`} className="staged-row">
+                            <span className="staged-color-name">{row.colorName}</span>
+                            <span className="muted">
+                              {row.sets} set{row.sets === 1 ? '' : 's'} ({row.pieces} pc)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             {submitError && (
               <p className="error-banner" role="alert">

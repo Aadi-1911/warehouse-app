@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PackageIcon, CheckCircleIcon, WarningTriangleIcon, NotStartedIcon } from '../components/icons';
+import {
+  PackageIcon,
+  CheckCircleIcon,
+  WarningTriangleIcon,
+  NotStartedIcon,
+  ChevronIcon,
+} from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { getOrder, packOrder } from '../api/orders';
 import { listStock } from '../api/stock';
@@ -57,6 +63,20 @@ export default function PackOrderDetail() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // Shared accordion state (Live Stock's .accordion-header/.accordion-body pattern, reused
+  // rather than a bespoke implementation) grouping lines by article — collapsed by default,
+  // same convention as New Order's own Order Summary and every other accordion in this app.
+  const [expandedArticles, setExpandedArticles] = useState(() => new Set());
+
+  function toggleArticle(productId) {
+    setExpandedArticles((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -187,6 +207,20 @@ export default function PackOrderDetail() {
     (tally.short > 0 ? ` · ${tally.short} short` : '') +
     (tally.notStarted > 0 ? ` · ${tally.notStarted} not started` : '');
 
+  // Group by article (productId) — same grouping New Order's own Order Summary uses, built
+  // fresh each render from the already-fetched order rather than kept as separate state.
+  const groupedLineItems = order.lineItems
+    .reduce((groups, li) => {
+      let group = groups.find((g) => g.productId === li.productId);
+      if (!group) {
+        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [] };
+        groups.push(group);
+      }
+      group.lines.push(li);
+      return groups;
+    }, [])
+    .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
+
   return (
     <div className="page">
       <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
@@ -199,77 +233,102 @@ export default function PackOrderDetail() {
         </p>
       )}
 
-      {order.lineItems.map((li) => {
-        const ordered = li.qtySetsRequested;
-        const qty = packingQty[li.id] ?? ordered;
-        const touched = touchedLines.has(li.id);
-        const isShort = qty < ordered;
-        const stockAvail = stockByBundleId[li.bundleId] ?? 0;
+      <div className="card">
+        {groupedLineItems.map((group) => {
+          const open = expandedArticles.has(group.productId);
+          return (
+            <div key={group.productId} className="accordion-section nested">
+              <button
+                type="button"
+                className="accordion-header nested"
+                onClick={() => toggleArticle(group.productId)}
+                aria-expanded={open}
+              >
+                <div className="accordion-header-text">
+                  <div className="accordion-title-sm">
+                    {group.articleNo}
+                    <span className="muted"> — {group.productName}</span>
+                  </div>
+                </div>
+                <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
+              </button>
 
-        let StatusIcon = NotStartedIcon;
-        let statusClass = 'pack-line-status-not-started';
-        if (touched) {
-          if (isShort) {
-            StatusIcon = WarningTriangleIcon;
-            statusClass = 'pack-line-status-short';
-          } else {
-            StatusIcon = CheckCircleIcon;
-            statusClass = 'pack-line-status-full';
-          }
-        }
+              {open && (
+                <div className="accordion-body nested">
+                  {group.lines.map((li) => {
+                    const ordered = li.qtySetsRequested;
+                    const qty = packingQty[li.id] ?? ordered;
+                    const touched = touchedLines.has(li.id);
+                    const isShort = qty < ordered;
+                    const stockAvail = stockByBundleId[li.bundleId] ?? 0;
 
-        return (
-          <div key={li.id} className={`card pack-line-card ${isShort ? 'pack-line-card-short' : ''}`}>
-            <div className="pack-line-header">
-              <div>
-                <p className="pack-line-article">
-                  {li.productArticleNo} — {li.productName}
-                </p>
-                <p className="muted">{li.colorName}</p>
-              </div>
-              <span className={statusClass}>
-                <StatusIcon size={22} />
-              </span>
+                    let StatusIcon = NotStartedIcon;
+                    let statusClass = 'pack-line-status-not-started';
+                    if (touched) {
+                      if (isShort) {
+                        StatusIcon = WarningTriangleIcon;
+                        statusClass = 'pack-line-status-short';
+                      } else {
+                        StatusIcon = CheckCircleIcon;
+                        statusClass = 'pack-line-status-full';
+                      }
+                    }
+
+                    return (
+                      <div key={li.id} className={`pack-line-row ${isShort ? 'pack-line-row-short' : ''}`}>
+                        <div className="pack-line-row-header">
+                          <span className="pack-line-color-chip">{li.colorName}</span>
+                          <span className={statusClass}>
+                            <StatusIcon size={18} />
+                          </span>
+                        </div>
+
+                        <p className="pack-line-ordered">
+                          {isShort
+                            ? `Ordered: ${ordered} · Only ${stockAvail} in stock`
+                            : `Ordered: ${pluralSets(ordered)}`}
+                        </p>
+
+                        <div className="pack-line-stepper-row">
+                          <div className="stepper">
+                            <button
+                              type="button"
+                              className="stepper-btn"
+                              onClick={() => adjustPacking(li.id, ordered, -1)}
+                              disabled={qty === 0 || submitting}
+                              aria-label={`Decrease packed sets for ${li.colorName}`}
+                            >
+                              −
+                            </button>
+                            <span className="stepper-value">{qty}</span>
+                            <button
+                              type="button"
+                              className="stepper-btn"
+                              onClick={() => adjustPacking(li.id, ordered, 1)}
+                              disabled={qty >= ordered || submitting}
+                              aria-label={`Increase packed sets for ${li.colorName}`}
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span className="muted">In stock: {stockAvail}</span>
+                        </div>
+
+                        {isShort && (
+                          <p className="pack-line-shortfall-note">
+                            This will be recorded as a short-pack — the ordered quantity stays {ordered}; only how
+                            much actually gets packed changes.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-
-            <p className="pack-line-ordered">
-              {isShort ? `Ordered: ${ordered} · Only ${stockAvail} in stock` : `Ordered: ${pluralSets(ordered)}`}
-            </p>
-
-            <div className="pack-line-stepper-row">
-              <div className="stepper">
-                <button
-                  type="button"
-                  className="stepper-btn"
-                  onClick={() => adjustPacking(li.id, ordered, -1)}
-                  disabled={qty === 0 || submitting}
-                  aria-label={`Decrease packed sets for ${li.colorName}`}
-                >
-                  −
-                </button>
-                <span className="stepper-value">{qty}</span>
-                <button
-                  type="button"
-                  className="stepper-btn"
-                  onClick={() => adjustPacking(li.id, ordered, 1)}
-                  disabled={qty >= ordered || submitting}
-                  aria-label={`Increase packed sets for ${li.colorName}`}
-                >
-                  +
-                </button>
-              </div>
-              <span className="muted">In stock: {stockAvail}</span>
-            </div>
-
-            {isShort && (
-              <p className="pack-line-shortfall-note">
-                This will be recorded as a short-pack — the ordered quantity stays {ordered}; only how much
-                actually gets packed changes.
-              </p>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
       <div className="sticky-action-bar">
         <p className="muted pack-order-tally">{tallyText}</p>

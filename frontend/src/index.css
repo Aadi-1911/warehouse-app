@@ -1508,35 +1508,56 @@ body {
 }
 
 /* --- Pack Order: Pack List detail (§5.4) ---
-   Line cards reuse .card as their base (same shell every other card list in this app uses) and
-   layer a warning tint on top only when short — .card itself stays untouched, so every other
-   screen's cards are unaffected. */
-.pack-line-card {
-  margin-bottom: 12px;
+   Grouped by article behind the same shared accordion pattern as everywhere else (.accordion-
+   section.nested etc, see above) — one outer .card holding one nested accordion section per
+   article, colour lines living compactly inside each one's .accordion-body.nested. Previously
+   each colour line was its own full .card ("6002 — Nike" repeated on every one); now that
+   several sit stacked under one shared article header, they're plain rows instead — less
+   padding, no border/shadow of their own, separated by a simple divider like Live Stock's own
+   .stock-row rows. */
+.pack-line-row {
+  padding: 10px 0;
 }
 
-.pack-line-card-short {
+.pack-line-row + .pack-line-row {
+  border-top: 1px solid var(--divider);
+}
+
+/* Compound selector (not a bare .pack-line-row-short) so this wins over the adjacency divider
+   rule above at equal specificity — a straight divider line cutting across this tinted block's
+   rounded corners would look like a rendering glitch, not a second visual treatment. */
+.pack-line-row.pack-line-row-short {
   background: var(--warning-bg);
-  border-color: var(--warning-border);
+  border-top: none;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 4px 0;
 }
 
-.pack-line-header {
+.pack-line-row-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
-.pack-line-article {
-  font-size: 13.5px;
+/* Small tinted chip behind the colour name — reuses --section-fill, the same neutral tint
+   token .location-subgroup-header already uses for "this label needs to read as its own thing
+   against a plain row," rather than inventing a new colour just for this. Needed now that the
+   colour name no longer sits inside its own bordered card. */
+.pack-line-color-chip {
+  display: inline-block;
+  background: var(--section-fill);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 12.5px;
   font-weight: 700;
-  margin: 0 0 2px;
 }
 
 .pack-line-ordered {
   font-size: 12px;
   color: var(--text-secondary);
-  margin: 10px 0 0;
+  margin: 8px 0 0;
 }
 
 .pack-line-stepper-row {
@@ -1544,13 +1565,13 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .pack-line-shortfall-note {
   font-size: 11.5px;
   color: var(--warning-text);
-  margin: 8px 0 0;
+  margin: 6px 0 0;
 }
 
 /* Three status-icon colour variants — same currentColor-driven icons as everywhere else in
