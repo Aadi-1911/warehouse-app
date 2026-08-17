@@ -43,6 +43,16 @@ function statusWord(status) {
   return String(status).toLowerCase();
 }
 
+// "PACKED" -> "Packed", the tag text for a status entry. Deliberately built ON TOP of
+// statusWord() and fed the same OrderAdjustment.newValue the description uses, rather than being
+// a second { PACKED: 'Packed', ... } lookup sitting alongside it: a separate table could silently
+// disagree with the description (or miss a value entirely) the moment OrderStatus gains a stage.
+// Deriving both from one input makes disagreement unrepresentable.
+function statusLabel(status) {
+  const word = statusWord(status);
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
 function articleLabel(lineItem) {
   return `${lineItem.bundle.product.articleNo} ${lineItem.bundle.color.name}`;
 }
@@ -120,6 +130,7 @@ async function listHistory(req, res) {
     entries.push({
       id: `ORDER_PLACED:${o.id}`,
       type: 'ORDER_PLACED',
+      label: 'Placed',
       timestamp: o.createdAt,
       actorName: o.createdBy.name,
       partyName: o.party.name,
@@ -137,6 +148,9 @@ async function listHistory(req, res) {
       entries.push({
         id: `ORDER_STATUS:${a.id}`,
         type: 'ORDER_STATUS',
+        // "Packed" / "Billed" / "Shipped" — the actual moment, not a generic "Status". Same
+        // a.newValue the description below is built from, so the two can never disagree.
+        label: statusLabel(a.newValue),
         timestamp: a.changedAt,
         actorName: a.changedBy.name,
         partyName,
@@ -150,6 +164,7 @@ async function listHistory(req, res) {
       entries.push({
         id: `ORDER_ADJUSTMENT:${a.id}`,
         type: 'ORDER_ADJUSTMENT',
+        label: 'Change',
         timestamp: a.changedAt,
         actorName: a.changedBy.name,
         partyName,
@@ -164,6 +179,7 @@ async function listHistory(req, res) {
     entries.push({
       id: `TRANSFER:${t.id}`,
       type: 'TRANSFER',
+      label: 'Transfer',
       timestamp: t.createdAt,
       actorName: t.user.name,
       partyName: null,

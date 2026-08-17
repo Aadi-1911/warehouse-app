@@ -364,9 +364,10 @@ Three sources are merged:
 2. **`OrderAdjustment` rows** — every one, across every order: status transitions, quantity changes, short-packs. Article/colour is named whenever `lineItemId` is set.
 3. **Transfers** — one entry per `Transfer` row. Read from the `Transfer` table directly, **not** reconstructed from the paired `TRANSFER_OUT`/`TRANSFER_IN` `Transaction` rows: those are that row's stock-movement side effects (linked back via `Transaction.transferId`), not the event. One transfer = one entry, never two.
 
-Response: `[{ id, type, timestamp, actorName, partyName, description }]`, sorted newest-first with `id` as a deterministic tiebreak (several events can share a timestamp — billing writes its stock transactions and its status adjustment in one database transaction — and without a tiebreak the order could differ between two identical requests).
+Response: `[{ id, type, label, timestamp, actorName, partyName, description }]`, sorted newest-first with `id` as a deterministic tiebreak (several events can share a timestamp — billing writes its stock transactions and its status adjustment in one database transaction — and without a tiebreak the order could differ between two identical requests).
 
-- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER`, used by the client only to pick an icon/tag.
+- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER`, used by the client only to pick the tag's **colour**.
+- `label` is the tag's **text**: `"Placed"`, `"Packed"`, `"Billed"`, `"Shipped"`, `"Change"`, or `"Transfer"`. Computed server-side, not derived from `type` by the client — one `type` (`ORDER_STATUS`) covers three genuinely different moments, so a per-type mapping could only render a single generic word for all of them. For `ORDER_STATUS` the label is derived from the same `OrderAdjustment.newValue` the description is built from, so the tag and the sentence can never disagree or miss a value if `OrderStatus` gains a stage.
 - `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
 - `partyName` is `null` for transfers.
 - `id` is prefixed by type (e.g. `TRANSFER:<cuid>`) to guarantee uniqueness across the merged sources.

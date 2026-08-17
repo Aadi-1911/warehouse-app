@@ -16,18 +16,25 @@ import { listHistory } from '../api/history';
 // renders correctly here, just with the fallback tag styling, rather than silently showing a
 // blank row until the frontend is taught about it.
 
-// Tag label + badge class per type. Colours follow 07_UI_DESIGN_BRIEF.md §3.4's own semantic role
-// table rather than being picked freely: Order = purple, forward progress = success/green,
-// a correction = warning/amber, stock movement = accent/blue.
-const TYPE_TAGS = {
-  ORDER_PLACED: { label: 'Order', className: 'badge-purple' },
-  ORDER_STATUS: { label: 'Status', className: 'badge-success' },
-  ORDER_ADJUSTMENT: { label: 'Change', className: 'badge-warning' },
-  TRANSFER: { label: 'Transfer', className: 'badge-accent' },
+// Badge COLOUR per type. Colours follow 07_UI_DESIGN_BRIEF.md §3.4's own semantic role table
+// rather than being picked freely: Order = purple, forward progress = success/green, a
+// correction = warning/amber, stock movement = accent/blue.
+//
+// The tag's TEXT is deliberately not in here — it comes from entry.label, computed server-side.
+// A static per-type mapping could only ever produce one word per type, which meant all three of
+// Packed/Billed/Shipped rendered an identical generic "Status" tag and the actual moment was
+// buried in the description. The three still share ORDER_STATUS's green (they're all forward
+// progress); only the wording distinguishes them.
+const TYPE_BADGE_CLASSES = {
+  ORDER_PLACED: 'badge-purple',
+  ORDER_STATUS: 'badge-success',
+  ORDER_ADJUSTMENT: 'badge-warning',
+  TRANSFER: 'badge-accent',
 };
 
 // Unknown types still render — see the component comment above.
-const FALLBACK_TAG = { label: 'Event', className: 'badge-accent' };
+const FALLBACK_BADGE_CLASS = 'badge-accent';
+const FALLBACK_LABEL = 'Event';
 
 function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
@@ -107,11 +114,11 @@ export default function History() {
             <div className="eyebrow history-day-heading">{day.heading}</div>
             <div className="card history-day-card">
               {day.entries.map((entry) => {
-                const tag = TYPE_TAGS[entry.type] ?? FALLBACK_TAG;
+                const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
                 return (
                   <div key={entry.id} className="history-row">
                     <div className="history-row-top">
-                      <span className={`badge ${tag.className}`}>{tag.label}</span>
+                      <span className={`badge ${badgeClass}`}>{entry.label ?? FALLBACK_LABEL}</span>
                       <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
                     </div>
                     <p className="history-row-description">{entry.description}</p>
