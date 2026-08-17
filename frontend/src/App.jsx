@@ -13,6 +13,8 @@ import FactoryPayables from './pages/FactoryPayables';
 import ArticlePricing from './pages/ArticlePricing';
 import Parties from './pages/Parties';
 import NewOrder from './pages/NewOrder';
+import PackOrderList from './pages/PackOrderList';
+import PackOrderDetail from './pages/PackOrderDetail';
 
 export default function App() {
   return (
@@ -106,6 +108,24 @@ export default function App() {
               // primary real-world use case, same reasoning as POST /api/orders itself.
               <ProtectedRoute>
                 <NewOrder />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pack-orders"
+            element={
+              // No requireRole — rule 63: staff is the primary user for Placed → Packed, same
+              // reasoning as New Order's own any-role gating above.
+              <ProtectedRoute>
+                <PackOrderList />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pack-orders/:id"
+            element={
+              <ProtectedRoute>
+                <PackOrderDetail />
               </ProtectedRoute>
             }
           />

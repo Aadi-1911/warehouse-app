@@ -698,6 +698,12 @@ body {
   color: var(--purple-text);
 }
 
+.tile-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
 /* --- Footer note (§5.1): small muted banner, staff only --- */
 .footer-note {
   background: var(--card-bg);
@@ -1473,4 +1479,99 @@ body {
      separate," one step further to 10px since this pill sits INSIDE another pill (extra visual
      weight from the outer chip's own padding/border competing for the same small gap). */
   margin-left: 10px;
+}
+
+/* --- Pack Order: order list (§5.4) --- */
+.order-list-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.order-list-card-party {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+
+.order-list-card-date {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* --- Pack Order: Pack List detail (§5.4) ---
+   Line cards reuse .card as their base (same shell every other card list in this app uses) and
+   layer a warning tint on top only when short — .card itself stays untouched, so every other
+   screen's cards are unaffected. */
+.pack-line-card {
+  margin-bottom: 12px;
+}
+
+.pack-line-card-short {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.pack-line-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pack-line-article {
+  font-size: 13.5px;
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+
+.pack-line-ordered {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 10px 0 0;
+}
+
+.pack-line-stepper-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.pack-line-shortfall-note {
+  font-size: 11.5px;
+  color: var(--warning-text);
+  margin: 8px 0 0;
+}
+
+/* Three status-icon colour variants — same currentColor-driven icons as everywhere else in
+   this app (icons.jsx), just tinted here per-instance rather than via a shared .icon-mark
+   container, since these sit bare inside a card header rather than in their own tile. */
+.pack-line-status-not-started {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.pack-line-status-full {
+  color: var(--success-text);
+  flex-shrink: 0;
+}
+
+.pack-line-status-short {
+  color: var(--warning-text);
+  flex-shrink: 0;
+}
+
+.pack-order-tally {
+  margin: 0 0 8px;
+  font-size: 12.5px;
 }

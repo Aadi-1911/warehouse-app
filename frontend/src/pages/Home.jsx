@@ -17,21 +17,21 @@ import {
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
 //
 // Colored tiles are reserved for core, frequent, semantically-distinct actions only — Receive
-// Stock (green) and Live Stock (blue), and now New Order (purple), per §5.1's own already-
-// written note that New Order gets this exact treatment "once Phase 2 exists" — it now does
-// (Order/OrderLineItem/OrderAdjustment migrated, POST/GET /api/orders built). Pack Order
-// (amber) still isn't built, so it stays unrendered for now — a dead tile for an unbuilt
-// screen was already the rule before this change; it just used to apply to two screens,
-// now one. Everything else that used to compete for a colored tile slot — Transfer, plus the
-// owner-only admin screens — lives in the plain "More" list below instead: icon + label only,
-// no color tint, same treatment §5.1 gives Transfer/Low Stock/History in the reference.
-// Colored tiles stay a flat, unconditional array (nothing in it is ever role-gated — New
-// Order is reachable by any authenticated role, rule 25, same as the other two); the More
-// list is where per-item visibility logic lives, since that's the only place it still applies.
+// Stock (green), Live Stock (blue), New Order (purple), and now Pack Order (amber), per §5.1's
+// own already-written note that both New Order and Pack Order get this exact treatment "once
+// Phase 2 exists" — it now does for both (PATCH /api/orders/:id/pack built, same as
+// POST/GET before it). Everything else that used to compete for a colored tile slot —
+// Transfer, plus the owner-only admin screens — lives in the plain "More" list below instead:
+// icon + label only, no color tint, same treatment §5.1 gives Transfer/Low Stock/History in
+// the reference. Colored tiles stay a flat, unconditional array (nothing in it is ever
+// role-gated — Pack Order is reachable by any authenticated role, rule 63, same reasoning
+// already applied to New Order/rule 25); the More list is where per-item visibility logic
+// lives, since that's the only place it still applies.
 const TILES = [
   { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
   { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
 ];
 
 // Each entry decides its own visibility from `user` — Transfer is unconditional (any

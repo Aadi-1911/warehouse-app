@@ -169,3 +169,36 @@ export function ShoppingBagIcon({ size = 26 }) {
     </svg>
   );
 }
+
+// Pack Order (§5.4): a line item's three packing states — fully matched, short, not started.
+// Grouped together since all three exist only to sit side by side on the same card and must
+// read as one coherent "traffic light" set at a glance, not three unrelated icons.
+export function CheckCircleIcon({ size = 20 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12.5 10.8 15 16 9.5" />
+    </svg>
+  );
+}
+
+export function WarningTriangleIcon({ size = 20 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M12 3.5 2 20h20L12 3.5z" />
+      <line x1="12" y1="10" x2="12" y2="14.5" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+// Dashed, not solid — the one visual cue in this set with no fill/solid-line equivalent
+// elsewhere in the icon set, deliberately reading as "empty/unconfirmed" rather than "wrong"
+// (that's WarningTriangleIcon's job) or "done" (CheckCircleIcon's).
+export function NotStartedIcon({ size = 20 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeDasharray="3 3">
+      <circle cx="12" cy="12" r="9" />
+    </svg>
+  );
+}
