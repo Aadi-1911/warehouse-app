@@ -1458,7 +1458,12 @@ body {
 }
 
 .color-chip-low-badge {
-  margin-left: 6px;
+  /* 6px read as crowded against the colour name in real testing (confirmed via screenshot on a
+     real low-stock article, 375px viewport) — bumped to match .chip-row's own gap: 8px, the
+     value this app already uses for "how far apart do two adjacent pills need to be to read as
+     separate," one step further to 10px since this pill sits INSIDE another pill (extra visual
+     weight from the outer chip's own padding/border competing for the same small gap). */
+  margin-left: 10px;
 }
 
 /* --- New Order: review panel — reuses .modal-scrim/.modal-card's shell, not the ConfirmModal
