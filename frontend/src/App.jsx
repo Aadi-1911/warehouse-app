@@ -15,6 +15,7 @@ import Parties from './pages/Parties';
 import NewOrder from './pages/NewOrder';
 import PackOrderList from './pages/PackOrderList';
 import PackOrderDetail from './pages/PackOrderDetail';
+import History from './pages/History';
 
 export default function App() {
   return (
@@ -126,6 +127,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <PackOrderDetail />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              // No requireRole — both roles see the identical feed, no role-based filtering of
+              // content (GET /api/history is any-authenticated-role for the same reason).
+              <ProtectedRoute>
+                <History />
               </ProtectedRoute>
             }
           />

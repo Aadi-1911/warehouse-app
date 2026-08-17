@@ -12,6 +12,7 @@ import {
   TagIcon,
   PartyIcon,
   ShoppingBagIcon,
+  HistoryIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -46,6 +47,10 @@ const TILES = [
 // only ever mirrors Set PIN's condition, never Change PIN's.
 const MORE_ITEMS = [
   { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
+  // Unconditional, like Transfer above — both roles see the identical feed. A plain row rather
+  // than a coloured tile: History is a look-something-up utility, not one of the core frequent
+  // actions §5.1 reserves tiles for.
+  { to: '/history', label: 'History', Icon: HistoryIcon, show: () => true },
   // Owner-only, same as Manage Users/Factory Payables/Article Pricing below — GET /api/parties
   // is any authenticated role at the API level (04_API_SPEC.md), but this screen has no
   // staff-facing purpose today (not wired into New Order, which doesn't exist yet), so until

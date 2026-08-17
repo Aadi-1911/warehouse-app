@@ -352,6 +352,29 @@ Errors: `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_BILLED`.
 
 ---
 
+## History 🔒
+
+### `GET /api/history` 🔒
+No query params. **Any authenticated role** — OWNER and STAFF receive the identical feed, with no role-based filtering of content. No price field of any kind (`costPrice`, `sellingPrice`, `priceAtOrder`) is selected or returned.
+
+A unified, read-only feed of what's happened across Orders and Transfers, newest first. **Deliberately a read-time merge across existing tables, not a shared event-log table** — no such table exists and this endpoint doesn't create one. Every source already carries a timestamp, an actor, and enough relations to describe itself, so a denormalised second copy would be a duplicate source of truth to keep in sync for no gain (same reasoning applied to the Factory payable figure and the party dues tracker).
+
+Three sources are merged:
+1. **Order creation** — one entry per `Order`, from `Order.createdAt`/`createdBy`, with party name and line count. No `OrderAdjustment` row exists for creation itself, so this comes from `Order` directly.
+2. **`OrderAdjustment` rows** — every one, across every order: status transitions, quantity changes, short-packs. Article/colour is named whenever `lineItemId` is set.
+3. **Transfers** — one entry per `Transfer` row. Read from the `Transfer` table directly, **not** reconstructed from the paired `TRANSFER_OUT`/`TRANSFER_IN` `Transaction` rows: those are that row's stock-movement side effects (linked back via `Transaction.transferId`), not the event. One transfer = one entry, never two.
+
+Response: `[{ id, type, timestamp, actorName, partyName, description }]`, sorted newest-first with `id` as a deterministic tiebreak (several events can share a timestamp — billing writes its stock transactions and its status adjustment in one database transaction — and without a tiebreak the order could differ between two identical requests).
+
+- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER`, used by the client only to pick an icon/tag.
+- `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
+- `partyName` is `null` for transfers.
+- `id` is prefixed by type (e.g. `TRANSFER:<cuid>`) to guarantee uniqueness across the merged sources.
+
+**No pagination or filtering in this first version** — the whole feed is returned. At this business's real volume that's a non-issue (currently well under 100 entries). The trade-off worth knowing: because the sort happens in application memory across three queries, this can't be paginated efficiently at the database layer; if that ever mattered, the fix is per-source pagination with a merge cursor, still not a shared table.
+
+---
+
 ## General Error Conventions
 
 - `400` — validation failure (bad input shape, would-be-negative stock, etc.)

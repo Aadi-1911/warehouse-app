@@ -170,6 +170,19 @@ export function ShoppingBagIcon({ size = 26 }) {
   );
 }
 
+// History (§5.1's "More" list) — a clock with a counter-clockwise arrow, the conventional
+// "past events / activity log" mark. Deliberately not a plain clock, which reads as "time" or
+// "schedule" rather than "what already happened."
+export function HistoryIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M3 12a9 9 0 1 0 2.6-6.35" />
+      <polyline points="3 3.5 3 8.5 8 8.5" />
+      <polyline points="12 7.5 12 12 15 13.5" />
+    </svg>
+  );
+}
+
 // Pack Order (§5.4): a line item's three packing states — fully matched, short, not started.
 // Grouped together since all three exist only to sit side by side on the same card and must
 // read as one coherent "traffic light" set at a glance, not three unrelated icons.

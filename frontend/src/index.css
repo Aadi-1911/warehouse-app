@@ -1596,3 +1596,51 @@ body {
   margin: 0 0 8px;
   font-size: 12.5px;
 }
+
+/* --- History: a flat reverse-chronological feed, grouped into day sections for scannability.
+   Deliberately plain — this is a look-something-up utility, not a dashboard. Rows reuse the
+   same divider-between-siblings idiom as .stock-row / .pack-line-row rather than each becoming
+   its own card, which at feed length would be a wall of borders. */
+.history-day + .history-day {
+  margin-top: 16px;
+}
+
+.history-day-heading {
+  margin-bottom: 6px;
+}
+
+.history-day-card {
+  padding: 4px 16px;
+}
+
+.history-row {
+  padding: 12px 0;
+}
+
+.history-row + .history-row {
+  border-top: 1px solid var(--divider);
+}
+
+.history-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.history-row-time {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.history-row-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.history-row-actor {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+}
