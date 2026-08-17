@@ -12,9 +12,13 @@ import { getOrder, packOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 
 // Pack Order — Pack List detail, 07_UI_DESIGN_BRIEF.md §5.4 (both the original and "— updated"
-// sections). Tally view and "Mark shipped" are both explicitly out of scope here — Tally is a
-// separate flat-checklist follow-up, and shipping needs Billed first, which needs the Bill
-// entity, which doesn't exist yet.
+// sections). Tally view and "Mark shipped" are both out of scope here — Tally is a separate
+// flat-checklist follow-up, and shipping needs Billed first, which has a backend endpoint
+// (PATCH /api/orders/:id/bill, OWNER-only) but no UI on any screen yet.
+//
+// Packing no longer moves stock (backend change 2026-08-17) — this screen confirms COUNTS, and
+// the actual deduction happens later at Bill. The stock numbers shown per line are still real and
+// still worth showing: they're what staff use to decide how much they can actually pack.
 //
 // --- On the "not started" status icon's meaning (worth spelling out, since it's the one place
 // this screen's own spec is genuinely ambiguous) ---
@@ -151,9 +155,10 @@ export default function PackOrderDetail() {
         },
       });
     } catch (err) {
-      // Deliberately not resetting packingQty/touchedLines — a stock race (INSUFFICIENT_STOCK)
-      // or someone else packing it first (ORDER_NOT_PLACED) must never cost staff their
-      // stepper entries. They see the real message and either retry or back out via ScreenHeader.
+      // Deliberately not resetting packingQty/touchedLines — someone else packing this order
+      // first (ORDER_NOT_PLACED) must never cost staff their stepper entries. They see the real
+      // message and either retry or back out via ScreenHeader. (Packing can no longer fail on
+      // INSUFFICIENT_STOCK — it doesn't touch stock at all now; that moved to Bill.)
       setSubmitError(err.message);
     } finally {
       setSubmitting(false);

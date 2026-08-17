@@ -218,15 +218,14 @@ async function getOrder(req, res) {
 //
 // Body: { lineItems: [{ lineItemId, qtySetsPacked }] } — one entry per line on this order.
 //
-// Stock deduction picks Location rows FIFO (rule 64) in alphabetical order by Location.name.
-// There's no existing "canonical" ordering for Locations anywhere in this codebase to defer to —
-// listLocations has no orderBy at all, and Transfer's fromLocationId is a human's explicit pick,
-// never an auto-selected one. The one place this app already had to answer "what order do
-// multiple Locations go in" is Live Stock's own display grouping
-// (frontend/src/pages/LiveStock.jsx), which sorts by locationName.localeCompare(...) — i.e.
-// alphabetical. Reusing that here rather than inventing a second convention (e.g. createdAt,
-// which has no established precedent and no meaning a human could ever explain if asked "why did
-// this pack draw from Gurgaon before Delhi").
+// DELIBERATELY SIDE-EFFECT-FREE ON STOCK (changed 2026-08-17). Packing used to perform the FIFO
+// stock deduction; it no longer touches Stock or Transaction at all. Packing is a counting step —
+// a physical recount staff may legitimately need to redo — and a step that can be repeated is the
+// wrong place to hang an irreversible deduction: re-packing an already-packed order would have
+// deducted the same stock twice. Deduction now lives on the Bill transition instead, which is
+// already rule 23's hard lock (nothing is editable past Billed), so it can only ever run once by
+// construction rather than by a guard bolted on afterwards. See billOrder below and
+// LEARNING_LOG.md for the full reasoning.
 async function packOrder(req, res) {
   const { id } = req.params;
   const { lineItems: submittedLines } = req.body;
@@ -245,7 +244,9 @@ async function packOrder(req, res) {
 
   const order = await prisma.order.findUnique({
     where: { id },
-    select: { id: true, status: true, lineItems: { select: { id: true, bundleId: true, qtySetsRequested: true } } },
+    // bundleId is deliberately NOT selected — packing no longer touches stock, so it has no use
+    // for it. Bill is where bundleId matters now (see billOrder below).
+    select: { id: true, status: true, lineItems: { select: { id: true, qtySetsRequested: true } } },
   });
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
@@ -285,12 +286,110 @@ async function packOrder(req, res) {
     }
   }
 
-  // Resolve, for every distinct bundle referenced, all Stock rows holding it — read-only, before
-  // any write — same "resolve everything, then validate" shape createOrder above already uses.
-  const bundleIds = [...new Set(submittedLines.map((sl) => lineById.get(sl.lineItemId).bundleId))];
+  // No stock reads, no availability pre-check, no INSUFFICIENT_STOCK path: packing records what
+  // was counted, it doesn't commit it. A line CAN legitimately be packed for more than is
+  // currently on the shelf — that discrepancy surfaces at Bill, which is the transition that
+  // actually moves inventory.
+  const updated = await prisma.$transaction(async (tx) => {
+    for (const sl of submittedLines) {
+      const line = lineById.get(sl.lineItemId);
+
+      await tx.orderLineItem.update({
+        where: { id: line.id },
+        data: { qtySetsPacked: sl.qtySetsPacked },
+      });
+
+      // Visible history entry explaining the gap — qtySetsRequested itself never moves
+      // (confirmed design decision, not reinterpreted here), so without this row there'd be no
+      // record of why a line's packed quantity fell short of what was asked.
+      if (sl.qtySetsPacked < line.qtySetsRequested) {
+        await tx.orderAdjustment.create({
+          data: {
+            orderId: id,
+            lineItemId: line.id,
+            changedById: req.user.id,
+            field: 'qtySetsPacked',
+            oldValue: String(line.qtySetsRequested),
+            newValue: String(sl.qtySetsPacked),
+            reason: 'SHORT_PACKED',
+          },
+        });
+      }
+    }
+
+    await tx.order.update({
+      where: { id },
+      data: { status: 'PACKED', packedAt: new Date() },
+    });
+    // Routine forward progress, not a correction — reason stays null, per the earlier schema
+    // decision (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").
+    await tx.orderAdjustment.create({
+      data: {
+        orderId: id,
+        changedById: req.user.id,
+        field: 'status',
+        oldValue: 'PLACED',
+        newValue: 'PACKED',
+        reason: null,
+      },
+    });
+
+    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  });
+
+  res.json(orderDetailToResponse(updated));
+}
+
+// PATCH /api/orders/:id/bill — OWNER ONLY (👑), enforced by requireRole('OWNER') in routes/
+// orders.js, NOT by this comment. Deliberately owner-gated where pack and ship are any-role:
+// rule 63 states plainly that the "... → Billed" transition is owner-only and must never be
+// offered to STAFF, and this is now also the point where real inventory moves.
+//
+// THIS IS THE STOCK-DEDUCTION POINT (moved here from pack, 2026-08-17). Billing is the
+// commitment: it's already rule 23's hard lock (nothing about an order is editable once Billed),
+// so a deduction hung here can only ever run once, by construction. Packing, by contrast, is a
+// recountable step — deducting there meant a re-pack could deduct the same stock twice. See
+// LEARNING_LOG.md.
+//
+// Deduction picks Location rows FIFO (rule 64) in alphabetical order by Location.name. There's no
+// existing "canonical" ordering for Locations anywhere in this codebase to defer to — listLocations
+// has no orderBy at all, and Transfer's fromLocationId is a human's explicit pick, never an
+// auto-selected one. The one place this app already had to answer "what order do multiple
+// Locations go in" is Live Stock's own display grouping (frontend/src/pages/LiveStock.jsx), which
+// sorts by locationName.localeCompare(...) — i.e. alphabetical. This is the same convention that
+// logic used when it lived in pack, carried over unchanged rather than re-decided.
+//
+// No body. No formal Bill document/invoice entity exists yet (amounts, GST, a printable doc are
+// an explicitly separate later task) — this is a pure status-transition-plus-deduction endpoint,
+// structurally the same shape as shipOrder below.
+async function billOrder(req, res) {
+  const { id } = req.params;
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true } },
+    },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (order.status !== 'PACKED') {
+    return sendError(res, 409, 'ORDER_NOT_PACKED', `Order must be PACKED to bill — current status is ${order.status}`);
+  }
+
+  // Deduct against qtySetsPacked, NOT qtySetsRequested — packing is the physical count of what
+  // actually went in the box, so that's the number billing commits against. A short-packed line
+  // moves only what was really packed; the shortfall was already recorded as its own
+  // SHORT_PACKED OrderAdjustment at pack time and needs no second entry here.
+  const linesToDeduct = order.lineItems.filter((li) => li.qtySetsPacked > 0);
+
+  const bundleIds = [...new Set(linesToDeduct.map((li) => li.bundleId))];
   const stockRows = await prisma.stock.findMany({
     where: { bundleId: { in: bundleIds }, qtySets: { gt: 0 } },
-    select: { id: true, bundleId: true, locationId: true, qtySets: true, location: { select: { name: true } } },
+    select: { id: true, bundleId: true, qtySets: true, location: { select: { name: true } } },
   });
   const stockByBundle = new Map();
   for (const s of stockRows) {
@@ -301,20 +400,22 @@ async function packOrder(req, res) {
     rows.sort((a, b) => a.location.name.localeCompare(b.location.name));
   }
 
-  // Everything-or-nothing pre-check (rule: same atomicity guarantee as order creation) — if any
-  // single line can't be fully covered by total available stock across its locations, reject the
-  // WHOLE request before touching the database, rather than partially deducting some lines and
-  // then discovering a later one comes up short.
-  for (const sl of submittedLines) {
-    if (sl.qtySetsPacked === 0) continue;
-    const available = (stockByBundle.get(lineById.get(sl.lineItemId).bundleId) || [])
-      .reduce((sum, s) => sum + s.qtySets, 0);
-    if (available < sl.qtySetsPacked) {
+  // Everything-or-nothing pre-check — if any single line can't be fully covered by total available
+  // stock across its locations, reject the WHOLE request before touching the database, rather than
+  // partially deducting some lines and then discovering a later one comes up short. Same atomicity
+  // guarantee order creation already makes.
+  //
+  // Unlike at pack time, this genuinely CAN fire in normal use: stock may have moved between
+  // packing and billing (another order billed first, a transfer, a correction). That's exactly the
+  // race this rejects cleanly instead of silently overselling.
+  for (const li of linesToDeduct) {
+    const available = (stockByBundle.get(li.bundleId) || []).reduce((sum, s) => sum + s.qtySets, 0);
+    if (available < li.qtySetsPacked) {
       return sendError(
         res,
         409,
         'INSUFFICIENT_STOCK',
-        `Not enough stock to pack ${sl.qtySetsPacked} sets for line ${sl.lineItemId} (available: ${available})`
+        `Not enough stock to bill ${li.qtySetsPacked} sets for line ${li.id} (available: ${available})`
       );
     }
   }
@@ -322,10 +423,9 @@ async function packOrder(req, res) {
   let updated;
   try {
     updated = await prisma.$transaction(async (tx) => {
-      for (const sl of submittedLines) {
-        const line = lineById.get(sl.lineItemId);
-        let remaining = sl.qtySetsPacked;
-        const rows = stockByBundle.get(line.bundleId) || [];
+      for (const li of linesToDeduct) {
+        let remaining = li.qtySetsPacked;
+        const rows = stockByBundle.get(li.bundleId) || [];
 
         for (const stockRow of rows) {
           if (remaining <= 0) break;
@@ -334,16 +434,16 @@ async function packOrder(req, res) {
 
           // Same guarded-decrement idiom as Transfer (transferController.js) — the "is there
           // enough?" check and the decrement are one atomic statement via the qtySets: { gte }
-          // WHERE clause, so a genuine concurrent race (another pack/transaction landing between
-          // our read above and this write) can't drive stock negative. count === 0 here means the
-          // pre-check's read was stale; that's the race the everything-or-nothing check above is
-          // meant to catch, but this guard is what actually prevents corruption if it slips through.
+          // WHERE clause, so a genuine concurrent race (another bill landing between our read
+          // above and this write) can't drive stock negative. count === 0 means the pre-check's
+          // read went stale; that's what this guard exists to catch, and the whole transaction
+          // rolls back rather than applying a partial deduction.
           const decremented = await tx.stock.updateMany({
             where: { id: stockRow.id, qtySets: { gte: draw } },
             data: { qtySets: { decrement: draw } },
           });
           if (decremented.count === 0) {
-            const err = new Error(`Stock at a location for line ${sl.lineItemId} changed concurrently — pack aborted`);
+            const err = new Error(`Stock at a location for line ${li.id} changed concurrently — billing aborted`);
             err.isInsufficientStock = true;
             throw err;
           }
@@ -354,7 +454,7 @@ async function packOrder(req, res) {
               userId: req.user.id,
               type: 'STOCK_OUT',
               qtySets: draw,
-              orderLineItemId: line.id,
+              orderLineItemId: li.id,
             },
           });
 
@@ -362,49 +462,25 @@ async function packOrder(req, res) {
         }
 
         if (remaining > 0) {
-          // Same race window as above — the pre-check said enough was available, but a concurrent
-          // write drew it down first. Whole request aborts, nothing partially applied.
-          const err = new Error(`Stock for line ${sl.lineItemId} changed concurrently — pack aborted`);
+          const err = new Error(`Stock for line ${li.id} changed concurrently — billing aborted`);
           err.isInsufficientStock = true;
           throw err;
-        }
-
-        await tx.orderLineItem.update({
-          where: { id: line.id },
-          data: { qtySetsPacked: sl.qtySetsPacked },
-        });
-
-        // Visible history entry explaining the gap — qtySetsRequested itself never moves
-        // (confirmed design decision, not reinterpreted here), so without this row there'd be no
-        // record of why a line's packed quantity fell short of what was asked.
-        if (sl.qtySetsPacked < line.qtySetsRequested) {
-          await tx.orderAdjustment.create({
-            data: {
-              orderId: id,
-              lineItemId: line.id,
-              changedById: req.user.id,
-              field: 'qtySetsPacked',
-              oldValue: String(line.qtySetsRequested),
-              newValue: String(sl.qtySetsPacked),
-              reason: 'SHORT_PACKED',
-            },
-          });
         }
       }
 
       await tx.order.update({
         where: { id },
-        data: { status: 'PACKED', packedAt: new Date() },
+        data: { status: 'BILLED', billedAt: new Date() },
       });
-      // Routine forward progress, not a correction — reason stays null, per the earlier schema
-      // decision (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").
+      // Routine forward progress, not a correction — reason stays null, same as every other
+      // status transition (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").
       await tx.orderAdjustment.create({
         data: {
           orderId: id,
           changedById: req.user.id,
           field: 'status',
-          oldValue: 'PLACED',
-          newValue: 'PACKED',
+          oldValue: 'PACKED',
+          newValue: 'BILLED',
           reason: null,
         },
       });
@@ -455,4 +531,4 @@ async function shipOrder(req, res) {
   res.json(orderDetailToResponse(updated));
 }
 
-module.exports = { createOrder, listOrders, getOrder, packOrder, shipOrder };
+module.exports = { createOrder, listOrders, getOrder, packOrder, billOrder, shipOrder };

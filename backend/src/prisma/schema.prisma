@@ -357,14 +357,14 @@ model OrderLineItem {
   id               String            @id @default(cuid())
   orderId          String
   order            Order             @relation(fields: [orderId], references: [id])
-  bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at packing (rule 64's FIFO-across-locations), not at order time.
+  bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at BILLING (rule 64's FIFO-across-locations), not at order time. (Was decided at packing until 2026-08-17, when deduction moved to Bill.)
   bundle           Bundle            @relation(fields: [bundleId], references: [id])
   qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
-  qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives both the packing stepper's clamp and the "will adjust for the shortfall" messaging when packed < requested.
+  qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for.
   priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
 
   adjustments      OrderAdjustment[]
-  transactions     Transaction[]     // packing-time STOCK_OUT rows that fulfilled this line (Transaction.orderLineItemId)
+  transactions     Transaction[]     // billing-time STOCK_OUT rows that fulfilled this line (Transaction.orderLineItemId). Written at Packed → Billed, not at packing — see 03_DATABASE_SCHEMA.md §2's "Hard rules to enforce".
 }
 
 model OrderAdjustment {
