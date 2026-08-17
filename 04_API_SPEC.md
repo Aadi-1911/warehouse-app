@@ -269,7 +269,7 @@ Response: `[{ id, bundleId, productId, productArticleNo, productName, colorId, c
 
 ---
 
-## Orders 🔒 (creation and basic read only — status transitions, packing, and adjustments are separate follow-up work)
+## Orders 🔒 (creation, basic read, and the two staff-facing status transitions — Packed → Billed and any adjustment editing are separate follow-up work)
 
 Order/OrderLineItem/OrderAdjustment schema: `03_DATABASE_SCHEMA.md` §2. `costPrice` never appears anywhere in this section's responses, at any role — Orders is a selling-price-facing feature (rule 10).
 
@@ -297,6 +297,35 @@ Response: `[{ id, partyId, partyName, status, createdAt, lineItemCount, totalVal
 ### `GET /api/orders/:id` 🔒
 Full detail, same shape `POST` returns — every line item included, each with the article/color info needed to actually display it.
 Errors: `404 ORDER_NOT_FOUND`.
+
+### `PATCH /api/orders/:id/pack` 🔒
+Body: `{ lineItems: [{ lineItemId, qtySetsPacked }] }` — exactly one entry per line on the order.
+
+**Any authenticated role, deliberately** — staff is the primary user for this transition (rule 63), same staff-primary reasoning as `POST /api/orders`.
+
+Server-side logic:
+1. Order must currently be `PLACED` (`409 ORDER_NOT_PLACED` otherwise — can't pack an already-packed/billed/shipped order).
+2. Every `lineItemId` must belong to this order, and the submission must cover every line on the order exactly once (`400 VALIDATION_ERROR`).
+3. `qtySetsPacked` must be an integer between `0` and that line's `qtySetsRequested` inclusive — **rejected**, not clamped, if out of range (`400 VALIDATION_ERROR`). Clamping is a UI behavior (rule 64); a server-side value outside that range means something's wrong upstream.
+4. `OrderLineItem.qtySetsRequested` is never modified by packing — it stays the original ask permanently. `qtySetsPacked` is a separate field reflecting reality.
+5. Stock is deducted per line by pulling from `Location` rows holding that Bundle, **in alphabetical order by Location name** (FIFO across locations, rule 64), until the packed quantity is satisfied. One `STOCK_OUT` `Transaction` is written per location actually drawn from, each linked via `orderLineItemId`.
+6. If total available stock across all locations is less than a line's requested packed quantity, the whole request is rejected (`409 INSUFFICIENT_STOCK`) — no partial deduction, same everything-or-nothing atomicity as order creation.
+7. For any line where `qtySetsPacked < qtySetsRequested`, an `OrderAdjustment` row is written (`field: "qtySetsPacked"`, `lineItemId` set, `reason: SHORT_PACKED`) — the visible history entry explaining the shortfall.
+8. `Order.status` → `PACKED`, `packedAt` set to now. One more `OrderAdjustment` row is written for the status change (`field: "status"`, `oldValue: "PLACED"`, `newValue: "PACKED"`, `reason: null` — routine progress, not a correction).
+9. All of the above happens atomically in one transaction.
+
+Response: full order, same shape as `GET /api/orders/:id`.
+Errors: `400 VALIDATION_ERROR`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PLACED`, `409 INSUFFICIENT_STOCK`.
+
+### `PATCH /api/orders/:id/ship` 🔒
+No body. **Any authenticated role, deliberately** — staff is the primary user for this transition (rule 63).
+
+Server-side logic:
+1. Order must currently be `BILLED` (`409 ORDER_NOT_BILLED` otherwise).
+2. No line-item changes. `Order.status` → `SHIPPED`, `shippedAt` set to now. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "BILLED"`, `newValue: "SHIPPED"`, `reason: null` — routine progress).
+
+Response: full order, same shape as `GET /api/orders/:id`.
+Errors: `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_BILLED`.
 
 ---
 

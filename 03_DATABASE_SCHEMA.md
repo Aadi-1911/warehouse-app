@@ -385,6 +385,10 @@ enum OrderAdjustmentReason {
   ORDER_CANCELLED        // "Order cancelled (full or a line)"
   RETURN_AFTER_DELIVERY  // "Return after delivery"
   MISCALCULATION          // "Miscalculation / data-entry error"
+  SHORT_PACKED            // "Short-packed (insufficient stock)" — added 2026-08-17, written automatically by
+                           // PATCH /api/orders/:id/pack whenever qtySetsPacked lands below qtySetsRequested
+                           // for a line (rule 64's clamp-not-block). The only reason value a human never
+                           // chooses — every other value is picked by whoever's logging a correction by hand.
   OTHER                   // escape hatch, same reasoning as rule 65's own "Other" category
 }
 

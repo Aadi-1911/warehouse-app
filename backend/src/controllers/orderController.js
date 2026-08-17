@@ -212,4 +212,247 @@ async function getOrder(req, res) {
   res.json(orderDetailToResponse(order));
 }
 
-module.exports = { createOrder, listOrders, getOrder };
+// PATCH /api/orders/:id/pack — any authenticated role (🔒). Staff is the primary user for this
+// transition (rule 63) — the same staff-primary reasoning already documented on createOrder above,
+// so this is deliberately any-role, not a default carried over by accident.
+//
+// Body: { lineItems: [{ lineItemId, qtySetsPacked }] } — one entry per line on this order.
+//
+// Stock deduction picks Location rows FIFO (rule 64) in alphabetical order by Location.name.
+// There's no existing "canonical" ordering for Locations anywhere in this codebase to defer to —
+// listLocations has no orderBy at all, and Transfer's fromLocationId is a human's explicit pick,
+// never an auto-selected one. The one place this app already had to answer "what order do
+// multiple Locations go in" is Live Stock's own display grouping
+// (frontend/src/pages/LiveStock.jsx), which sorts by locationName.localeCompare(...) — i.e.
+// alphabetical. Reusing that here rather than inventing a second convention (e.g. createdAt,
+// which has no established precedent and no meaning a human could ever explain if asked "why did
+// this pack draw from Gurgaon before Delhi").
+async function packOrder(req, res) {
+  const { id } = req.params;
+  const { lineItems: submittedLines } = req.body;
+
+  if (!Array.isArray(submittedLines) || submittedLines.length === 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'lineItems must be a non-empty array');
+  }
+  for (const sl of submittedLines) {
+    if (!sl || !sl.lineItemId) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'Each line item requires a lineItemId');
+    }
+    if (!Number.isInteger(sl.qtySetsPacked) || sl.qtySetsPacked < 0) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'Each line item requires a non-negative integer qtySetsPacked');
+    }
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: { id: true, status: true, lineItems: { select: { id: true, bundleId: true, qtySetsRequested: true } } },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (order.status !== 'PLACED') {
+    return sendError(res, 409, 'ORDER_NOT_PLACED', `Order must be PLACED to pack — current status is ${order.status}`);
+  }
+
+  // Every submitted lineItemId must belong to this order, and every line ON this order must be
+  // covered by exactly one submitted entry — a partial submission would leave some lines with
+  // stale qtySetsPacked while the order still moves to PACKED, silently pretending they were
+  // handled. REJECT (400) rather than silently defaulting missing lines to 0, same "fail loudly"
+  // reasoning the task gives for the packed-quantity range check below.
+  const lineById = new Map(order.lineItems.map((li) => [li.id, li]));
+  const submittedIds = new Set();
+  for (const sl of submittedLines) {
+    if (!lineById.has(sl.lineItemId)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${sl.lineItemId} does not belong to order ${id}`);
+    }
+    if (submittedIds.has(sl.lineItemId)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${sl.lineItemId} submitted more than once`);
+    }
+    submittedIds.add(sl.lineItemId);
+  }
+  if (submittedIds.size !== order.lineItems.length) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'lineItems must include exactly one entry for every line on this order');
+  }
+  for (const sl of submittedLines) {
+    const line = lineById.get(sl.lineItemId);
+    if (sl.qtySetsPacked > line.qtySetsRequested) {
+      return sendError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        `qtySetsPacked (${sl.qtySetsPacked}) for line ${sl.lineItemId} exceeds qtySetsRequested (${line.qtySetsRequested}) — the UI clamps this client-side, so a value out of range here means something upstream is wrong`
+      );
+    }
+  }
+
+  // Resolve, for every distinct bundle referenced, all Stock rows holding it — read-only, before
+  // any write — same "resolve everything, then validate" shape createOrder above already uses.
+  const bundleIds = [...new Set(submittedLines.map((sl) => lineById.get(sl.lineItemId).bundleId))];
+  const stockRows = await prisma.stock.findMany({
+    where: { bundleId: { in: bundleIds }, qtySets: { gt: 0 } },
+    select: { id: true, bundleId: true, locationId: true, qtySets: true, location: { select: { name: true } } },
+  });
+  const stockByBundle = new Map();
+  for (const s of stockRows) {
+    if (!stockByBundle.has(s.bundleId)) stockByBundle.set(s.bundleId, []);
+    stockByBundle.get(s.bundleId).push(s);
+  }
+  for (const rows of stockByBundle.values()) {
+    rows.sort((a, b) => a.location.name.localeCompare(b.location.name));
+  }
+
+  // Everything-or-nothing pre-check (rule: same atomicity guarantee as order creation) — if any
+  // single line can't be fully covered by total available stock across its locations, reject the
+  // WHOLE request before touching the database, rather than partially deducting some lines and
+  // then discovering a later one comes up short.
+  for (const sl of submittedLines) {
+    if (sl.qtySetsPacked === 0) continue;
+    const available = (stockByBundle.get(lineById.get(sl.lineItemId).bundleId) || [])
+      .reduce((sum, s) => sum + s.qtySets, 0);
+    if (available < sl.qtySetsPacked) {
+      return sendError(
+        res,
+        409,
+        'INSUFFICIENT_STOCK',
+        `Not enough stock to pack ${sl.qtySetsPacked} sets for line ${sl.lineItemId} (available: ${available})`
+      );
+    }
+  }
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      for (const sl of submittedLines) {
+        const line = lineById.get(sl.lineItemId);
+        let remaining = sl.qtySetsPacked;
+        const rows = stockByBundle.get(line.bundleId) || [];
+
+        for (const stockRow of rows) {
+          if (remaining <= 0) break;
+          const draw = Math.min(remaining, stockRow.qtySets);
+          if (draw <= 0) continue;
+
+          // Same guarded-decrement idiom as Transfer (transferController.js) — the "is there
+          // enough?" check and the decrement are one atomic statement via the qtySets: { gte }
+          // WHERE clause, so a genuine concurrent race (another pack/transaction landing between
+          // our read above and this write) can't drive stock negative. count === 0 here means the
+          // pre-check's read was stale; that's the race the everything-or-nothing check above is
+          // meant to catch, but this guard is what actually prevents corruption if it slips through.
+          const decremented = await tx.stock.updateMany({
+            where: { id: stockRow.id, qtySets: { gte: draw } },
+            data: { qtySets: { decrement: draw } },
+          });
+          if (decremented.count === 0) {
+            const err = new Error(`Stock at a location for line ${sl.lineItemId} changed concurrently — pack aborted`);
+            err.isInsufficientStock = true;
+            throw err;
+          }
+
+          await tx.transaction.create({
+            data: {
+              stockId: stockRow.id,
+              userId: req.user.id,
+              type: 'STOCK_OUT',
+              qtySets: draw,
+              orderLineItemId: line.id,
+            },
+          });
+
+          remaining -= draw;
+        }
+
+        if (remaining > 0) {
+          // Same race window as above — the pre-check said enough was available, but a concurrent
+          // write drew it down first. Whole request aborts, nothing partially applied.
+          const err = new Error(`Stock for line ${sl.lineItemId} changed concurrently — pack aborted`);
+          err.isInsufficientStock = true;
+          throw err;
+        }
+
+        await tx.orderLineItem.update({
+          where: { id: line.id },
+          data: { qtySetsPacked: sl.qtySetsPacked },
+        });
+
+        // Visible history entry explaining the gap — qtySetsRequested itself never moves
+        // (confirmed design decision, not reinterpreted here), so without this row there'd be no
+        // record of why a line's packed quantity fell short of what was asked.
+        if (sl.qtySetsPacked < line.qtySetsRequested) {
+          await tx.orderAdjustment.create({
+            data: {
+              orderId: id,
+              lineItemId: line.id,
+              changedById: req.user.id,
+              field: 'qtySetsPacked',
+              oldValue: String(line.qtySetsRequested),
+              newValue: String(sl.qtySetsPacked),
+              reason: 'SHORT_PACKED',
+            },
+          });
+        }
+      }
+
+      await tx.order.update({
+        where: { id },
+        data: { status: 'PACKED', packedAt: new Date() },
+      });
+      // Routine forward progress, not a correction — reason stays null, per the earlier schema
+      // decision (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          changedById: req.user.id,
+          field: 'status',
+          oldValue: 'PLACED',
+          newValue: 'PACKED',
+          reason: null,
+        },
+      });
+
+      return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    });
+  } catch (err) {
+    if (err.isInsufficientStock) {
+      return sendError(res, 409, 'INSUFFICIENT_STOCK', err.message);
+    }
+    throw err;
+  }
+
+  res.json(orderDetailToResponse(updated));
+}
+
+// PATCH /api/orders/:id/ship — any authenticated role (🔒). Same staff-primary reasoning as
+// packOrder above (rule 63). No line-item changes — purely a status transition.
+async function shipOrder(req, res) {
+  const { id } = req.params;
+
+  const order = await prisma.order.findUnique({ where: { id }, select: { id: true, status: true } });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (order.status !== 'BILLED') {
+    return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to ship — current status is ${order.status}`);
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.order.update({
+      where: { id },
+      data: { status: 'SHIPPED', shippedAt: new Date() },
+    });
+    await tx.orderAdjustment.create({
+      data: {
+        orderId: id,
+        changedById: req.user.id,
+        field: 'status',
+        oldValue: 'BILLED',
+        newValue: 'SHIPPED',
+        reason: null,
+      },
+    });
+    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  });
+
+  res.json(orderDetailToResponse(updated));
+}
+
+module.exports = { createOrder, listOrders, getOrder, packOrder, shipOrder };
