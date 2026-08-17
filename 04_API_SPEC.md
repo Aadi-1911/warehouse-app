@@ -294,7 +294,9 @@ Errors: `400 VALIDATION_ERROR`, `400 UNPRICED_PRODUCT`, `404 PARTY_NOT_FOUND`, `
 ### `GET /api/orders` 🔒
 Query params: `?partyId=`, `?status=`, `?from=`, `?to=`.
 Lightweight list — party name and a line-item summary, not full nested detail (same "line count, value" shape `07_UI_DESIGN_BRIEF.md`'s Owner Dashboard Orders widget already documents).
-Response: `[{ id, partyId, partyName, status, createdAt, lineItemCount, totalValue }]`. Default order: newest first.
+Response: `[{ id, partyId, partyName, status, createdAt, packedAt, billedAt, shippedAt, lineItemCount, totalValue }]`. Default order: newest first.
+
+The stage timestamps are included so a status-scoped list can show the date that matters for its own stage — Bill Orders (`?status=PACKED`) shows when the order was packed, Ship Order (`?status=BILLED`) shows when it was billed. They are `null` until the order reaches that stage. `totalValue` is computed from `qtySetsRequested`, so for a short-packed order it reflects what was **ordered**, not what will actually be billed — the per-line packed quantities on the detail screen are the authoritative figure before billing.
 
 ### `GET /api/orders/:id` 🔒
 Full detail, same shape `POST` returns — every line item included, each with the article/color info needed to actually display it.

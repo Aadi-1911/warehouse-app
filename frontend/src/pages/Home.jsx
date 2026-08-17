@@ -13,26 +13,37 @@ import {
   PartyIcon,
   ShoppingBagIcon,
   HistoryIcon,
+  InvoiceIcon,
+  SendIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
 //
-// Colored tiles are reserved for core, frequent, semantically-distinct actions only — Receive
-// Stock (green), Live Stock (blue), New Order (purple), and now Pack Order (amber), per §5.1's
-// own already-written note that both New Order and Pack Order get this exact treatment "once
-// Phase 2 exists" — it now does for both (PATCH /api/orders/:id/pack built, same as
-// POST/GET before it). Everything else that used to compete for a colored tile slot —
-// Transfer, plus the owner-only admin screens — lives in the plain "More" list below instead:
-// icon + label only, no color tint, same treatment §5.1 gives Transfer/Low Stock/History in
-// the reference. Colored tiles stay a flat, unconditional array (nothing in it is ever
-// role-gated — Pack Order is reachable by any authenticated role, rule 63, same reasoning
-// already applied to New Order/rule 25); the More list is where per-item visibility logic
-// lives, since that's the only place it still applies.
+// Colored tiles are reserved for core, frequent, semantically-distinct actions only. The four
+// order-lifecycle stages now each have one — New Order (purple) -> Pack Order (amber) ->
+// Bill Orders (accent) -> Ship Order (accent) — alongside Receive Stock (green) and Live Stock
+// (accent). Everything else lives in the plain "More" list below: icon + label only, no color
+// tint, same treatment §5.1 gives Transfer/Low Stock/History in the reference.
+//
+// Tones come from §3.4's semantic token table, not picked freely. That table's Accent row is
+// literally labelled "Accent / Info / Stock / Ship / Billed", which is why Bill, Ship AND Live
+// Stock all legitimately land on accent — following the project's own tokens rather than
+// inventing new colours to keep them visually distinct. Their icons and labels are what tell
+// them apart.
+//
+// `show(user)` was added here when Bill Orders arrived: this array used to be flat and
+// unconditional, and its old comment asserted nothing in it was ever role-gated. That stopped
+// being true — billing is OWNER-only (rule 63) — so tiles now carry the same visibility
+// predicate MORE_ITEMS already used, rather than a second mechanism. Everything else stays
+// `() => true`, which is exactly what it meant before.
 const TILES = [
-  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
-  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
-  { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
-  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
+  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon, show: () => true },
+  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon, show: () => true },
+  { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon, show: () => true },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon, show: () => true },
+  { to: '/bill-orders', label: 'Bill Orders', tone: 'accent', Icon: InvoiceIcon, show: (user) => user.role === 'OWNER' },
+  // Any role, rule 63 — staff mark orders shipped, same reasoning as Pack Order above.
+  { to: '/ship-orders', label: 'Ship Order', tone: 'accent', Icon: SendIcon, show: () => true },
 ];
 
 // Each entry decides its own visibility from `user` — Transfer is unconditional (any
@@ -102,7 +113,7 @@ export default function Home() {
       </ScreenHeader>
 
       <nav className="tile-grid">
-        {TILES.map(({ to, label, tone, Icon }) => (
+        {TILES.filter((tile) => tile.show(user)).map(({ to, label, tone, Icon }) => (
           // Rendered as real links rather than buttons with click handlers: navigation is what
           // an anchor is for, so middle-click/long-press to open in a new tab keeps working,
           // and the browser shows the destination on hover.

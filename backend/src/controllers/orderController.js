@@ -182,6 +182,12 @@ async function listOrders(req, res) {
       party: { select: { name: true } },
       status: true,
       createdAt: true,
+      // The stage timestamps ride along so a status-scoped list can show the date that actually
+      // matters for ITS stage — Bill Orders (status=PACKED) shows when it was packed, Ship Order
+      // (status=BILLED) shows when it was billed. createdAt alone can't serve both.
+      packedAt: true,
+      billedAt: true,
+      shippedAt: true,
       lineItems: { select: { qtySetsRequested: true, priceAtOrder: true } },
     },
   });
@@ -192,6 +198,9 @@ async function listOrders(req, res) {
     partyName: o.party.name,
     status: o.status,
     createdAt: o.createdAt,
+    packedAt: o.packedAt,
+    billedAt: o.billedAt,
+    shippedAt: o.shippedAt,
     lineItemCount: o.lineItems.length,
     totalValue: o.lineItems.reduce((sum, li) => sum + li.qtySetsRequested * Number(li.priceAtOrder), 0),
   }));

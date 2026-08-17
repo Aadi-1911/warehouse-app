@@ -32,3 +32,16 @@ export function getOrder(id) {
 export function packOrder(id, lineItems) {
   return apiFetch(`/api/orders/${id}/pack`, { method: 'PATCH', body: { lineItems } });
 }
+
+// PATCH /api/orders/:id/bill -> the updated order, same shape as getOrder. OWNER ONLY (rule 63)
+// and the single irreversible step in the lifecycle: it deducts real stock FIFO across locations
+// and applies rule 23's hard lock. No body — there's no formal Bill document entity yet.
+export function billOrder(id) {
+  return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH' });
+}
+
+// PATCH /api/orders/:id/ship -> the updated order, same shape as getOrder. Any authenticated
+// role (rule 63). No body, no stock or line-item consequence — purely records that the order left.
+export function shipOrder(id) {
+  return apiFetch(`/api/orders/${id}/ship`, { method: 'PATCH' });
+}

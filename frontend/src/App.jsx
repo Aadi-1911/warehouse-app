@@ -16,6 +16,10 @@ import NewOrder from './pages/NewOrder';
 import PackOrderList from './pages/PackOrderList';
 import PackOrderDetail from './pages/PackOrderDetail';
 import History from './pages/History';
+import BillOrderList from './pages/BillOrderList';
+import BillOrderDetail from './pages/BillOrderDetail';
+import ShipOrderList from './pages/ShipOrderList';
+import ShipOrderDetail from './pages/ShipOrderDetail';
 
 export default function App() {
   return (
@@ -137,6 +141,42 @@ export default function App() {
               // content (GET /api/history is any-authenticated-role for the same reason).
               <ProtectedRoute>
                 <History />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/bill-orders"
+            element={
+              // OWNER-only, matching PATCH /api/orders/:id/bill's own requireRole('OWNER') gate.
+              // Rule 63: "... → Billed" is owner-only and must never be offered to STAFF.
+              <ProtectedRoute requireRole="OWNER">
+                <BillOrderList />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/bill-orders/:id"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <BillOrderDetail />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ship-orders"
+            element={
+              // No requireRole — rule 63 names Billed → Shipped as staff-reachable, same
+              // reasoning as Pack Order's own any-role gating.
+              <ProtectedRoute>
+                <ShipOrderList />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ship-orders/:id"
+            element={
+              <ProtectedRoute>
+                <ShipOrderDetail />
               </ProtectedRoute>
             }
           />

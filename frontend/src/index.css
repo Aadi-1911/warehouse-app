@@ -1644,3 +1644,30 @@ body {
   margin: 3px 0 0;
   font-size: 11.5px;
 }
+
+/* --- Bill Orders / Ship Order: read-only line rows inside an expanded article. Lighter than
+   Pack Order's .pack-line-row (which has to host a stepper and a status icon) — here a line is
+   just "colour: quantity", so it's a single flex row sharing the same divider idiom. The colour
+   chip itself is .pack-line-color-chip, reused rather than duplicated. */
+.bill-line-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+}
+
+.bill-line-row + .bill-line-row {
+  border-top: 1px solid var(--divider);
+}
+
+.bill-line-qty {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* The "(of N ordered)" note on a short-packed line — amber, matching how a shortfall reads
+   everywhere else in this app, without tinting the whole row. */
+.bill-line-short {
+  color: var(--warning-text);
+}

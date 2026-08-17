@@ -170,6 +170,33 @@ export function ShoppingBagIcon({ size = 26 }) {
   );
 }
 
+// Bill Orders — an invoice/document mark. Deliberately distinct from WalletIcon (Factory
+// Payables, "money we owe out") and TagIcon (Article Pricing, "what a thing costs"): this one is
+// a document, because billing here produces a record of what a Party owes, not a price or a
+// payment. The ruled lines read as line items at any size.
+export function InvoiceIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M6 2h9l4 4v16H6z" />
+      <polyline points="14.5 2.5 14.5 6.5 18.5 6.5" />
+      <line x1="9" y1="12" x2="16" y2="12" />
+      <line x1="9" y1="16" x2="16" y2="16" />
+    </svg>
+  );
+}
+
+// Ship Order — a paper plane, the conventional "sent / on its way" mark. Deliberately NOT a
+// truck: TruckIcon already means Receive Stock (goods arriving), and reusing a truck for the
+// outbound direction would make the two screens read as the same action at a glance.
+export function SendIcon({ size = 26 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M21.5 2.5 2.5 10.2l7.3 2.9 2.9 7.3z" />
+      <line x1="21.5" y1="2.5" x2="9.8" y2="13.1" />
+    </svg>
+  );
+}
+
 // History (§5.1's "More" list) — a clock with a counter-clockwise arrow, the conventional
 // "past events / activity log" mark. Deliberately not a plain clock, which reads as "time" or
 // "schedule" rather than "what already happened."
