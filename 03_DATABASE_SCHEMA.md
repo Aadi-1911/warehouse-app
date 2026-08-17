@@ -437,7 +437,7 @@ model OrderAdjustment {
   field       String
   oldValue    String
   newValue    String
-  reason      OrderAdjustmentReason // rule 65: structured reason, not free text — same fixed-categories-plus-Other pattern already established there for History corrections (see the enum above). Finalized 2026-08-16.
+  reason      OrderAdjustmentReason? // nullable (2026-08-17) — rule 65: structured reason, not free text, but only REQUIRED at the application layer when this row represents a genuine correction (quantity reduced, cancelled, return, miscalculation, other). A routine forward status transition (Placed → Packed, Billed → Shipped) is normal progress, not a correction, and must not be forced into one of the five correction categories — those rows leave reason null.
 }
 ```
 
@@ -448,6 +448,7 @@ model OrderAdjustment {
 - `OrderLineItem.qtySetsPacked` must never be set above that line's current `qtySetsRequested` (hard clamp, not a block) — when a pack falls short, the UI must say so explicitly rather than blocking the action (rule 64).
 - Every change to `OrderLineItem.qtySetsRequested`, `priceAtOrder`, or `Order.status` must write a corresponding `OrderAdjustment` row in the same transaction — there is no schema-level trigger enforcing this, it's an application discipline (rule 24).
 - When creating an `OrderLineItem`, only `Bundle` values that already have a valid `Bundle` row for the selected `Product` are valid — same rule as Phase 1 stock entry (already stated below, restated here since it applies equally at order-entry time).
+- `OrderAdjustment.reason` is required at the application layer when the row represents a genuine correction (`field` changing `qtySetsRequested`/`priceAtOrder`, or a cancellation/return/miscalculation) — but must be left `null` when the row represents routine forward status progression (e.g. `Placed → Packed`, `Billed → Shipped`), since that's normal progress, not a correction (2026-08-17).
 
 **A required Phase 1 follow-up this reconciliation surfaced, out of this task's own scope:** `Transaction` (§1, already migrated) currently has no field linking it back to an `OrderLineItem`. Rule 95 confirms the custom-composition toggle applies to the *fulfilling* `Transaction` (`Transaction.isCustomComposition`) at packing time, not to the order line itself — correctly, `OrderLineItem` above has no custom-composition field of its own. But without `Transaction.orderLineItemId` (nullable, same pattern as `transferId`/`partyStockReturnId`), there's no way to trace a packing-time `STOCK_OUT` row — or the `TransactionSizeBreakdown` hanging off it — back to the `Order` it fulfilled. This needs adding to `Transaction` when the actual Phase 2 migration runs; it isn't part of this reconciliation since `Transaction` is a Phase 1 model, not one of the three being reconciled here.
 

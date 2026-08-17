@@ -377,7 +377,7 @@ model OrderAdjustment {
   field       String
   oldValue    String
   newValue    String
-  reason      OrderAdjustmentReason // rule 65: structured reason, not free text — same fixed-categories-plus-Other pattern already established there for History corrections.
+  reason      OrderAdjustmentReason? // nullable (2026-08-17) — rule 65: structured reason, not free text, but only REQUIRED at the application layer when this row represents a genuine correction (quantity reduced, cancelled, return, miscalculation, other). A routine forward status transition (Placed → Packed, Billed → Shipped) is normal progress, not a correction, and must not be forced into one of the five correction categories — those rows leave reason null. See 03_DATABASE_SCHEMA.md §2's "Hard rules to enforce" for the enforcement point.
 }
 
 model FactoryPayment {
