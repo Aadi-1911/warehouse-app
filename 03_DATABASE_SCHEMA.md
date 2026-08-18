@@ -33,6 +33,19 @@ enum TransactionType {
   TRANSFER_IN  // leg of a Transfer — increases stock at the destination location
 }
 
+// Why goods physically came back from a Party (added 2026-08-18). A DIFFERENT list from
+// OrderAdjustmentReason on purpose — that enum explains why a number on an order changed, this
+// one explains why stock re-entered the building. Unlike OrderAdjustmentReason, the field using
+// it is NOT nullable: see PartyStockReturn.reason.
+enum GoodReturnReason {
+  NOT_ORDERED          // "Not ordered" — sent by mistake, the Party never asked for it
+  SIZE_ISSUE           // "Size issue"
+  COLOUR_NOT_ORDERED   // "Colour not ordered" — right article, wrong colour sent
+  COLOUR_BLEEDING      // "Colour bleeding" — a genuine quality fault, distinct from the wrong-colour case above
+  ACCESSORIES_ISSUE    // "Accessories issue" — buttons, zips, trims
+  OTHER                // escape hatch — and the one value that makes `note` mandatory (app layer)
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -286,7 +299,26 @@ model PartyStockReturn {
   locationId    String        // where the returned stock is being added back to
   location      Location      @relation(fields: [locationId], references: [id])
   qtySets       Int           // whole sets only, never partial pieces
-  valueSnapshot Decimal       // cost-based worth of this return, computed and stored at the moment of return — shown as its own visible figure, never touches Party.runningDueBalance (reconciled manually, by design)
+  // Per-SET selling price, snapshotted at the moment of the return — NOT a stored total.
+  // A return's total value is qtySets × priceAtReturn, computed fresh wherever it's shown and
+  // never stored as its own column: a stored total is a derived number sitting next to its own
+  // inputs, so correcting qtySets later would leave it silently wrong with nothing to flag it.
+  // The per-set price is the only part that genuinely can't be recomputed afterwards, because
+  // Product.sellingPrice moves.
+  //
+  // Snapshots Product.sellingPrice, NEVER costPrice (rule 10) — same shape and same reasoning as
+  // OrderLineItem.priceAtOrder. Renamed from valueSnapshot, a cost-based stored total, on
+  // 2026-08-18; see rule 86. Still shown as its own visible figure and still never touches
+  // Party.runningDueBalance (reconciled manually, by design).
+  priceAtReturn Decimal
+  // Required, and required at the DATABASE level rather than only in application code — every
+  // return genuinely has a cause. Deliberately unlike OrderAdjustment.reason, which is nullable
+  // for the real routine-progress case that has no equivalent here.
+  reason        GoodReturnReason
+  // Free text. Optional in the schema, but REQUIRED at the application layer when reason is
+  // OTHER — an "Other" with no explanation records nothing usable. Prisma has no
+  // conditional-requirement constraint, so this lives in the controller, exactly like
+  // OrderAdjustment.reason's own conditional requirement. Optional elaboration otherwise.
   note          String?
   userId        String
   user          User          @relation(fields: [userId], references: [id])
@@ -350,6 +382,8 @@ model FactoryDebit {
 - `Product.costPrice` must never appear in any API response served to a `STAFF`-role user, under any circumstance.
 - Editing `Product.costPrice` or `Product.sellingPrice` requires both `role == OWNER` AND a valid PIN match against `priceEditPinHash` — checked server-side on the write endpoint.
 - When creating a `Bundle` reference (e.g. during a Transaction), only `Color` values that already have a `Bundle` row for that `Product` are valid — reject arbitrary Product+Color combinations at the API layer.
+- `PartyStockReturn.note` is required when `reason` is `OTHER`, optional for every other reason value — a conditional requirement Prisma can't express, so the write endpoint must enforce it (2026-08-18). Same class of app-layer rule as `OrderAdjustment.reason`'s own conditional requirement.
+- `PartyStockReturn.priceAtReturn` is computed server-side from `Product.sellingPrice` at the moment of the return — **never trusted from the request body**, and never sourced from `costPrice`. Same principle as `OrderLineItem.priceAtOrder` and `Transaction.costPriceSnapshot`.
 
 ---
 

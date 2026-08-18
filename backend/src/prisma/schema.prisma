@@ -62,6 +62,23 @@ enum OrderAdjustmentReason {
   OTHER                  // escape hatch, same reasoning as rule 65's own "Other" category
 }
 
+// Why goods physically came back from a Party. A DIFFERENT list from OrderAdjustmentReason on
+// purpose — that enum explains why a number on an order changed, this one explains why stock
+// re-entered the building. They overlap in name only.
+//
+// Unlike OrderAdjustmentReason, this field is NOT nullable (see PartyStockReturn.reason). That
+// nullability was earned by a real case — a routine Placed → Packed row is progress, not a
+// correction — and no equivalent case exists here: a return row only exists because goods came
+// back, and that always has a cause.
+enum GoodReturnReason {
+  NOT_ORDERED          // "Not ordered" — sent by mistake, the Party never asked for it
+  SIZE_ISSUE           // "Size issue"
+  COLOUR_NOT_ORDERED   // "Colour not ordered" — right article, wrong colour sent
+  COLOUR_BLEEDING      // "Colour bleeding" — a genuine quality fault, distinct from the wrong-colour case above
+  ACCESSORIES_ISSUE    // "Accessories issue" — buttons, zips, trims
+  OTHER                // escape hatch — and the one value that makes `note` mandatory (app layer)
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -319,7 +336,28 @@ model PartyStockReturn {
   locationId    String        // where the returned stock is being added back to
   location      Location      @relation(fields: [locationId], references: [id])
   qtySets       Int           // whole sets only, never partial pieces
-  valueSnapshot Decimal       // cost-based worth of this return, computed and stored at the moment of return — shown as its own visible figure, never touches Party.runningDueBalance (reconciled manually, by design)
+  // Per-SET selling price, snapshotted at the moment of the return — NOT a stored total.
+  // A return's total value is qtySets × priceAtReturn, computed fresh wherever it's shown and
+  // never stored as its own column: a stored total is a derived number sitting next to its own
+  // inputs, so correcting qtySets later would leave it silently wrong with nothing to flag it.
+  // The per-set price is the only part that genuinely can't be recomputed afterwards, because
+  // Product.sellingPrice moves.
+  //
+  // Snapshots Product.sellingPrice, NEVER costPrice (rule 10) — same shape and same reasoning as
+  // OrderLineItem.priceAtOrder. A return is a party-facing record answering "what is this worth
+  // against what they owe us," and what they owe was set by sellingPrice; cost answers a
+  // factory-side question nobody asks about a return. Renamed from valueSnapshot (a cost-based
+  // stored total) 2026-08-18 — see rule 86.
+  priceAtReturn Decimal
+  // Required, and required at the DATABASE level rather than only in application code — every
+  // return genuinely has a cause. Deliberately unlike OrderAdjustment.reason, which is nullable
+  // for the real routine-progress case that has no equivalent here.
+  reason        GoodReturnReason
+  // Free text. Optional in the schema, but REQUIRED at the application layer when reason is
+  // OTHER — an "Other" with no explanation records nothing usable. That rule can't be expressed
+  // here (Prisma has no conditional-requirement constraint), so it lives in the controller, the
+  // same way OrderAdjustment.reason's own conditional requirement does. For every other reason
+  // value it's optional elaboration.
   note          String?
   userId        String
   user          User          @relation(fields: [userId], references: [id])
