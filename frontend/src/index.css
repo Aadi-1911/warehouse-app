@@ -1534,11 +1534,104 @@ body {
   margin: 4px 0;
 }
 
+/* Checklist-first row treatment (2026-08-19). A confirmed line reads as DONE at a glance —
+   success-green tint plus struck-through text — using the same --success-* tokens every other
+   "this succeeded" surface in this app uses, rather than a green invented for this screen.
+   Compound selector for the same reason .pack-line-row-short needs one: it has to beat the
+   .pack-line-row + .pack-line-row divider at equal specificity, or a border cuts across the
+   tinted block's rounded corners and reads as a rendering glitch. */
+.pack-line-row.pack-line-row-confirmed {
+  background: var(--success-bg);
+  border-top: none;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 4px 0;
+}
+
+.pack-line-row-confirmed .pack-line-color-chip,
+.pack-line-row-confirmed .pack-line-ordered {
+  text-decoration: line-through;
+  color: var(--success-text);
+}
+
+.pack-line-row-confirmed .pack-line-color-chip {
+  background: transparent;
+  padding-left: 0;
+}
+
 .pack-line-row-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* The main tap target: deliberately the whole width of the row minus the Adjust control, because
+   confirming in full is the overwhelmingly common action and should be hard to miss on a phone.
+   Reset to look like the row itself, not like a button — the affordance is the row, and a
+   button-shaped element here would compete visually with Adjust for "which one do I press". */
+.pack-line-tap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  /* Comfortably past the 44px touch-target floor — this is the primary gesture of the screen. */
+  min-height: 44px;
+}
+
+.pack-line-tap:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.pack-line-tap-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pack-line-tap-text .pack-line-ordered {
+  margin: 0;
+}
+
+/* Visually and physically separate from the main tap area — a small outlined control, not a
+   second full-width surface, so the two can't be confused or mistapped for one another. */
+.pack-line-adjust-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-height: 36px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pack-line-adjust-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pack-line-adjust-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.pack-line-adjust-confirm {
+  margin-top: 8px;
 }
 
 /* Small tinted chip behind the colour name — reuses --section-fill, the same neutral tint

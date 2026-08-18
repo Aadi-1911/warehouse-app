@@ -175,6 +175,15 @@ A component's background/border/text should always share the same role tint toge
 - Low stock after packing: a small red flag/badge only when remaining stock would be **≤2 sets** — never fully tint the card. Don't overstate ordinary shortfalls.
 - After Billed, add a **"Mark shipped"** action (order lifecycle is Placed → Packed → Billed → Shipped).
 
+### 5.4 Pack Order (Pack List) — redesigned checklist-first, 2026-08-19
+**Supersedes §5.4's original "Packing stepper, editable, defaulting to the ordered quantity" line.** That default meant every line's value already numerically equalled "fully packed" the instant the screen loaded — an untouched line and a confirmed one were indistinguishable, and an untouched line submitted silently at that default. Nothing about the three-state iconography changes (check / warning triangle / dashed circle, §7's own "Pack Order card states" — still accurate); what changes is how a line reaches any state other than dashed.
+
+- A line starts **unconfirmed** — dashed icon, no quantity shown as settled, no stepper visible.
+- **Tapping the row's main area** confirms it packed in full at the ordered quantity — one tap for the common case. The row takes the app's existing success-green treatment (tint + struck-through text), matching how "this succeeded" already looks everywhere else. Tapping an already-confirmed row again un-confirms it (recoverable mistap).
+- A **separate, smaller "Adjust" control** on the same row — not the same tap target — opens the existing stepper for the less-than-ordered case. Opening it confirms nothing by itself; an explicit **Confirm** inside the panel commits the value, at which point the row takes the existing amber short-pack treatment ("Ordered: X · Only Y in stock" plus the shortfall note) — unchanged from the original spec, only how staff arrives there changed.
+- Per-article and order-level tally counts (§101's sticky footer, still present) now read off this same confirmed/unconfirmed state, and the per-article count is shown on the **collapsed** accordion header — visible without expanding every article, the same placement Bill Order already uses for its own blocked-line count.
+- **"Mark as packed" with unconfirmed lines remaining**: not a silent submit, and not a hard block. A warning names exactly which article/colour(s) are still unconfirmed, states plainly what proceeding will record for them (packed in full at the ordered quantity), and offers a real choice — go back and finish, or confirm anyway. Same "inform clearly, let the person decide" shape this app already uses for real warnings (e.g. Bill Order's insufficient-stock case).
+
 ### 5.5 Live Stock View — updated
 - Default view is **factory-grouped**: collapsible sections with Factory as the outer layer, Articles nested inside (not simple dropdown filters).
 - Top summary shows total sets AND total pieces; each factory section repeats article count / sets / pieces / low-stock count, scoped to that factory.

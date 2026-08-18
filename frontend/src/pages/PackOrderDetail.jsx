@@ -22,31 +22,42 @@ import { listStock } from '../api/stock';
 // the actual deduction happens later at Bill. The stock numbers shown per line are still real and
 // still worth showing: they're what staff use to decide how much they can actually pack.
 //
-// --- On the "not started" status icon's meaning (worth spelling out, since it's the one place
-// this screen's own spec is genuinely ambiguous) ---
-// Every stepper DEFAULTS to the ordered quantity (§5.4's own words), which means the instant
-// this screen loads, every line's packing value already numerically equals what was ordered —
-// the same condition the green check icon is supposed to mean. Read literally and arithmetic-
-// first, "green check = packing qty equals ordered qty" would make every single line show green
-// before a human has looked at anything, which would make the dashed "not started" icon
-// unreachable in practice and defeat the entire point of having three distinct states: staff
-// would have no way to see, at a glance, which lines they've actually verified against the
-// shelf versus which ones are just sitting on their untouched default.
+// --- CHECKLIST-FIRST, not quantity-first (redesigned 2026-08-19) ---
+// This screen used to pre-fill every line's stepper to the ordered quantity and track which of
+// those defaults a human had engaged with in a separate `touchedLines` Set. That worked, but it
+// meant every line rendered a settled-looking number before anyone had looked at a shelf, and an
+// untouched line submitted at that number silently. The old model needed a long comment
+// explaining why "value equals ordered" and "a human confirmed this" were different facts —
+// which was the tell that the state shape was wrong, not just under-documented.
 //
-// So "not started" is tracked as its own explicit fact — which lines this session has actually
-// touched (touchedLines below) — checked BEFORE the arithmetic comparison, not derived from it.
-// A line reads dashed until a human adjusts its stepper at all (even a tap that lands back on
-// the same number still counts as "looked at and confirmed"), green once touched and still at
-// the ordered figure, amber once touched and reduced below it. This mirrors CLAUDE.md's own
-// rule against aliasing a real "not yet interacted with" state onto a value that merely happens
-// to match a different real state by default — same shape as the idle/loading/loaded rule for
-// async status, applied here to a manual-confirmation status instead of a fetch status.
+// Now there is ONE piece of state, `confirmed`, keyed by lineItemId:
+//   - key ABSENT  -> unconfirmed. Nothing is displayed as decided. This is the load state.
+//   - key present -> confirmed, and the value IS the qtySetsPacked to submit.
 //
-// The amber CARD TINT is a separate, simpler signal from the icon: it fires purely off
-// `packingQty < ordered`, regardless of touched state. In practice the two can never actually
-// diverge — an untouched line is always exactly at its ordered default, so it can never be
-// short — but they're deliberately independent checks, not one derived from the other, because
-// they answer different questions ("is this line short" vs "has a human confirmed this line").
+// Absence-means-unconfirmed makes the two bugs the old pair could express unrepresentable: there
+// is no way to be confirmed without a quantity, and no way for a quantity to imply confirmation.
+// Same discipline CLAUDE.md already requires for async status (never alias "hasn't started" onto
+// a boolean's default) — applied here to a manual-confirmation status instead of a fetch status.
+//
+// Two distinct affordances per row, deliberately NOT the same tap target:
+//   - the row's main area  -> confirm packed-in-full (one tap, the overwhelmingly common case).
+//     Tapping again un-confirms, so a mistap is recoverable without hunting for an undo.
+//   - a separate "Adjust"  -> opens the stepper for the less-than-ordered case, which then has
+//     its own explicit Confirm. Opening the stepper is NOT itself a confirmation.
+// They're siblings rather than nested because a <button> inside a <button> is invalid HTML and
+// browsers drop the inner one's events.
+//
+// WHAT AN UNCONFIRMED LINE SUBMITS, and why it isn't zero. PATCH /api/orders/:id/pack requires
+// full coverage — exactly one entry per non-cancelled line (orderController.js) — so "mark packed
+// anyway" still has to send a number for lines nobody touched. That number is the ORDERED
+// quantity, making the payload byte-identical to what this screen sent before the redesign.
+// Zero would be actively wrong: it means short-packed-to-nothing, and would write SHORT_PACKED
+// adjustments against lines no one ever said were short. The real change here is that staff are
+// now TOLD which lines are going through unconfirmed, by name, before it happens — informed, not
+// blocked, matching how this app already handles real warnings elsewhere.
+//
+// No backend change: the request body's shape and values are unchanged. This is entirely about
+// how staff arrive at that payload.
 
 function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
@@ -65,14 +76,22 @@ export default function PackOrderDetail() {
   const [orderError, setOrderError] = useState(null);
   const [stockByBundleId, setStockByBundleId] = useState({});
 
-  // { [lineItemId]: number } — every line gets a default entry the moment the order loads, per
-  // §5.4's "defaulting to the ordered quantity." touchedLines tracks which of those defaults a
-  // human has actually engaged with this session (see the block comment above).
-  const [packingQty, setPackingQty] = useState({});
-  const [touchedLines, setTouchedLines] = useState(() => new Set());
+  // { [lineItemId]: qtySetsPacked } — PRESENCE is the confirmation, the value is what gets
+  // submitted. Starts empty on purpose: nothing is confirmed until a human taps it. See the
+  // block comment above for why this replaced the old packingQty/touchedLines pair.
+  const [confirmed, setConfirmed] = useState({});
+
+  // { [lineItemId]: qtySetsPacked } — lines whose stepper is currently OPEN, with the in-progress
+  // value. Separate from `confirmed` because opening the stepper isn't confirming anything:
+  // staff can open it, look at the stock figure, and back out having decided nothing. A line can
+  // legitimately be confirmed AND open (adjusting something already confirmed).
+  const [adjusting, setAdjusting] = useState({});
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  // Non-null only while the "some lines are still unconfirmed" warning is up; holds the exact
+  // lines being warned about so the copy can name them rather than just counting them.
+  const [unconfirmedWarning, setUnconfirmedWarning] = useState(null);
 
   // One target for both cancel actions, same shape Parties.jsx uses for its archive/reactivate
   // confirm — { kind: 'line', line } or { kind: 'order' }. A single ConfirmModal serves both, with
@@ -112,11 +131,9 @@ export default function PackOrderDetail() {
           totals[r.bundleId] = (totals[r.bundleId] ?? 0) + r.qtySets;
         });
         setStockByBundleId(totals);
-        const defaults = {};
-        orderData.lineItems.forEach((li) => {
-          defaults[li.id] = li.qtySetsRequested;
-        });
-        setPackingQty(defaults);
+        // Deliberately NO seeding of `confirmed` here. The whole point of the redesign is that
+        // the screen loads with nothing confirmed; pre-filling it would recreate exactly the
+        // silently-settled state this replaced.
       })
       .catch((err) => {
         if (!cancelled) setOrderError(err.message);
@@ -129,8 +146,42 @@ export default function PackOrderDetail() {
     };
   }, [id]);
 
-  function adjustPacking(lineItemId, ordered, delta) {
-    setPackingQty((prev) => {
+  // The one-tap common case: confirm this line at the full ordered quantity. Tapping a
+  // already-confirmed line clears it back to unconfirmed — a mistap has to be undoable, and
+  // toggling the same target is the gesture staff will reach for first.
+  function toggleConfirmFull(lineItemId, ordered) {
+    setConfirmed((prev) => {
+      const next = { ...prev };
+      if (lineItemId in next) delete next[lineItemId];
+      else next[lineItemId] = ordered;
+      return next;
+    });
+    // Un-confirming while its stepper is open would leave an orphaned editor for a line that no
+    // longer has a decision attached, so close it either way.
+    setAdjusting((prev) => {
+      const next = { ...prev };
+      delete next[lineItemId];
+      return next;
+    });
+  }
+
+  // Opens the stepper. Seeds from the line's confirmed value when it has one (so re-adjusting a
+  // short line starts where it was left), otherwise from the ordered quantity — the natural
+  // reference point staff count down from.
+  function openAdjust(lineItemId, ordered) {
+    setAdjusting((prev) => ({ ...prev, [lineItemId]: confirmed[lineItemId] ?? ordered }));
+  }
+
+  function closeAdjust(lineItemId) {
+    setAdjusting((prev) => {
+      const next = { ...prev };
+      delete next[lineItemId];
+      return next;
+    });
+  }
+
+  function stepAdjust(lineItemId, ordered, delta) {
+    setAdjusting((prev) => {
       const current = prev[lineItemId] ?? ordered;
       // Hard clamp client-side (0..ordered) — the backend REJECTS an out-of-range value rather
       // than clamping it (04_API_SPEC.md), so the stepper itself must never be able to produce
@@ -138,11 +189,14 @@ export default function PackOrderDetail() {
       const next = Math.max(0, Math.min(ordered, current + delta));
       return { ...prev, [lineItemId]: next };
     });
-    setTouchedLines((prev) => {
-      const next = new Set(prev);
-      next.add(lineItemId);
-      return next;
-    });
+  }
+
+  // The stepper's own explicit commit. Confirming at exactly the ordered quantity is a normal
+  // full confirm, not a special case — the row simply renders green instead of amber.
+  function confirmAdjusted(lineItemId, ordered) {
+    const qty = adjusting[lineItemId] ?? ordered;
+    setConfirmed((prev) => ({ ...prev, [lineItemId]: qty }));
+    closeAdjust(lineItemId);
   }
 
   async function handleConfirmCancel() {
@@ -170,26 +224,40 @@ export default function PackOrderDetail() {
     }
   }
 
-  async function handleMarkPacked() {
+  // Entry point for the "Mark as packed" button. Checks for unconfirmed lines FIRST and, if any
+  // exist, shows a warning naming them rather than submitting. Deliberately not a hard block —
+  // staff can still proceed, same "inform clearly, let the person decide" shape this app already
+  // uses for real warnings.
+  function handleMarkPackedClick() {
+    const stillUnconfirmed = order.lineItems.filter((li) => !li.isCancelled && !(li.id in confirmed));
+    if (stillUnconfirmed.length > 0) {
+      setUnconfirmedWarning(stillUnconfirmed);
+      return;
+    }
+    doMarkPacked();
+  }
+
+  async function doMarkPacked() {
+    setUnconfirmedWarning(null);
     setSubmitError(null);
     setSubmitting(true);
     try {
-      // Every line, not just the touched ones — the backend requires full coverage
-      // (04_API_SPEC.md's PATCH /:id/pack), so an untouched line submits at its own default
-      // (== ordered), which is exactly the "assume a full pack unless staff says otherwise"
-      // behavior this screen's defaults already imply.
+      // Every non-cancelled line, not just the confirmed ones — the backend requires full
+      // coverage (04_API_SPEC.md's PATCH /:id/pack). An unconfirmed line falls back to its
+      // ordered quantity, which keeps this payload identical to what this screen sent before the
+      // checklist redesign; see the block comment at the top for why that fallback isn't 0.
       // Cancelled lines are excluded — they have nothing to pack, and the backend's coverage
-      // check now expects exactly the non-cancelled lines.
+      // check expects exactly the non-cancelled lines.
       const lineItemsPayload = order.lineItems
         .filter((li) => !li.isCancelled)
         .map((li) => ({
           lineItemId: li.id,
-          qtySetsPacked: packingQty[li.id] ?? li.qtySetsRequested,
+          qtySetsPacked: confirmed[li.id] ?? li.qtySetsRequested,
         }));
       await packOrder(id, lineItemsPayload);
       const liveForOutcome = order.lineItems.filter((li) => !li.isCancelled);
       const shortCount = liveForOutcome.filter(
-        (li) => (packingQty[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
+        (li) => (confirmed[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
       ).length;
       navigate('/pack-orders', {
         replace: true,
@@ -198,10 +266,11 @@ export default function PackOrderDetail() {
         },
       });
     } catch (err) {
-      // Deliberately not resetting packingQty/touchedLines — someone else packing this order
-      // first (ORDER_NOT_PLACED) must never cost staff their stepper entries. They see the real
-      // message and either retry or back out via ScreenHeader. (Packing can no longer fail on
-      // INSUFFICIENT_STOCK — it doesn't touch stock at all now; that moved to Bill.)
+      // Deliberately not resetting `confirmed` — someone else packing this order first
+      // (ORDER_NOT_PLACED) must never cost staff the row-by-row confirmations they just worked
+      // through. They see the real message and either retry or back out via ScreenHeader.
+      // (Packing can no longer fail on INSUFFICIENT_STOCK — it doesn't touch stock at all now;
+      // that moved to Bill.)
       setSubmitError(err.message);
     } finally {
       setSubmitting(false);
@@ -243,21 +312,26 @@ export default function PackOrderDetail() {
   const liveLines = order.lineItems.filter((li) => !li.isCancelled);
   const cancelledCount = order.lineItems.length - liveLines.length;
   const total = liveLines.length;
+
+  // The single place a line's state is decided, so the row treatment, the per-article badge and
+  // the footer tally can never disagree about what a line is. Reads straight off `confirmed`:
+  // absent -> unconfirmed, present-and-equal -> full, present-and-less -> short.
+  function lineState(li) {
+    if (!(li.id in confirmed)) return 'unconfirmed';
+    return confirmed[li.id] < li.qtySetsRequested ? 'short' : 'full';
+  }
+
   const tally = liveLines.reduce(
     (acc, li) => {
-      const qty = packingQty[li.id] ?? li.qtySetsRequested;
-      const touched = touchedLines.has(li.id);
-      if (!touched) acc.notStarted += 1;
-      else if (qty === li.qtySetsRequested) acc.full += 1;
-      else acc.short += 1;
+      acc[lineState(li)] += 1;
       return acc;
     },
-    { full: 0, short: 0, notStarted: 0 }
+    { full: 0, short: 0, unconfirmed: 0 }
   );
   const tallyText =
-    `${tally.full} of ${total} item${total === 1 ? '' : 's'} fully packed` +
+    `${tally.full} of ${total} item${total === 1 ? '' : 's'} confirmed packed` +
     (tally.short > 0 ? ` · ${tally.short} short` : '') +
-    (tally.notStarted > 0 ? ` · ${tally.notStarted} not started` : '') +
+    (tally.unconfirmed > 0 ? ` · ${tally.unconfirmed} not confirmed` : '') +
     (cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : '');
 
   // Group by article (productId) — same grouping New Order's own Order Summary uses, built
@@ -308,6 +382,30 @@ export default function PackOrderDetail() {
                     {group.articleNo}
                     <span className="muted"> — {group.productName}</span>
                   </div>
+                  {/* On the COLLAPSED header, so progress is readable without expanding every
+                      article one by one — the same place BillOrderDetail surfaces its own
+                      per-article blocked count, reused rather than invented here. */}
+                  {(() => {
+                    const groupLive = group.lines.filter((li) => !li.isCancelled);
+                    if (groupLive.length === 0) return null;
+                    const groupDone = groupLive.filter((li) => lineState(li) !== 'unconfirmed').length;
+                    const groupShort = groupLive.filter((li) => lineState(li) === 'short').length;
+                    const allDone = groupDone === groupLive.length;
+                    return (
+                      <div className="accordion-subtitle">
+                        <span
+                          className={`badge ${allDone ? 'badge-success' : 'badge-warning'} accordion-low-badge`}
+                        >
+                          {groupDone}/{groupLive.length} confirmed
+                        </span>
+                        {groupShort > 0 && (
+                          <span className="badge badge-warning accordion-low-badge">
+                            {groupShort} short
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
               </button>
@@ -330,67 +428,118 @@ export default function PackOrderDetail() {
                       );
                     }
                     const ordered = li.qtySetsRequested;
-                    const qty = packingQty[li.id] ?? ordered;
-                    const touched = touchedLines.has(li.id);
-                    const isShort = qty < ordered;
+                    const state = lineState(li);
+                    const isShort = state === 'short';
+                    const isFull = state === 'full';
                     const stockAvail = stockByBundleId[li.bundleId] ?? 0;
+                    const isAdjusting = li.id in adjusting;
+                    const adjustQty = adjusting[li.id] ?? confirmed[li.id] ?? ordered;
 
                     let StatusIcon = NotStartedIcon;
                     let statusClass = 'pack-line-status-not-started';
-                    if (touched) {
-                      if (isShort) {
-                        StatusIcon = WarningTriangleIcon;
-                        statusClass = 'pack-line-status-short';
-                      } else {
-                        StatusIcon = CheckCircleIcon;
-                        statusClass = 'pack-line-status-full';
-                      }
+                    if (isShort) {
+                      StatusIcon = WarningTriangleIcon;
+                      statusClass = 'pack-line-status-short';
+                    } else if (isFull) {
+                      StatusIcon = CheckCircleIcon;
+                      statusClass = 'pack-line-status-full';
                     }
 
                     return (
-                      <div key={li.id} className={`pack-line-row ${isShort ? 'pack-line-row-short' : ''}`}>
+                      <div
+                        key={li.id}
+                        className={`pack-line-row ${isShort ? 'pack-line-row-short' : ''} ${
+                          isFull ? 'pack-line-row-confirmed' : ''
+                        }`}
+                      >
+                        {/* Two sibling controls, never nested — a <button> inside a <button> is
+                            invalid HTML and browsers drop the inner one's events. The main area
+                            is the one-tap full confirm; "Adjust" is a visually distinct, much
+                            smaller target for the less-common short-pack case. */}
                         <div className="pack-line-row-header">
-                          <span className="pack-line-color-chip">{li.colorName}</span>
-                          <span className={statusClass}>
-                            <StatusIcon size={18} />
-                          </span>
+                          <button
+                            type="button"
+                            className="pack-line-tap"
+                            onClick={() => toggleConfirmFull(li.id, ordered)}
+                            disabled={submitting}
+                            aria-pressed={isFull || isShort}
+                            aria-label={
+                              isFull || isShort
+                                ? `Undo confirmation for ${li.colorName}`
+                                : `Confirm ${li.colorName} packed in full, ${pluralSets(ordered)}`
+                            }
+                          >
+                            <span className={statusClass}>
+                              <StatusIcon size={18} />
+                            </span>
+                            <span className="pack-line-tap-text">
+                              <span className="pack-line-color-chip">{li.colorName}</span>
+                              <span className="pack-line-ordered">
+                                {isShort
+                                  ? `Ordered: ${ordered} · Only ${stockAvail} in stock`
+                                  : isFull
+                                  ? `Packed in full · ${pluralSets(ordered)}`
+                                  : `Ordered: ${pluralSets(ordered)} · tap to confirm`}
+                              </span>
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="pack-line-adjust-btn"
+                            onClick={() => (isAdjusting ? closeAdjust(li.id) : openAdjust(li.id, ordered))}
+                            disabled={submitting}
+                            aria-expanded={isAdjusting}
+                            aria-label={`Adjust packed quantity for ${li.colorName}`}
+                          >
+                            {isAdjusting ? 'Close' : 'Adjust'}
+                          </button>
                         </div>
 
-                        <p className="pack-line-ordered">
-                          {isShort
-                            ? `Ordered: ${ordered} · Only ${stockAvail} in stock`
-                            : `Ordered: ${pluralSets(ordered)}`}
-                        </p>
-
-                        <div className="pack-line-stepper-row">
-                          <div className="stepper">
+                        {/* Only rendered once staff explicitly ask for it. Opening it changes
+                            nothing on its own — the Confirm button below is what commits. */}
+                        {isAdjusting && (
+                          <div className="pack-line-adjust-panel">
+                            <div className="pack-line-stepper-row">
+                              <div className="stepper">
+                                <button
+                                  type="button"
+                                  className="stepper-btn"
+                                  onClick={() => stepAdjust(li.id, ordered, -1)}
+                                  disabled={adjustQty === 0 || submitting}
+                                  aria-label={`Decrease packed sets for ${li.colorName}`}
+                                >
+                                  −
+                                </button>
+                                <span className="stepper-value">{adjustQty}</span>
+                                <button
+                                  type="button"
+                                  className="stepper-btn"
+                                  onClick={() => stepAdjust(li.id, ordered, 1)}
+                                  disabled={adjustQty >= ordered || submitting}
+                                  aria-label={`Increase packed sets for ${li.colorName}`}
+                                >
+                                  +
+                                </button>
+                              </div>
+                              <span className="muted">In stock: {stockAvail}</span>
+                            </div>
                             <button
                               type="button"
-                              className="stepper-btn"
-                              onClick={() => adjustPacking(li.id, ordered, -1)}
-                              disabled={qty === 0 || submitting}
-                              aria-label={`Decrease packed sets for ${li.colorName}`}
+                              className="btn-primary pack-line-adjust-confirm"
+                              onClick={() => confirmAdjusted(li.id, ordered)}
+                              disabled={submitting}
                             >
-                              −
-                            </button>
-                            <span className="stepper-value">{qty}</span>
-                            <button
-                              type="button"
-                              className="stepper-btn"
-                              onClick={() => adjustPacking(li.id, ordered, 1)}
-                              disabled={qty >= ordered || submitting}
-                              aria-label={`Increase packed sets for ${li.colorName}`}
-                            >
-                              +
+                              Confirm {pluralSets(adjustQty)}
                             </button>
                           </div>
-                          <span className="muted">In stock: {stockAvail}</span>
-                        </div>
+                        )}
 
                         {isShort && (
                           <p className="pack-line-shortfall-note">
-                            This will be recorded as a short-pack — the ordered quantity stays {ordered}; only how
-                            much actually gets packed changes.
+                            Packing {pluralSets(confirmed[li.id])} of {ordered}. This will be recorded as a
+                            short-pack — the ordered quantity stays {ordered}; only how much actually gets packed
+                            changes.
                           </p>
                         )}
                         {canCancel && (
@@ -415,7 +564,7 @@ export default function PackOrderDetail() {
 
       <div className="sticky-action-bar">
         <p className="muted pack-order-tally">{tallyText}</p>
-        <button type="button" className="btn-primary" onClick={handleMarkPacked} disabled={submitting}>
+        <button type="button" className="btn-primary" onClick={handleMarkPackedClick} disabled={submitting}>
           {submitting ? 'Marking as packed…' : 'Mark as packed'}
         </button>
         {/* Visually separated from "Mark as packed" and from the per-line links: cancelling the
@@ -432,6 +581,37 @@ export default function PackOrderDetail() {
           </button>
         )}
       </div>
+
+      {/* A WARNING, not a block. Staff can still proceed — same "inform clearly, let the person
+          decide" shape used elsewhere in this app — but the lines going through unconfirmed are
+          named explicitly, and the copy states exactly what will be recorded for them, since
+          "confirm anyway" quietly meaning "packed in full" is the one thing that would make this
+          worse than the old silent behaviour rather than better. tone="accent": proceeding is a
+          normal choice here, not a destructive one, so it must not borrow the cancel actions' red. */}
+      <ConfirmModal
+        open={!!unconfirmedWarning}
+        title={`${unconfirmedWarning?.length ?? 0} line${
+          unconfirmedWarning?.length === 1 ? '' : 's'
+        } not confirmed yet`}
+        body={
+          unconfirmedWarning
+            ? `Still unconfirmed: ${unconfirmedWarning
+                .map((li) => `${li.productArticleNo} ${li.colorName}`)
+                .join(', ')}. Going ahead records ${
+                unconfirmedWarning.length === 1 ? 'it' : 'them'
+              } as packed in full at the ordered quantity. Go back to confirm ${
+                unconfirmedWarning.length === 1 ? 'it' : 'them'
+              } one by one, or mark the order packed anyway.`
+            : ''
+        }
+        confirmLabel="Mark packed anyway"
+        // NOT the default "Cancel" — this screen has "Cancel this line" and "Cancel this order"
+        // actions, so an unqualified "Cancel" here could read as cancelling the order itself.
+        cancelLabel="Go back and confirm"
+        tone="accent"
+        onConfirm={doMarkPacked}
+        onCancel={() => setUnconfirmedWarning(null)}
+      />
 
       <ConfirmModal
         open={!!cancelTarget}
