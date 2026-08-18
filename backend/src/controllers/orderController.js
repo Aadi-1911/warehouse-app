@@ -417,16 +417,36 @@ async function billOrder(req, res) {
   // Unlike at pack time, this genuinely CAN fire in normal use: stock may have moved between
   // packing and billing (another order billed first, a transfer, a correction). That's exactly the
   // race this rejects cleanly instead of silently overselling.
+  // EVERY line is checked before returning, not just up to the first failure. Returning on the
+  // first one made a multi-line shortage feel like whack-a-mole: the caller fixes one line, retries,
+  // and discovers the next one — with no way to see the true scope of the problem up front. The
+  // full list costs nothing extra here (the stock is already resolved in memory) and lets a client
+  // show all of it at once.
+  const insufficientLines = [];
   for (const li of linesToDeduct) {
     const available = (stockByBundle.get(li.bundleId) || []).reduce((sum, s) => sum + s.qtySets, 0);
     if (available < li.qtySetsPacked) {
-      return sendError(
-        res,
-        409,
-        'INSUFFICIENT_STOCK',
-        `Not enough stock to bill ${li.qtySetsPacked} sets for line ${li.id} (available: ${available})`
-      );
+      insufficientLines.push({
+        lineItemId: li.id,
+        bundleId: li.bundleId,
+        needed: li.qtySetsPacked,
+        available,
+      });
     }
+  }
+  if (insufficientLines.length > 0) {
+    const count = insufficientLines.length;
+    return sendError(
+      res,
+      409,
+      'INSUFFICIENT_STOCK',
+      count === 1
+        ? `Not enough stock to bill ${insufficientLines[0].needed} sets for line ${insufficientLines[0].lineItemId} (available: ${insufficientLines[0].available})`
+        : `${count} lines don't have enough stock to bill`,
+      // Sibling field alongside `error`, which sendError passes through and the frontend's
+      // ApiError surfaces as `.extra` — same shape requirePin already uses for attemptsRemaining.
+      { insufficientLines }
+    );
   }
 
   let updated;

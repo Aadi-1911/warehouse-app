@@ -336,6 +336,8 @@ Server-side logic:
 2. Stock is deducted per line by pulling from `Location` rows holding that Bundle, **in alphabetical order by Location name** (FIFO across locations, rule 64), until the quantity is satisfied. One `STOCK_OUT` `Transaction` is written per location actually drawn from, each linked via `orderLineItemId`.
 3. Deduction is driven by each line's **`qtySetsPacked`** — what was actually counted during packing — **not** `qtySetsRequested`. A short-packed line moves only what was really packed; the shortfall was already recorded as its own `SHORT_PACKED` adjustment at pack time and gets no second entry here. Lines with `qtySetsPacked: 0` are skipped entirely.
 4. If total available stock across all locations can't cover a line's `qtySetsPacked`, the whole request is rejected (`409 INSUFFICIENT_STOCK`) — no partial deduction, same everything-or-nothing atomicity as order creation. Unlike at pack time this can genuinely fire in normal use: stock may have moved between packing and billing (another order billed first, a transfer, a correction).
+
+   **Every line is checked before returning, not just up to the first failure.** The response carries an `insufficientLines` array alongside `error` — `[{ lineItemId, bundleId, needed, available }]` — so a caller can show the full scope of the shortage at once rather than discovering it one line per retry. `error.message` names the single line when there's exactly one, or summarises the count when there are several.
 5. `Order.status` → `BILLED`, `billedAt` set to now. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "PACKED"`, `newValue: "BILLED"`, `reason: null` — routine progress).
 6. All of the above happens atomically in one transaction.
 

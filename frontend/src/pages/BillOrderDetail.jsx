@@ -4,6 +4,7 @@ import { InvoiceIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { getOrder, billOrder } from '../api/orders';
+import { listStock } from '../api/stock';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -14,6 +15,19 @@ import { getOrder, billOrder } from '../api/orders';
 // across locations and applies rule 23's hard lock (no further edits to this order, ever). The
 // confirm copy below is deliberately weightier than every other ConfirmModal in this app for
 // that reason; it names both consequences explicitly rather than asking a generic "are you sure?"
+//
+// --- On the up-front stock check ---
+// Real current stock is fetched on load and compared against each line's qtySetsPacked, so a line
+// that CAN'T be billed is flagged the moment the screen opens rather than only after tapping the
+// button. This is purely INFORMATIONAL: the backend's own INSUFFICIENT_STOCK check at bill time is
+// still the real enforcement and is unchanged. Stock can genuinely move between this page loading
+// and a real bill attempt (another order bills first, a transfer runs), so that error path is
+// still handled here — this check just makes it the rare surprise instead of the primary way
+// anyone discovers a shortage.
+//
+// A blocked line uses a DANGER tint, deliberately distinct from Pack Order's amber shortfall
+// tint. Those are different severities and shouldn't look alike: amber there means "we proceeded
+// with less than ordered," red here means "this cannot proceed at all.""
 
 function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
@@ -27,6 +41,11 @@ export default function BillOrderDetail() {
   const [orderStatus, setOrderStatus] = useState('idle');
   const [orderError, setOrderError] = useState(null);
 
+  // Real stock, summed by bundleId — same unfiltered listStock() + client-side grouping pattern
+  // PackOrderDetail.jsx already uses (see its own comment on why the full list is fetched rather
+  // than one article's worth), reused here rather than rebuilt.
+  const [stockByBundleId, setStockByBundleId] = useState({});
+
   const [expandedArticles, setExpandedArticles] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -36,9 +55,15 @@ export default function BillOrderDetail() {
     let cancelled = false;
     setOrderStatus('loading');
     setOrderError(null);
-    getOrder(id)
-      .then((data) => {
-        if (!cancelled) setOrder(data);
+    Promise.all([getOrder(id), listStock()])
+      .then(([data, stockRows]) => {
+        if (cancelled) return;
+        setOrder(data);
+        const totals = {};
+        stockRows.forEach((r) => {
+          totals[r.bundleId] = (totals[r.bundleId] ?? 0) + r.qtySets;
+        });
+        setStockByBundleId(totals);
       })
       .catch((err) => {
         if (!cancelled) setOrderError(err.message);
@@ -126,6 +151,14 @@ export default function BillOrderDetail() {
   const totalPacked = order.lineItems.reduce((sum, li) => sum + li.qtySetsPacked, 0);
   const shortLines = order.lineItems.filter((li) => li.qtySetsPacked < li.qtySetsRequested).length;
 
+  // A line is BLOCKED when real current stock can't cover what was packed — the same comparison
+  // billOrder's own pre-check makes server-side. Computed here once and reused for the row tint,
+  // the collapsed-header indicator, and the button's disabled state, so all three can never
+  // disagree with each other.
+  const availableFor = (li) => stockByBundleId[li.bundleId] ?? 0;
+  const isBlocked = (li) => li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
+  const blockedLines = order.lineItems.filter(isBlocked);
+
   return (
     <div className="page">
       <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
@@ -154,6 +187,15 @@ export default function BillOrderDetail() {
                     {group.articleNo}
                     <span className="muted"> — {group.productName}</span>
                   </div>
+                  {/* Surfaced on the COLLAPSED header specifically, so a blocked line doesn't
+                      require expanding every article one by one to find. */}
+                  {group.lines.some(isBlocked) && (
+                    <div className="accordion-subtitle">
+                      <span className="badge badge-danger accordion-low-badge">
+                        {group.lines.filter(isBlocked).length} can't be billed
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
               </button>
@@ -162,17 +204,25 @@ export default function BillOrderDetail() {
                 <div className="accordion-body nested">
                   {group.lines.map((li) => {
                     const isShort = li.qtySetsPacked < li.qtySetsRequested;
+                    const blocked = isBlocked(li);
                     return (
-                      <div key={li.id} className="bill-line-row">
-                        <span className="pack-line-color-chip">{li.colorName}</span>
-                        <span className="muted bill-line-qty">
-                          {pluralSets(li.qtySetsPacked)}
-                          {/* Shown only when they differ, so the owner can see exactly what
-                              they're committing to versus what was originally ordered. */}
-                          {isShort && (
-                            <span className="bill-line-short"> (of {li.qtySetsRequested} ordered)</span>
-                          )}
-                        </span>
+                      <div key={li.id} className={`bill-line-row ${blocked ? 'bill-line-row-blocked' : ''}`}>
+                        <div className="bill-line-main">
+                          <span className="pack-line-color-chip">{li.colorName}</span>
+                          <span className="muted bill-line-qty">
+                            {pluralSets(li.qtySetsPacked)}
+                            {/* Shown only when they differ, so the owner can see exactly what
+                                they're committing to versus what was originally ordered. */}
+                            {isShort && (
+                              <span className="bill-line-short"> (of {li.qtySetsRequested} ordered)</span>
+                            )}
+                          </span>
+                        </div>
+                        {blocked && (
+                          <p className="bill-line-blocked-note">
+                            Only {availableFor(li)} in stock — cannot bill this line yet.
+                          </p>
+                        )}
                       </div>
                     );
                   })}
@@ -189,7 +239,20 @@ export default function BillOrderDetail() {
           {order.lineItems.length === 1 ? '' : 's'}
           {shortLines > 0 ? ` · ${shortLines} short-packed` : ''}
         </p>
-        <button type="button" className="btn-primary" onClick={() => setConfirmOpen(true)} disabled={submitting}>
+        {/* The note sits ABOVE the disabled button, not inside a tooltip or only on the rows —
+            a disabled control with no visible reason is its own usability failure. */}
+        {blockedLines.length > 0 && (
+          <p className="bill-blocked-note">
+            {blockedLines.length} line{blockedLines.length === 1 ? "" : "s"} don't have enough stock to bill
+            yet — receive stock or adjust the order first.
+          </p>
+        )}
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => setConfirmOpen(true)}
+          disabled={submitting || blockedLines.length > 0}
+        >
           {submitting ? 'Billing…' : 'Bill this order'}
         </button>
       </div>

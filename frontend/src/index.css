@@ -1650,11 +1650,16 @@ body {
    just "colour: quantity", so it's a single flex row sharing the same divider idiom. The colour
    chip itself is .pack-line-color-chip, reused rather than duplicated. */
 .bill-line-row {
+  padding: 9px 0;
+}
+
+/* The colour chip + quantity sit on one row; a blocked note (if any) stacks underneath, which is
+   why the flex row moved into its own wrapper rather than living on .bill-line-row itself. */
+.bill-line-main {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 0;
 }
 
 .bill-line-row + .bill-line-row {
@@ -1670,4 +1675,38 @@ body {
    everywhere else in this app, without tinting the whole row. */
 .bill-line-short {
   color: var(--warning-text);
+}
+
+/* A line that CANNOT be billed — real stock is below what was packed. Deliberately DANGER, not
+   the warning/amber Pack Order uses for a short-pack: those are different severities and must not
+   look alike. Amber there means "we proceeded with less than ordered"; red here means "this
+   cannot proceed at all." Compound selector so it beats the adjacency divider rule at equal
+   specificity, same idiom .pack-line-row.pack-line-row-short already uses. */
+.bill-line-row.bill-line-row-blocked {
+  background: var(--danger-bg);
+  border-top: none;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 4px 0;
+}
+
+.bill-line-blocked-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--danger-text);
+}
+
+/* Sits directly above the disabled "Bill this order" button in the sticky bar, so the reason the
+   control is unavailable is visible without hunting through the article list for red rows. */
+.bill-blocked-note {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
 }
