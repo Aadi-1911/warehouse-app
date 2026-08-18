@@ -97,11 +97,12 @@ export default function App() {
           <Route
             path="/parties"
             element={
-              // Owner-only at the route level even though GET /api/parties itself is any-role
-              // (04_API_SPEC.md) — this screen has no staff-facing purpose today (not wired
-              // into New Order, which doesn't exist yet), so until then it's just a contact
-              // directory, same category as Manage Users/Factory Payables/Article Pricing.
-              <ProtectedRoute requireRole="OWNER">
+              // Any-role as of 2026-08-18. The old owner-only gate was justified by "this screen
+              // has no staff-facing purpose today (not wired into New Order, which doesn't exist
+              // yet)" — New Order exists now and picks a Party on every order, so staff have a
+              // real reason to look one up and to add a new customer. Archive/reactivate stays
+              // owner-only inside the screen itself (Parties.jsx) and at the API.
+              <ProtectedRoute>
                 <Parties />
               </ProtectedRoute>
             }

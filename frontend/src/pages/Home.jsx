@@ -62,12 +62,13 @@ const MORE_ITEMS = [
   // than a coloured tile: History is a look-something-up utility, not one of the core frequent
   // actions §5.1 reserves tiles for.
   { to: '/history', label: 'History', Icon: HistoryIcon, show: () => true },
-  // Owner-only, same as Manage Users/Factory Payables/Article Pricing below — GET /api/parties
-  // is any authenticated role at the API level (04_API_SPEC.md), but this screen has no
-  // staff-facing purpose today (not wired into New Order, which doesn't exist yet), so until
-  // then it's just a contact directory. Corrected from an initial `show: () => true` that
-  // shipped this to STAFF too — see LEARNING_LOG.md.
-  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: (user) => user.role === 'OWNER' },
+  // Any-role as of 2026-08-18. This was owner-only on the grounds that the screen had no
+  // staff-facing purpose "until New Order exists" — it does now, and picks a Party on every
+  // order, so staff genuinely need to browse and add customers. (Note this reverses an earlier
+  // correction that went the other way, for a reason that has since expired rather than because
+  // that correction was wrong at the time — see LEARNING_LOG.md.) Archive/reactivate remains
+  // owner-only inside the screen and at the API.
+  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: () => true },
   { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: (user) => user.role === 'OWNER' },
   {
     to: '/set-pin',

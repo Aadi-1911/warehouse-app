@@ -2,15 +2,28 @@ import { useEffect, useState } from 'react';
 import { PartyIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
+import { useAuth } from '../hooks/useAuth';
 import { listParties, createParty, deactivateParty, reactivateParty } from '../api/parties';
 
-// Party List — Create + Archive/Reactivate on top of the prior task's read-only list.
-// Owner-only at the route level (App.jsx) — POST/deactivate/reactivate are owner-only
-// server-side too, so this is defense in depth, not a new restriction.
+// Party List — browse, search and create, with Archive/Reactivate per row.
+//
+// Reachable by BOTH roles as of 2026-08-18 (App.jsx). Viewing and creating are open: New Order
+// picks a Party on every order, so staff need to find customers and add new ones on the spot.
+// Archive/Reactivate stays OWNER-only — creating is additive, archiving pulls an existing
+// customer out of everyone's pickers.
+//
+// The per-role split inside an otherwise shared screen follows the pattern already established
+// by ReceiveStock.jsx (`isOwner` -> `canCreate={isOwner}` on its category picker) and by
+// Pack/BillOrderDetail's `canCancel`: read the role once from useAuth, name the capability, and
+// conditionally render. This is a UX concern only — requireRole('OWNER') on the deactivate/
+// reactivate routes is the actual enforcement, so hiding the button is not what makes it safe.
 //
 // `status` is the explicit 'idle' | 'loading' | 'loaded' shape CLAUDE.md requires for anything
 // fetched on mount — unchanged from the prior task.
 export default function Parties() {
+  const { user } = useAuth();
+  const isOwner = user.role === 'OWNER';
+
   const [parties, setParties] = useState([]);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
@@ -322,27 +335,29 @@ export default function Parties() {
                       )}
                       {!hasDetails && <p className="muted">No additional details on file.</p>}
 
-                      <div className="party-detail-actions">
-                        {p.isActive ? (
-                          <button
-                            type="button"
-                            className="link-button danger-text"
-                            onClick={() => handleStartArchiveAction(p, 'archive')}
-                            disabled={actionInFlight}
-                          >
-                            Archive
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="link-button"
-                            onClick={() => handleStartArchiveAction(p, 'reactivate')}
-                            disabled={actionInFlight}
-                          >
-                            Reactivate
-                          </button>
-                        )}
-                      </div>
+                      {isOwner && (
+                        <div className="party-detail-actions">
+                          {p.isActive ? (
+                            <button
+                              type="button"
+                              className="link-button danger-text"
+                              onClick={() => handleStartArchiveAction(p, 'archive')}
+                              disabled={actionInFlight}
+                            >
+                              Archive
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => handleStartArchiveAction(p, 'reactivate')}
+                              disabled={actionInFlight}
+                            >
+                              Reactivate
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

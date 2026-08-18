@@ -183,12 +183,13 @@ Response: `[{ id, name, bundleId }]`
 ### `GET /api/parties` 🔒
 Response: `[{ id, name, shopName, location, address, contact, gstNo, isActive }]`
 
-### `POST /api/parties` 👑
+### `POST /api/parties` 🔒
 Body: `{ name, shopName?, location?, address?, contact?, gstNo? }`
-`name` required, rest optional per the schema's minimal Phase 1 Party form. Owner-only — unlike Factory/Color/Category (open to any role), Party is treated like Location, a customer/shop-relationship record rather than a casual lookup list.
+`name` required, rest optional per the schema's minimal Phase 1 Party form. **Any authenticated role as of 2026-08-18** — this was previously owner-only on the reasoning that a Party is a relationship record rather than a casual lookup list. That reasoning didn't survive contact with the actual workflow: staff meet new customers during a sales visit and need to record one on the spot to place an order, and the old gate left them blocked until an owner was free. Same staff-primary logic rule 25 already applies to `POST /api/orders`; this now matches Factory/Color/Category, which have always been open.
 Validation: `name` must be unique (case-insensitive, same pattern as Color/Category/Location) — return `409` on conflict, not a generic error. **Note:** unlike Color/Factory, `Party.name` has no DB-level unique index yet, so this is an application-level check only — a real (if narrow) race window exists until a schema migration adds one.
 
 ### `PATCH /api/parties/:id/deactivate` 👑
+**Still owner-only, deliberately** — creating a Party is additive and low-risk, but archiving removes an existing customer from everyone's pickers. Different blast radius, different gate.
 Sets `isActive: false`. **Never hard-delete a Party** — Transaction/PartyStockReturn rows reference `partyId` and must stay resolvable forever, same audit-trail principle as `User.isActive`. Owner-only — Party has no existing creation endpoint to mirror gating from, so this was decided independently, treating a customer/shop-relationship record like Location rather than the more casual Color/Factory lookup lists. Idempotent. **No lockout-prevention guard** — no equivalent risk to Users' last-active-owner case.
 
 ### `PATCH /api/parties/:id/reactivate` 👑
