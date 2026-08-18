@@ -340,6 +340,13 @@ model Order {
   packedAt    DateTime?         // set when status transitions to PACKED
   billedAt    DateTime?         // set when status transitions to BILLED
   shippedAt   DateTime?         // set when status transitions to SHIPPED
+  // Deliberately a separate flag rather than a fifth OrderStatus value (added 2026-08-18):
+  // Order.status is a strictly forward-only chain (Placed → Packed → Billed → Shipped, rule 59)
+  // and every guard in the codebase reads it that way. Making "cancelled" a status would mean
+  // every one of those forward-only checks had to learn about a state that isn't on the chain.
+  // An orthogonal boolean leaves the chain untouched: an order is at some stage AND may be
+  // cancelled. Only ever set while PLACED or PACKED (rule 23 locks everything from Billed on).
+  isCancelled Boolean           @default(false)
   // No packedById/billedById/shippedById: WHO performed a status transition is already fully
   // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
   // one canonical audit trail, not two.
@@ -361,6 +368,10 @@ model OrderLineItem {
   bundle           Bundle            @relation(fields: [bundleId], references: [id])
   qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
   qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for.
+  // Cancelling a line NEVER rewrites qtySetsRequested/qtySetsPacked — those stay as the real
+  // historical record of what was asked for and what was counted. Only this flag changes, which
+  // is what keeps a cancelled line legible in History and on screen rather than silently zeroed.
+  isCancelled      Boolean           @default(false)
   priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
 
   adjustments      OrderAdjustment[]

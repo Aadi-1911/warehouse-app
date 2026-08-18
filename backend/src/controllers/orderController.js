@@ -11,6 +11,7 @@ const LINE_ITEM_SELECT = {
   bundleId: true,
   qtySetsRequested: true,
   qtySetsPacked: true,
+  isCancelled: true,
   priceAtOrder: true,
   bundle: {
     select: {
@@ -31,6 +32,7 @@ const ORDER_DETAIL_SELECT = {
   packedAt: true,
   billedAt: true,
   shippedAt: true,
+  isCancelled: true,
   lineItems: { select: LINE_ITEM_SELECT },
 };
 
@@ -45,6 +47,7 @@ function lineItemToResponse(li) {
     colorName: li.bundle.color.name,
     qtySetsRequested: li.qtySetsRequested,
     qtySetsPacked: li.qtySetsPacked,
+    isCancelled: li.isCancelled,
     priceAtOrder: li.priceAtOrder,
   };
 }
@@ -61,6 +64,7 @@ function orderDetailToResponse(o) {
     packedAt: o.packedAt,
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
+    isCancelled: o.isCancelled,
     lineItems: o.lineItems.map(lineItemToResponse),
   };
 }
@@ -161,7 +165,14 @@ async function listOrders(req, res) {
 
   const where = {};
   if (partyId) where.partyId = partyId;
-  if (status) where.status = status;
+  // A status-scoped list is a WORKLIST — "what's waiting to be packed/billed/shipped" — so a
+  // cancelled order has no business appearing on one. Scoped to the status filter deliberately:
+  // an unfiltered GET /api/orders is a general query (History, reporting) and still returns
+  // everything, and GET /api/orders/:id always resolves a cancelled order so direct links work.
+  if (status) {
+    where.status = status;
+    where.isCancelled = false;
+  }
   if (from || to) {
     const fromDate = from ? new Date(from) : undefined;
     const toDate = to ? new Date(to) : undefined;
@@ -255,7 +266,7 @@ async function packOrder(req, res) {
     where: { id },
     // bundleId is deliberately NOT selected — packing no longer touches stock, so it has no use
     // for it. Bill is where bundleId matters now (see billOrder below).
-    select: { id: true, status: true, lineItems: { select: { id: true, qtySetsRequested: true } } },
+    select: { id: true, status: true, isCancelled: true, lineItems: { select: { id: true, qtySetsRequested: true, isCancelled: true } } },
   });
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
@@ -263,25 +274,42 @@ async function packOrder(req, res) {
   if (order.status !== 'PLACED') {
     return sendError(res, 409, 'ORDER_NOT_PLACED', `Order must be PLACED to pack — current status is ${order.status}`);
   }
+  // Without this, a cancelled order could still be packed via a direct call or a stale link —
+  // it only disappears from the worklist, which is a display concern, not enforcement.
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be packed');
+  }
 
   // Every submitted lineItemId must belong to this order, and every line ON this order must be
   // covered by exactly one submitted entry — a partial submission would leave some lines with
   // stale qtySetsPacked while the order still moves to PACKED, silently pretending they were
   // handled. REJECT (400) rather than silently defaulting missing lines to 0, same "fail loudly"
   // reasoning the task gives for the packed-quantity range check below.
-  const lineById = new Map(order.lineItems.map((li) => [li.id, li]));
+  // Coverage means every LIVE line, not every line ever created: a cancelled line has nothing to
+  // pack, and the UI renders it struck-through and non-editable so it isn't submitted. Its
+  // existing qtySetsPacked is left exactly as it was.
+  const liveLines = order.lineItems.filter((li) => !li.isCancelled);
+  const lineById = new Map(liveLines.map((li) => [li.id, li]));
   const submittedIds = new Set();
   for (const sl of submittedLines) {
     if (!lineById.has(sl.lineItemId)) {
-      return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${sl.lineItemId} does not belong to order ${id}`);
+      const exists = order.lineItems.some((li) => li.id === sl.lineItemId);
+      return sendError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        exists
+          ? `lineItemId ${sl.lineItemId} has been cancelled and cannot be packed`
+          : `lineItemId ${sl.lineItemId} does not belong to order ${id}`
+      );
     }
     if (submittedIds.has(sl.lineItemId)) {
       return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${sl.lineItemId} submitted more than once`);
     }
     submittedIds.add(sl.lineItemId);
   }
-  if (submittedIds.size !== order.lineItems.length) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'lineItems must include exactly one entry for every line on this order');
+  if (submittedIds.size !== liveLines.length) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'lineItems must include exactly one entry for every non-cancelled line on this order');
   }
   for (const sl of submittedLines) {
     const line = lineById.get(sl.lineItemId);
@@ -379,7 +407,7 @@ async function billOrder(req, res) {
     select: {
       id: true,
       status: true,
-      lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true } },
+      lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true, isCancelled: true } },
     },
   });
   if (!order) {
@@ -388,12 +416,20 @@ async function billOrder(req, res) {
   if (order.status !== 'PACKED') {
     return sendError(res, 409, 'ORDER_NOT_PACKED', `Order must be PACKED to bill — current status is ${order.status}`);
   }
+  // Same reasoning as packOrder's guard: dropping off the worklist is display, not enforcement.
+  // Billing a cancelled order would deduct real stock for goods nobody is sending.
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
+  }
 
   // Deduct against qtySetsPacked, NOT qtySetsRequested — packing is the physical count of what
   // actually went in the box, so that's the number billing commits against. A short-packed line
   // moves only what was really packed; the shortfall was already recorded as its own
   // SHORT_PACKED OrderAdjustment at pack time and needs no second entry here.
-  const linesToDeduct = order.lineItems.filter((li) => li.qtySetsPacked > 0);
+  // Cancelled lines are excluded outright: nothing is deducted for them, and they consequently
+  // can't make an order un-billable either — cancelling a line whose stock ran short is exactly
+  // how an owner unblocks the rest of the order.
+  const linesToDeduct = order.lineItems.filter((li) => !li.isCancelled && li.qtySetsPacked > 0);
 
   const bundleIds = [...new Set(linesToDeduct.map((li) => li.bundleId))];
   const stockRows = await prisma.stock.findMany({
@@ -531,9 +567,12 @@ async function billOrder(req, res) {
 async function shipOrder(req, res) {
   const { id } = req.params;
 
-  const order = await prisma.order.findUnique({ where: { id }, select: { id: true, status: true } });
+  const order = await prisma.order.findUnique({ where: { id }, select: { id: true, status: true, isCancelled: true } });
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be shipped');
   }
   if (order.status !== 'BILLED') {
     return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to ship — current status is ${order.status}`);
@@ -560,4 +599,114 @@ async function shipOrder(req, res) {
   res.json(orderDetailToResponse(updated));
 }
 
-module.exports = { createOrder, listOrders, getOrder, packOrder, billOrder, shipOrder };
+// --- Cancellation (added 2026-08-18) ---------------------------------------------------------
+// Both endpoints below are OWNER ONLY (routes/orders.js), and both are allowed only while the
+// order is PLACED or PACKED. From Billed onward rule 23's hard lock applies: stock has already
+// moved and the order is immutable, so a cancellation there would have to be a Return, not an
+// edit. Neither endpoint ever rewrites a quantity — qtySetsRequested/qtySetsPacked stay exactly
+// as they were, so the original ask and count remain readable forever; only a flag flips.
+const CANCELLABLE_STATUSES = ['PLACED', 'PACKED'];
+
+// PATCH /api/orders/:id/lines/:lineItemId/cancel — OWNER only (👑).
+async function cancelOrderLine(req, res) {
+  const { id, lineItemId } = req.params;
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: { id: true, status: true, isCancelled: true, lineItems: { select: { id: true, isCancelled: true } } },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!CANCELLABLE_STATUSES.includes(order.status)) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_CANCELLABLE',
+      `Lines can only be cancelled while an order is Placed or Packed — this order is ${order.status}`
+    );
+  }
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order is already cancelled in full');
+  }
+
+  const line = order.lineItems.find((li) => li.id === lineItemId);
+  if (!line) {
+    return sendError(res, 404, 'LINE_ITEM_NOT_FOUND', `No line ${lineItemId} on order ${id}`);
+  }
+  if (line.isCancelled) {
+    return sendError(res, 409, 'LINE_ALREADY_CANCELLED', 'This line is already cancelled');
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.orderLineItem.update({ where: { id: lineItemId }, data: { isCancelled: true } });
+    await tx.orderAdjustment.create({
+      data: {
+        orderId: id,
+        lineItemId,
+        changedById: req.user.id,
+        field: 'isCancelled',
+        oldValue: 'false',
+        newValue: 'true',
+        // This enum value has existed since the Phase 2 reconciliation, reserved for exactly
+        // this — a real business cancellation, not a data-entry correction.
+        reason: 'ORDER_CANCELLED',
+      },
+    });
+    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  });
+
+  // Deliberately NOT auto-cancelling the order when its last live line goes: cancelling every
+  // line one by one and cancelling the order are different intents, and inferring the second
+  // from the first would take an irreversible decision the owner never actually made. An order
+  // with zero live lines simply bills nothing — see billOrder's linesToDeduct.
+  res.json(orderDetailToResponse(updated));
+}
+
+// PATCH /api/orders/:id/cancel — OWNER only (👑).
+async function cancelOrder(req, res) {
+  const { id } = req.params;
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: { id: true, status: true, isCancelled: true },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!CANCELLABLE_STATUSES.includes(order.status)) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_CANCELLABLE',
+      `An order can only be cancelled while Placed or Packed — this one is ${order.status}`
+    );
+  }
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order is already cancelled');
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.order.update({ where: { id }, data: { isCancelled: true } });
+    await tx.orderAdjustment.create({
+      data: {
+        orderId: id,
+        // lineItemId stays null — this is an order-level event, same shape a status transition uses.
+        changedById: req.user.id,
+        field: 'isCancelled',
+        oldValue: 'false',
+        newValue: 'true',
+        reason: 'ORDER_CANCELLED',
+      },
+    });
+    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  });
+
+  // Line items are deliberately left alone. The order-level flag is what every guard and every
+  // worklist reads; stamping isCancelled onto all 13 lines as well would be redundant state that
+  // could later disagree with the order flag, and would destroy the distinction between "this
+  // one line was cancelled" and "the whole order was".
+  res.json(orderDetailToResponse(updated));
+}
+
+module.exports = { createOrder, listOrders, getOrder, packOrder, billOrder, shipOrder, cancelOrderLine, cancelOrder };

@@ -8,7 +8,9 @@ import {
   ChevronIcon,
 } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
-import { getOrder, packOrder } from '../api/orders';
+import ConfirmModal from '../components/ConfirmModal';
+import { useAuth } from '../hooks/useAuth';
+import { getOrder, packOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 
 // Pack Order — Pack List detail, 07_UI_DESIGN_BRIEF.md §5.4 (both the original and "— updated"
@@ -53,6 +55,10 @@ function pluralSets(n) {
 export default function PackOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Cancellation is OWNER-only (the API enforces it with requireRole); this only decides whether
+  // to render a control staff could never successfully use.
+  const { user } = useAuth();
+  const canCancel = user.role === 'OWNER';
 
   const [order, setOrder] = useState(null);
   const [orderStatus, setOrderStatus] = useState('idle');
@@ -67,6 +73,13 @@ export default function PackOrderDetail() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // One target for both cancel actions, same shape Parties.jsx uses for its archive/reactivate
+  // confirm — { kind: 'line', line } or { kind: 'order' }. A single ConfirmModal serves both, with
+  // copy that differs sharply so the two can never be mistaken for one another.
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
 
   // Shared accordion state (Live Stock's .accordion-header/.accordion-body pattern, reused
   // rather than a bespoke implementation) grouping lines by article — collapsed by default,
@@ -132,6 +145,31 @@ export default function PackOrderDetail() {
     });
   }
 
+  async function handleConfirmCancel() {
+    setCancelError(null);
+    setCancelling(true);
+    try {
+      if (cancelTarget.kind === 'order') {
+        await cancelOrder(id);
+        setCancelTarget(null);
+        // A cancelled order no longer belongs on the Pack worklist, so go back to it rather than
+        // leaving the owner on a detail screen for something that's no longer actionable.
+        navigate('/pack-orders', { replace: true, state: { cancelledOutcome: { partyName: order.partyName } } });
+        return;
+      }
+      // Line cancel: the endpoint returns the whole updated order, so this re-renders from real
+      // server state rather than patching the local copy and hoping it matches.
+      const updated = await cancelOrderLine(id, cancelTarget.line.id);
+      setOrder(updated);
+      setCancelTarget(null);
+    } catch (err) {
+      setCancelTarget(null);
+      setCancelError(err.message);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   async function handleMarkPacked() {
     setSubmitError(null);
     setSubmitting(true);
@@ -140,18 +178,23 @@ export default function PackOrderDetail() {
       // (04_API_SPEC.md's PATCH /:id/pack), so an untouched line submits at its own default
       // (== ordered), which is exactly the "assume a full pack unless staff says otherwise"
       // behavior this screen's defaults already imply.
-      const lineItemsPayload = order.lineItems.map((li) => ({
-        lineItemId: li.id,
-        qtySetsPacked: packingQty[li.id] ?? li.qtySetsRequested,
-      }));
+      // Cancelled lines are excluded — they have nothing to pack, and the backend's coverage
+      // check now expects exactly the non-cancelled lines.
+      const lineItemsPayload = order.lineItems
+        .filter((li) => !li.isCancelled)
+        .map((li) => ({
+          lineItemId: li.id,
+          qtySetsPacked: packingQty[li.id] ?? li.qtySetsRequested,
+        }));
       await packOrder(id, lineItemsPayload);
-      const shortCount = order.lineItems.filter(
+      const liveForOutcome = order.lineItems.filter((li) => !li.isCancelled);
+      const shortCount = liveForOutcome.filter(
         (li) => (packingQty[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
       ).length;
       navigate('/pack-orders', {
         replace: true,
         state: {
-          packedOutcome: { partyName: order.partyName, lineCount: order.lineItems.length, shortCount },
+          packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
         },
       });
     } catch (err) {
@@ -195,8 +238,12 @@ export default function PackOrderDetail() {
     );
   }
 
-  const total = order.lineItems.length;
-  const tally = order.lineItems.reduce(
+  // Everything below counts LIVE lines only — a cancelled line isn't "not started", it's out of
+  // scope entirely, and folding it into the tally would make the footer permanently unfinishable.
+  const liveLines = order.lineItems.filter((li) => !li.isCancelled);
+  const cancelledCount = order.lineItems.length - liveLines.length;
+  const total = liveLines.length;
+  const tally = liveLines.reduce(
     (acc, li) => {
       const qty = packingQty[li.id] ?? li.qtySetsRequested;
       const touched = touchedLines.has(li.id);
@@ -210,7 +257,8 @@ export default function PackOrderDetail() {
   const tallyText =
     `${tally.full} of ${total} item${total === 1 ? '' : 's'} fully packed` +
     (tally.short > 0 ? ` · ${tally.short} short` : '') +
-    (tally.notStarted > 0 ? ` · ${tally.notStarted} not started` : '');
+    (tally.notStarted > 0 ? ` · ${tally.notStarted} not started` : '') +
+    (cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : '');
 
   // Group by article (productId) — same grouping New Order's own Order Summary uses, built
   // fresh each render from the already-fetched order rather than kept as separate state.
@@ -238,6 +286,12 @@ export default function PackOrderDetail() {
         </p>
       )}
 
+      {cancelError && (
+        <p className="error-banner" role="alert">
+          Could not cancel: {cancelError}
+        </p>
+      )}
+
       <div className="card">
         {groupedLineItems.map((group) => {
           const open = expandedArticles.has(group.productId);
@@ -261,6 +315,20 @@ export default function PackOrderDetail() {
               {open && (
                 <div className="accordion-body nested">
                   {group.lines.map((li) => {
+                    // Cancelled lines stay VISIBLE, struck through — the order's line history is
+                    // part of the record ("never hard-delete"), and a line vanishing entirely
+                    // would leave the owner unsure whether they cancelled it or imagined it.
+                    if (li.isCancelled) {
+                      return (
+                        <div key={li.id} className="pack-line-row pack-line-row-cancelled">
+                          <div className="pack-line-row-header">
+                            <span className="pack-line-color-chip">{li.colorName}</span>
+                            <span className="badge badge-danger">Cancelled</span>
+                          </div>
+                          <p className="pack-line-ordered">Ordered: {pluralSets(li.qtySetsRequested)}</p>
+                        </div>
+                      );
+                    }
                     const ordered = li.qtySetsRequested;
                     const qty = packingQty[li.id] ?? ordered;
                     const touched = touchedLines.has(li.id);
@@ -325,6 +393,16 @@ export default function PackOrderDetail() {
                             much actually gets packed changes.
                           </p>
                         )}
+                        {canCancel && (
+                          <button
+                            type="button"
+                            className="link-button danger-text line-cancel-link"
+                            onClick={() => setCancelTarget({ kind: 'line', line: li })}
+                            disabled={submitting || cancelling}
+                          >
+                            Cancel this line
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -340,7 +418,34 @@ export default function PackOrderDetail() {
         <button type="button" className="btn-primary" onClick={handleMarkPacked} disabled={submitting}>
           {submitting ? 'Marking as packed…' : 'Mark as packed'}
         </button>
+        {/* Visually separated from "Mark as packed" and from the per-line links: cancelling the
+            whole order is a different scale of action, and the two must never be tapped by
+            mistake for one another. */}
+        {canCancel && (
+          <button
+            type="button"
+            className="btn-danger order-cancel-button"
+            onClick={() => setCancelTarget({ kind: 'order' })}
+            disabled={submitting || cancelling}
+          >
+            Cancel this order
+          </button>
+        )}
       </div>
+
+      <ConfirmModal
+        open={!!cancelTarget}
+        title={cancelTarget?.kind === 'order' ? 'Cancel this whole order?' : 'Cancel this line?'}
+        body={
+          cancelTarget?.kind === 'order'
+            ? `${order.partyName}'s entire order will be cancelled and removed from the packing list. The lines stay on record — nothing is deleted — but the order can't be packed, billed or shipped afterwards.`
+            : `${cancelTarget?.line.colorName} will be cancelled and won't be packed or billed. The ordered quantity stays on record; only the line is marked cancelled.`
+        }
+        confirmLabel={cancelling ? 'Cancelling…' : cancelTarget?.kind === 'order' ? 'Cancel whole order' : 'Cancel line'}
+        tone="danger"
+        onConfirm={handleConfirmCancel}
+        onCancel={() => setCancelTarget(null)}
+      />
     </div>
   );
 }

@@ -271,7 +271,13 @@ Response: `[{ id, bundleId, productId, productArticleNo, productName, colorId, c
 
 ## Orders (creation, basic read, and all three status transitions — a formal Bill document entity and adjustment editing are separate follow-up work)
 
-Most endpoints here are 🔒 any-authenticated-role; `PATCH /:id/bill` is 👑 OWNER-only (rule 63). **Stock is deducted at `bill`, never at `pack`** — see those two endpoints.
+Most endpoints here are 🔒 any-authenticated-role; `PATCH /:id/bill` and both cancel endpoints are 👑 OWNER-only (rule 63). **Stock is deducted at `bill`, never at `pack`** — see those two endpoints.
+
+**Cancellation** (added 2026-08-18) is carried by `Order.isCancelled` / `OrderLineItem.isCancelled` — deliberately *not* a fifth `OrderStatus`, so the forward-only status chain is untouched. Consequences across the rest of this section:
+- A **status-scoped** list (`?status=…`) excludes cancelled orders — it's a worklist. An unfiltered `GET /api/orders` still returns them, and `GET /api/orders/:id` always resolves one, so History and direct links keep working. Both responses now include `isCancelled`.
+- A cancelled **order** can't be packed, billed or shipped — each of those returns `409 ORDER_CANCELLED`. Dropping off a worklist is display; these guards are the enforcement.
+- A cancelled **line** is excluded from billing's stock deduction entirely, and therefore can never block billing either — cancelling a line whose stock ran short is exactly how an owner unblocks the rest of an order.
+- `pack`'s full-coverage rule means every **non-cancelled** line; submitting a cancelled line returns `400`.
 
 Order/OrderLineItem/OrderAdjustment schema: `03_DATABASE_SCHEMA.md` §2. `costPrice` never appears anywhere in this section's responses, at any role — Orders is a selling-price-facing feature (rule 10).
 
@@ -343,6 +349,26 @@ Server-side logic:
 
 Response: full order, same shape as `GET /api/orders/:id`.
 Errors: `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PACKED`, `409 INSUFFICIENT_STOCK`.
+
+### `PATCH /api/orders/:id/lines/:lineItemId/cancel` 👑
+No body. **OWNER only** — cancelling voids real committed work and isn't something staff should do unilaterally.
+
+Allowed only while the order is `PLACED` or `PACKED` (`409 ORDER_NOT_CANCELLABLE` otherwise) — from `Billed` on, rule 23's lock applies and any issue routes through a Return instead. `409 ORDER_CANCELLED` if the whole order is already cancelled; `409 LINE_ALREADY_CANCELLED` if this line is.
+
+Sets `OrderLineItem.isCancelled = true` and writes one `OrderAdjustment` (`field: "isCancelled"`, `lineItemId` set, `reason: ORDER_CANCELLED`). **`qtySetsRequested`/`qtySetsPacked` are never rewritten** — the original ask and count stay as the historical record; only the flag changes.
+
+Cancelling the last live line does **not** auto-cancel the order — that's a separate, deliberate action. An order with no live lines simply bills nothing.
+
+Response: full order, same shape as `GET /api/orders/:id`.
+Errors: `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `404 LINE_ITEM_NOT_FOUND`, `409 ORDER_NOT_CANCELLABLE`, `409 ORDER_CANCELLED`, `409 LINE_ALREADY_CANCELLED`.
+
+### `PATCH /api/orders/:id/cancel` 👑
+No body. **OWNER only.** Same `PLACED`/`PACKED` window and the same `409` codes as the line-level endpoint.
+
+Sets `Order.isCancelled = true` and writes one `OrderAdjustment` (`field: "isCancelled"`, `lineItemId` null, `reason: ORDER_CANCELLED`). **Line items are deliberately left untouched** — the order-level flag is what every guard and worklist reads, so stamping it onto every line too would be redundant state that could later disagree, and would erase the distinction between "one line was cancelled" and "the whole order was".
+
+Response: full order, same shape as `GET /api/orders/:id`.
+Errors: `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_CANCELLABLE`, `409 ORDER_CANCELLED`.
 
 ### `PATCH /api/orders/:id/ship` 🔒
 No body. **Any authenticated role, deliberately** — staff is the primary user for this transition (rule 63).

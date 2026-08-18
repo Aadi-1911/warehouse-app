@@ -45,3 +45,17 @@ export function billOrder(id) {
 export function shipOrder(id) {
   return apiFetch(`/api/orders/${id}/ship`, { method: 'PATCH' });
 }
+
+// PATCH /api/orders/:id/lines/:lineItemId/cancel -> the updated order. OWNER ONLY.
+// Flags the line cancelled; never rewrites its quantities, so the original ask and count stay
+// readable. Only allowed while the order is PLACED or PACKED (409 otherwise).
+export function cancelOrderLine(orderId, lineItemId) {
+  return apiFetch(`/api/orders/${orderId}/lines/${lineItemId}/cancel`, { method: 'PATCH' });
+}
+
+// PATCH /api/orders/:id/cancel -> the updated order. OWNER ONLY.
+// Flags the whole order cancelled. Line items are deliberately left untouched — the order-level
+// flag is what every worklist and guard reads.
+export function cancelOrder(orderId) {
+  return apiFetch(`/api/orders/${orderId}/cancel`, { method: 'PATCH' });
+}

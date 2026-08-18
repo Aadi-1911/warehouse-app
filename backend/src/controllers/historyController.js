@@ -156,6 +156,22 @@ async function listHistory(req, res) {
         partyName,
         description: `${partyName}: order ${statusWord(a.newValue)}`,
       });
+    } else if (a.field === 'isCancelled') {
+      // Its own branch, because the generic old → new wording below would render this as
+      // "SAI — 6023 Olive Green: false → true sets (Order cancelled)" — technically accurate and
+      // completely unreadable. A cancellation is a state, not a quantity change, so it gets a
+      // plain sentence and its own "Cancelled" tag rather than the generic "Change".
+      entries.push({
+        id: `ORDER_ADJUSTMENT:${a.id}`,
+        type: 'ORDER_ADJUSTMENT',
+        label: 'Cancelled',
+        timestamp: a.changedAt,
+        actorName: a.changedBy.name,
+        partyName,
+        description: a.lineItem
+          ? `${partyName} — ${articleLabel(a.lineItem)}: line cancelled`
+          : `${partyName}: whole order cancelled`,
+      });
     } else {
       // A line-level change. lineItem is populated whenever lineItemId was set, which is what
       // lets this name the actual article/colour rather than an opaque line id.

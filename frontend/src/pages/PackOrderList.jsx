@@ -34,6 +34,9 @@ export default function PackOrderList() {
   // instead of a silent redirect. A useState initializer (not a useEffect) so it can't
   // re-trigger if location.state happens to change identity on a later render.
   const [packedOutcome, setPackedOutcome] = useState(() => location.state?.packedOutcome ?? null);
+  // Left behind by the detail screen after a whole-order cancel, which redirects here because a
+  // cancelled order no longer belongs on this worklist.
+  const [cancelledOutcome, setCancelledOutcome] = useState(() => location.state?.cancelledOutcome ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +72,18 @@ export default function PackOrderList() {
               : `All ${packedOutcome.lineCount} line${packedOutcome.lineCount === 1 ? '' : 's'} fully packed.`}
           </p>
           <button type="button" className="link-button" onClick={() => setPackedOutcome(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {cancelledOutcome && (
+        <div className="result-banner result-banner-warning">
+          <p>
+            <strong>Order cancelled for {cancelledOutcome.partyName}.</strong> It's been removed from the
+            packing list. Its lines stay on record and it still appears in History.
+          </p>
+          <button type="button" className="link-button" onClick={() => setCancelledOutcome(null)}>
             OK
           </button>
         </div>

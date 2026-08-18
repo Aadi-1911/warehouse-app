@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { InvoiceIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
-import { getOrder, billOrder } from '../api/orders';
+import { useAuth } from '../hooks/useAuth';
+import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
@@ -36,6 +37,10 @@ function pluralSets(n) {
 export default function BillOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // This screen is already OWNER-only at the route, so this is belt-and-braces rather than the
+  // real gate (which is requireRole('OWNER') on the API).
+  const { user } = useAuth();
+  const canCancel = user.role === 'OWNER';
 
   const [order, setOrder] = useState(null);
   const [orderStatus, setOrderStatus] = useState('idle');
@@ -50,6 +55,11 @@ export default function BillOrderDetail() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +93,27 @@ export default function BillOrderDetail() {
       else next.add(productId);
       return next;
     });
+  }
+
+  async function handleConfirmCancel() {
+    setCancelError(null);
+    setCancelling(true);
+    try {
+      if (cancelTarget.kind === 'order') {
+        await cancelOrder(id);
+        setCancelTarget(null);
+        navigate('/bill-orders', { replace: true, state: { cancelledOutcome: { partyName: order.partyName } } });
+        return;
+      }
+      const updated = await cancelOrderLine(id, cancelTarget.line.id);
+      setOrder(updated);
+      setCancelTarget(null);
+    } catch (err) {
+      setCancelTarget(null);
+      setCancelError(err.message);
+    } finally {
+      setCancelling(false);
+    }
   }
 
   async function handleConfirmBill() {
@@ -148,15 +179,20 @@ export default function BillOrderDetail() {
     }, [])
     .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
 
-  const totalPacked = order.lineItems.reduce((sum, li) => sum + li.qtySetsPacked, 0);
-  const shortLines = order.lineItems.filter((li) => li.qtySetsPacked < li.qtySetsRequested).length;
+  const liveLines = order.lineItems.filter((li) => !li.isCancelled);
+  const cancelledCount = order.lineItems.length - liveLines.length;
+  const totalPacked = liveLines.reduce((sum, li) => sum + li.qtySetsPacked, 0);
+  const shortLines = liveLines.filter((li) => li.qtySetsPacked < li.qtySetsRequested).length;
 
   // A line is BLOCKED when real current stock can't cover what was packed — the same comparison
   // billOrder's own pre-check makes server-side. Computed here once and reused for the row tint,
   // the collapsed-header indicator, and the button's disabled state, so all three can never
   // disagree with each other.
   const availableFor = (li) => stockByBundleId[li.bundleId] ?? 0;
-  const isBlocked = (li) => li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
+  // !li.isCancelled comes FIRST deliberately: a cancelled line is never billed, so it can never
+  // block billing either. Cancelling a line whose stock ran short is precisely how an owner
+  // unblocks the rest of the order, and this is the line of code that makes that true.
+  const isBlocked = (li) => !li.isCancelled && li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
   const blockedLines = order.lineItems.filter(isBlocked);
 
   return (
@@ -168,6 +204,12 @@ export default function BillOrderDetail() {
       {submitError && (
         <p className="error-banner" role="alert">
           Could not bill this order: {submitError}
+        </p>
+      )}
+
+      {cancelError && (
+        <p className="error-banner" role="alert">
+          Could not cancel: {cancelError}
         </p>
       )}
 
@@ -203,6 +245,18 @@ export default function BillOrderDetail() {
               {open && (
                 <div className="accordion-body nested">
                   {group.lines.map((li) => {
+                    // Kept visible, struck through — same "never hard-delete" spirit the rest of
+                    // this app applies to archived records.
+                    if (li.isCancelled) {
+                      return (
+                        <div key={li.id} className="bill-line-row bill-line-row-cancelled">
+                          <div className="bill-line-main">
+                            <span className="pack-line-color-chip">{li.colorName}</span>
+                            <span className="badge badge-danger">Cancelled</span>
+                          </div>
+                        </div>
+                      );
+                    }
                     const isShort = li.qtySetsPacked < li.qtySetsRequested;
                     const blocked = isBlocked(li);
                     return (
@@ -223,6 +277,16 @@ export default function BillOrderDetail() {
                             Only {availableFor(li)} in stock — cannot bill this line yet.
                           </p>
                         )}
+                        {canCancel && (
+                          <button
+                            type="button"
+                            className="link-button danger-text line-cancel-link"
+                            onClick={() => setCancelTarget({ kind: 'line', line: li })}
+                            disabled={submitting || cancelling}
+                          >
+                            Cancel this line
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -238,6 +302,7 @@ export default function BillOrderDetail() {
           {pluralSets(totalPacked)} packed across {order.lineItems.length} line
           {order.lineItems.length === 1 ? '' : 's'}
           {shortLines > 0 ? ` · ${shortLines} short-packed` : ''}
+          {cancelledCount > 0 ? ` · ${cancelledCount} cancelled` : ''}
         </p>
         {/* The note sits ABOVE the disabled button, not inside a tooltip or only on the rows —
             a disabled control with no visible reason is its own usability failure. */}
@@ -255,7 +320,33 @@ export default function BillOrderDetail() {
         >
           {submitting ? 'Billing…' : 'Bill this order'}
         </button>
+        {/* Separated from the primary action for the same reason as on Pack Order: cancelling
+            the order and billing it are opposite outcomes and must not sit adjacent as peers. */}
+        {canCancel && (
+          <button
+            type="button"
+            className="btn-danger order-cancel-button"
+            onClick={() => setCancelTarget({ kind: 'order' })}
+            disabled={submitting || cancelling}
+          >
+            Cancel this order
+          </button>
+        )}
       </div>
+
+      <ConfirmModal
+        open={!!cancelTarget}
+        title={cancelTarget?.kind === 'order' ? 'Cancel this whole order?' : 'Cancel this line?'}
+        body={
+          cancelTarget?.kind === 'order'
+            ? `${order.partyName}'s entire order will be cancelled and removed from the billing list. The lines stay on record — nothing is deleted — but the order can't be billed or shipped afterwards.`
+            : `${cancelTarget?.line.colorName} will be cancelled and won't be billed. No stock is deducted for it. The packed quantity stays on record; only the line is marked cancelled.`
+        }
+        confirmLabel={cancelling ? 'Cancelling…' : cancelTarget?.kind === 'order' ? 'Cancel whole order' : 'Cancel line'}
+        tone="danger"
+        onConfirm={handleConfirmCancel}
+        onCancel={() => setCancelTarget(null)}
+      />
 
       {/* Deliberately heavier copy than any other confirm in this app — this is the only action
           in the whole lifecycle that can't be undone, and it does two separate irreversible

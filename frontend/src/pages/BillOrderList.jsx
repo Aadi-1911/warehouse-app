@@ -35,6 +35,9 @@ export default function BillOrderList() {
   // returning here comes with a real confirmation rather than a silent redirect. A useState
   // initializer (not useEffect) so it can't re-fire if location.state changes identity later.
   const [billedOutcome, setBilledOutcome] = useState(() => location.state?.billedOutcome ?? null);
+  // Left behind by the detail screen after a whole-order cancel, which redirects here because a
+  // cancelled order no longer belongs on this worklist.
+  const [cancelledOutcome, setCancelledOutcome] = useState(() => location.state?.cancelledOutcome ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +69,18 @@ export default function BillOrderList() {
             order is now locked — it can no longer be changed. It's ready to ship.
           </p>
           <button type="button" className="link-button" onClick={() => setBilledOutcome(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {cancelledOutcome && (
+        <div className="result-banner result-banner-warning">
+          <p>
+            <strong>Order cancelled for {cancelledOutcome.partyName}.</strong> It's been removed from the
+            billing list. Its lines stay on record and it still appears in History.
+          </p>
+          <button type="button" className="link-button" onClick={() => setCancelledOutcome(null)}>
             OK
           </button>
         </div>

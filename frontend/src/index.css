@@ -1710,3 +1710,33 @@ body {
   font-weight: 700;
   line-height: 1.4;
 }
+
+/* --- Cancelled order lines (Pack Order / Bill Order) ---
+   Struck through and muted rather than removed: the order's line history stays part of the
+   record, same "never hard-delete" principle applied to archived parties/categories elsewhere.
+   Muted-not-red on purpose — the row is no longer actionable, so it should recede; the red
+   "Cancelled" badge is what carries the status. */
+.pack-line-row-cancelled,
+.bill-line-row-cancelled {
+  opacity: 0.55;
+}
+
+.pack-line-row-cancelled .pack-line-color-chip,
+.bill-line-row-cancelled .pack-line-color-chip,
+.pack-line-row-cancelled .pack-line-ordered {
+  text-decoration: line-through;
+}
+
+/* Per-line cancel: a quiet text link, deliberately not a button — it sits inside a row and must
+   not compete with the screen's primary action. */
+.line-cancel-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+/* Order-level cancel: full-width and visually separated from the primary action above it, so
+   "Mark as packed"/"Bill this order" and "Cancel this order" can never be tapped for each other. */
+.order-cancel-button {
+  margin-top: 10px;
+}
