@@ -1,14 +1,18 @@
 import { apiFetch } from './client';
 
 // GET /api/parties -> [{ id, name, shopName, location, address, contact, gstNo, isActive }]
-// Any authenticated role (04_API_SPEC.md) — unlike POST/deactivate/reactivate below, which are
-// owner-only. The Party List screen itself is route-gated OWNER, so this is defense in depth,
-// not a new restriction.
+// Any authenticated role (04_API_SPEC.md). Read by the Party List screen and by every screen
+// that picks a Party — New Order and Good Returns both do.
+//
+// (This comment used to say POST was owner-only and that the Party List screen was route-gated
+// OWNER. Both stopped being true on 2026-08-18 when Manage Parties opened to staff — corrected
+// here rather than left to mislead.)
 export function listParties() {
   return apiFetch('/api/parties');
 }
 
-// POST /api/parties -> the created party (same shape as above). Only `name` is required —
+// POST /api/parties -> the created party (same shape as above). Any authenticated role since
+// 2026-08-18 — staff need to add a walk-in customer mid-order. Only `name` is required —
 // rest are optional per the schema's minimal Phase 1 form (rule 17: a walk-in/one-off party
 // shouldn't need a full profile before it can be recorded).
 export function createParty({ name, shopName, location, address, contact, gstNo }) {

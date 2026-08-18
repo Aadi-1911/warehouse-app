@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { applyStockMovement } = require('../utils/stock');
 
 const prisma = new PrismaClient();
 
@@ -32,24 +33,10 @@ const TRANSACTION_RESPONSE_SELECT = {
   createdAt: true,
 };
 
-// Maps a transaction type to (a) the Prisma update it applies and (b) the WHERE-clause guard
-// that must hold for the update to be allowed to run at all. The guard is what makes the
-// negative-quantity check atomic with the write itself — see the up-front reasoning in
-// LEARNING_LOG.md for why a separate read-then-check-then-write would be race-prone here.
-function buildStockUpdate(type, qtySets) {
-  switch (type) {
-    case 'STOCK_IN':
-      return { data: { qtySets: { increment: qtySets } }, guard: {} };
-    case 'STOCK_OUT':
-      return {
-        data: { qtySets: { decrement: qtySets } },
-        guard: { qtySets: { gte: qtySets } },
-        insufficientField: 'qtySets',
-      };
-    default:
-      throw new Error(`Unhandled transaction type: ${type}`);
-  }
-}
+// The upsert-then-guarded-update this endpoint used to define inline now lives in
+// utils/stock.js (applyStockMovement), because POST /api/returns became a third caller and a
+// third hand-written copy of the same logic was not worth having. Behaviour here is unchanged —
+// it's the identical code, moved.
 
 // POST /api/transactions — any authenticated role (🔒). The only way Stock quantities change
 // (02_ARCHITECTURE.md §5, CLAUDE.md's non-negotiable rules) — no direct Stock write endpoint
@@ -86,28 +73,9 @@ async function createTransaction(req, res) {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // Find-or-create: a bundle/location pairing with no prior activity has no Stock row yet.
-      // `update: {}` never touches quantities on an existing row — only the create branch sets them.
-      const stock = await tx.stock.upsert({
-        where: { bundleId_locationId: { bundleId, locationId } },
-        update: {},
-        create: { bundleId, locationId, qtySets: 0 },
-      });
-
-      const { data, guard, insufficientField } = buildStockUpdate(type, qtySets);
-
-      const updateResult = await tx.stock.updateMany({
-        where: { id: stock.id, ...guard },
-        data,
-      });
-
-      if (updateResult.count === 0) {
-        const err = new Error(
-          `This ${type} would take ${insufficientField} negative for this bundle/location`
-        );
-        err.isInsufficientStock = true;
-        throw err;
-      }
+      // Find-or-create plus the guarded write, in one shared call — see utils/stock.js. Throws
+      // with isInsufficientStock set when a STOCK_OUT would go negative, caught below.
+      const stock = await applyStockMovement(tx, { bundleId, locationId, type, qtySets });
 
       // Re-read inside the same transaction so the response reflects the true post-write
       // values, not a value computed in JS from a possibly-stale earlier read.

@@ -242,3 +242,15 @@ export function NotStartedIcon({ size = 20 }) {
     </svg>
   );
 }
+
+// Good Returns — an arrow curving back toward a box, reading as "goods coming back in." A
+// distinct shape from TransferIcon's two straight opposing arrows on purpose: a transfer is a
+// sideways move between our own locations, a return is inbound from outside.
+export function ReturnIcon({ size = 20 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <polyline points="9 4 4 9 9 14" />
+      <path d="M4 9h9a6 6 0 0 1 6 6v5" />
+    </svg>
+  );
+}

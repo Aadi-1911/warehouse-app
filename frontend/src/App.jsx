@@ -20,6 +20,7 @@ import BillOrderList from './pages/BillOrderList';
 import BillOrderDetail from './pages/BillOrderDetail';
 import ShipOrderList from './pages/ShipOrderList';
 import ShipOrderDetail from './pages/ShipOrderDetail';
+import GoodReturns from './pages/GoodReturns';
 
 export default function App() {
   return (
@@ -178,6 +179,17 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <ShipOrderDetail />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/good-returns"
+            element={
+              // No requireRole — taking returned goods at the counter is a staff job, the same
+              // staff-primary reasoning behind Receive Stock and New Order. POST /api/returns is
+              // any-role for the same reason.
+              <ProtectedRoute>
+                <GoodReturns />
               </ProtectedRoute>
             }
           />

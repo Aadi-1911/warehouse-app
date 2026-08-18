@@ -383,27 +383,57 @@ Errors: `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_BILLED`.
 
 ---
 
+## Good Returns (whole sets coming back from a Party) 🔒
+
+Rule 86: a simple event log, **not** a pending/settled workflow — no lifecycle, no approval state, no partial settlement. Logging a return puts real stock back and records what it was worth. **Never touches `Party.runningDueBalance`** — reconciling the return against what's owed is a deliberate manual step.
+
+### `POST /api/returns` 🔒
+**Any authenticated role.** Taking returned goods at the counter is a staff job, the same staff-primary reasoning behind `POST /api/orders` and Receive Stock.
+
+Body: `{ partyId, locationId, lines: [{ bundleId, qtySets, reason, note? }] }`
+
+1. `qtySets` must be a positive **integer** — whole sets only, never partial pieces (rule 86).
+2. `reason` is required on every line and must be a real `GoodReturnReason` value: `NOT_ORDERED`, `SIZE_ISSUE`, `COLOUR_NOT_ORDERED`, `COLOUR_BLEEDING`, `ACCESSORIES_ISSUE`, `OTHER`. Anything else → `400 VALIDATION_ERROR`.
+3. **`note` is required when `reason` is `OTHER`** (`400 NOTE_REQUIRED`), optional otherwise. A conditional requirement the schema can't express, so it lives here — an "Other" with no explanation records nothing usable. Whitespace-only is treated as absent.
+4. Party must exist (`404 PARTY_NOT_FOUND`) and be active (`409 PARTY_ARCHIVED`). Location must exist (`404 LOCATION_NOT_FOUND`). Every Bundle must be real (`404 BUNDLE_NOT_FOUND`).
+5. Every Product must have a non-null `sellingPrice` (`400 UNPRICED_PRODUCT`) — an unpriced article can't be valued.
+6. `priceAtReturn` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body** (a supplied value is ignored outright), and never sourced from `costPrice` (rule 10). Same principle as `priceAtOrder` and `costPriceSnapshot`.
+
+Per line this creates one `PartyStockReturn`, **increases** real `Stock` at `locationId`, and writes one `Transaction` of type `STOCK_IN` linked via `partyStockReturnId`. The stock increase uses the same shared `applyStockMovement` helper as `POST /api/transactions` — including its find-or-create, so returning goods into a location that has never held that bundle works rather than failing on a missing `Stock` row.
+
+**`costPriceSnapshot` is deliberately `null` on these `Transaction` rows.** That field records what was owed to a *factory* for a receipt, and `GET /api/factories/:id/payable` sums exactly these `STOCK_IN` rows. Goods coming back from a customer create no factory debt — snapshotting a cost here would inflate the payable with money never owed. Same reasoning as the Transfer legs.
+
+**All-or-nothing.** Everything is validated and resolved before any write, so one bad line rejects the whole request with zero rows created and zero stock moved — a partial success is not a state this endpoint can return.
+
+Response `201`: an **array**, one entry per line in submission order — `[{ id, partyId, partyName, bundleId, productId, productArticleNo, productName, colorId, colorName, locationId, locationName, qtySets, priceAtReturn, reason, note, createdAt, userId, userName }]`. Display-ready, so a client can render the result without a second round trip.
+
+### `GET /api/returns` 🔒
+**Any authenticated role.** No query params — newest first, whole list. Same response shape as above. No filtering yet, deliberately: nothing calls for one, and the honest version of "no filtering required" is not shipping a query vocabulary nobody uses. `costPrice` appears nowhere in this response at any role.
+
+---
+
 ## History 🔒
 
 ### `GET /api/history` 🔒
 No query params. **Any authenticated role** — OWNER and STAFF receive the identical feed, with no role-based filtering of content. No price field of any kind (`costPrice`, `sellingPrice`, `priceAtOrder`) is selected or returned.
 
-A unified, read-only feed of what's happened across Orders and Transfers, newest first. **Deliberately a read-time merge across existing tables, not a shared event-log table** — no such table exists and this endpoint doesn't create one. Every source already carries a timestamp, an actor, and enough relations to describe itself, so a denormalised second copy would be a duplicate source of truth to keep in sync for no gain (same reasoning applied to the Factory payable figure and the party dues tracker).
+A unified, read-only feed of what's happened across Orders, Transfers and Good Returns, newest first. **Deliberately a read-time merge across existing tables, not a shared event-log table** — no such table exists and this endpoint doesn't create one. Every source already carries a timestamp, an actor, and enough relations to describe itself, so a denormalised second copy would be a duplicate source of truth to keep in sync for no gain (same reasoning applied to the Factory payable figure and the party dues tracker).
 
-Three sources are merged:
+Four sources are merged:
 1. **Order creation** — one entry per `Order`, from `Order.createdAt`/`createdBy`, with party name and line count. No `OrderAdjustment` row exists for creation itself, so this comes from `Order` directly.
 2. **`OrderAdjustment` rows** — every one, across every order: status transitions, quantity changes, short-packs. Article/colour is named whenever `lineItemId` is set.
 3. **Transfers** — one entry per `Transfer` row. Read from the `Transfer` table directly, **not** reconstructed from the paired `TRANSFER_OUT`/`TRANSFER_IN` `Transaction` rows: those are that row's stock-movement side effects (linked back via `Transaction.transferId`), not the event. One transfer = one entry, never two.
+4. **Good Returns** — one entry per `PartyStockReturn` row, same choice and same reason as Transfers: the paired `STOCK_IN` `Transaction` is the side effect (linked via `Transaction.partyStockReturnId`), not the event. `priceAtReturn` is not selected — nothing forbids it (it's a selling price), a history feed just has no use for it, the same call already made for `priceAtOrder`.
 
 Response: `[{ id, type, label, timestamp, actorName, partyName, description }]`, sorted newest-first with `id` as a deterministic tiebreak (several events can share a timestamp — billing writes its stock transactions and its status adjustment in one database transaction — and without a tiebreak the order could differ between two identical requests).
 
-- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER`, used by the client only to pick the tag's **colour**.
-- `label` is the tag's **text**: `"Placed"`, `"Packed"`, `"Billed"`, `"Shipped"`, `"Change"`, or `"Transfer"`. Computed server-side, not derived from `type` by the client — one `type` (`ORDER_STATUS`) covers three genuinely different moments, so a per-type mapping could only render a single generic word for all of them. For `ORDER_STATUS` the label is derived from the same `OrderAdjustment.newValue` the description is built from, so the tag and the sentence can never disagree or miss a value if `OrderStatus` gains a stage.
-- `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
-- `partyName` is `null` for transfers.
+- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER` / `GOOD_RETURN`, used by the client only to pick the tag's **colour**.
+- `label` is the tag's **text**: `"Placed"`, `"Packed"`, `"Billed"`, `"Shipped"`, `"Change"`, `"Cancelled"`, `"Transfer"`, or `"Return"`. Computed server-side, not derived from `type` by the client — one `type` (`ORDER_STATUS`) covers three genuinely different moments, so a per-type mapping could only render a single generic word for all of them. For `ORDER_STATUS` the label is derived from the same `OrderAdjustment.newValue` the description is built from, so the tag and the sentence can never disagree or miss a value if `OrderStatus` gains a stage.
+- `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`, `"SAI returned 3 sets of 6002 Wine into Delhi — Colour bleeding"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
+- `partyName` is `null` for transfers only — Good Returns always carry one.
 - `id` is prefixed by type (e.g. `TRANSFER:<cuid>`) to guarantee uniqueness across the merged sources.
 
-**No pagination or filtering in this first version** — the whole feed is returned. At this business's real volume that's a non-issue (currently well under 100 entries). The trade-off worth knowing: because the sort happens in application memory across three queries, this can't be paginated efficiently at the database layer; if that ever mattered, the fix is per-source pagination with a merge cursor, still not a shared table.
+**No pagination or filtering in this first version** — the whole feed is returned. At this business's real volume that's a non-issue (currently well under 100 entries). The trade-off worth knowing: because the sort happens in application memory across four queries, this can't be paginated efficiently at the database layer; if that ever mattered, the fix is per-source pagination with a merge cursor, still not a shared table.
 
 ---
 

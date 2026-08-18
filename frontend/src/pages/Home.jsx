@@ -15,6 +15,7 @@ import {
   HistoryIcon,
   InvoiceIcon,
   SendIcon,
+  ReturnIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -62,6 +63,10 @@ const MORE_ITEMS = [
   // than a coloured tile: History is a look-something-up utility, not one of the core frequent
   // actions §5.1 reserves tiles for.
   { to: '/history', label: 'History', Icon: HistoryIcon, show: () => true },
+  // Unconditional — both roles log returns (POST /api/returns is any-role). A plain row rather
+  // than a coloured tile, deliberately: tiles are reserved for the core frequent actions, and a
+  // Party sending goods back is a real but occasional event, not part of the daily loop.
+  { to: '/good-returns', label: 'Good Returns', Icon: ReturnIcon, show: () => true },
   // Any-role as of 2026-08-18. This was owner-only on the grounds that the screen had no
   // staff-facing purpose "until New Order exists" — it does now, and picks a Party on every
   // order, so staff genuinely need to browse and add customers. (Note this reverses an earlier

@@ -3,8 +3,8 @@ import { HistoryIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listHistory } from '../api/history';
 
-// History — a unified, read-only feed of what's happened across Orders and Transfers, newest
-// first. Reachable by both roles, and both see the identical feed (GET /api/history applies no
+// History — a unified, read-only feed of what's happened across Orders, Transfers and Good
+// Returns, newest first. Reachable by both roles, and both see the identical feed (GET /api/history applies no
 // role-based content filtering).
 //
 // Deliberately a utility screen for looking something up, not a dashboard: one flat
@@ -30,6 +30,10 @@ const TYPE_BADGE_CLASSES = {
   ORDER_STATUS: 'badge-success',
   ORDER_ADJUSTMENT: 'badge-warning',
   TRANSFER: 'badge-accent',
+  // Warning/amber, sharing ORDER_ADJUSTMENT's colour rather than TRANSFER's: §3.4 assigns amber
+  // to "something went differently than planned," which is what a return is. A transfer is
+  // routine internal movement (accent/blue) — physically similar, semantically not the same event.
+  GOOD_RETURN: 'badge-warning',
 };
 
 // Unknown types still render — see the component comment above.

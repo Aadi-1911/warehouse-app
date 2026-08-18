@@ -3,7 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // GET /api/history — any authenticated role (🔒). A unified, read-only feed of what's happened
-// across Orders and Transfers, newest first.
+// across Orders, Transfers and Good Returns, newest first.
 //
 // DELIBERATELY A READ-TIME MERGE, NOT A SHARED EVENT-LOG TABLE. No such table exists in this
 // codebase and this endpoint doesn't create one. Every source below already carries the three
@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across three
+// The trade-off, stated honestly: because the sort happens in application memory across four
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
 // real volume that's a non-issue (the whole feed is currently ~19 entries, and even a few hundred
 // events a month stays trivial for years). If it ever genuinely became one, the fix is per-source
@@ -34,6 +34,20 @@ const REASON_LABELS = {
   // description, and the full text would nest parens awkwardly ("...5 → 3 sets (Short-packed
   // (insufficient stock))"). The dropped detail is already implied by the numbers falling.
   SHORT_PACKED: 'Short-packed',
+  OTHER: 'Other',
+};
+
+// Human labels for GoodReturnReason — a SEPARATE table from REASON_LABELS above, because they are
+// separate enums answering different questions (why a number on an order changed vs. why physical
+// goods came back). Merging them into one lookup would work only by accident, and would break the
+// moment either enum gained a value the other didn't have. Taken verbatim from the enum's own
+// schema comments, same convention as REASON_LABELS.
+const RETURN_REASON_LABELS = {
+  NOT_ORDERED: 'Not ordered',
+  SIZE_ISSUE: 'Size issue',
+  COLOUR_NOT_ORDERED: 'Colour not ordered',
+  COLOUR_BLEEDING: 'Colour bleeding',
+  ACCESSORIES_ISSUE: 'Accessories issue',
   OTHER: 'Other',
 };
 
@@ -60,7 +74,7 @@ function articleLabel(lineItem) {
 async function listHistory(req, res) {
   // Three independent reads, run concurrently — they share no data, so there's no reason to
   // serialise them.
-  const [orders, adjustments, transfers] = await Promise.all([
+  const [orders, adjustments, transfers, returns] = await Promise.all([
     prisma.order.findMany({
       select: {
         id: true,
@@ -117,6 +131,29 @@ async function listHistory(req, res) {
         },
         fromLocation: { select: { name: true } },
         toLocation: { select: { name: true } },
+      },
+    }),
+
+    // One row per returned line, straight from PartyStockReturn — the same choice made for
+    // Transfer above and for the same reason: the paired STOCK_IN Transaction is the stock-movement
+    // side effect of this row (linked back via Transaction.partyStockReturnId), not the event
+    // itself. priceAtReturn is deliberately NOT selected: it's a selling price, so nothing forbids
+    // it, but a history feed has no use for it — same call already made for priceAtOrder.
+    prisma.partyStockReturn.findMany({
+      select: {
+        id: true,
+        createdAt: true,
+        qtySets: true,
+        reason: true,
+        user: { select: { name: true } },
+        party: { select: { name: true } },
+        bundle: {
+          select: {
+            product: { select: { articleNo: true } },
+            color: { select: { name: true } },
+          },
+        },
+        location: { select: { name: true } },
       },
     }),
   ]);
@@ -200,6 +237,23 @@ async function listHistory(req, res) {
       actorName: t.user.name,
       partyName: null,
       description: `${t.qtySets} set${t.qtySets === 1 ? '' : 's'} of ${article} transferred ${t.fromLocation.name} → ${t.toLocation.name}`,
+    });
+  }
+
+  // --- Good Returns: one entry per returned line (see the query comment above).
+  for (const r of returns) {
+    const article = `${r.bundle.product.articleNo} ${r.bundle.color.name}`;
+    const reasonLabel = RETURN_REASON_LABELS[r.reason] ?? r.reason;
+    entries.push({
+      id: `GOOD_RETURN:${r.id}`,
+      type: 'GOOD_RETURN',
+      label: 'Return',
+      timestamp: r.createdAt,
+      actorName: r.user.name,
+      partyName: r.party.name,
+      // The reason is the whole point of a return entry — what came back matters less than why,
+      // so it's in the sentence itself rather than a parenthetical afterthought.
+      description: `${r.party.name} returned ${r.qtySets} set${r.qtySets === 1 ? '' : 's'} of ${article} into ${r.location.name} — ${reasonLabel}`,
     });
   }
 

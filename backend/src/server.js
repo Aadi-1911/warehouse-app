@@ -30,6 +30,7 @@ const transferRoutes = require('./routes/transfers');
 const stockRoutes = require('./routes/stock');
 const userRoutes = require('./routes/users');
 const orderRoutes = require('./routes/orders');
+const returnRoutes = require('./routes/returns');
 const historyRoutes = require('./routes/history');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -85,6 +86,7 @@ app.use('/api/transfers', transferRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/returns', returnRoutes);
 app.use('/api/history', historyRoutes);
 
 // Must be the LAST app.use() — Express only routes errors to handlers mounted after
