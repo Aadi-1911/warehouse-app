@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { piecesPerSetFor } = require('../utils/piecesPerSet');
 
 const prisma = new PrismaClient();
 
@@ -15,7 +16,10 @@ const LINE_ITEM_SELECT = {
   priceAtOrder: true,
   bundle: {
     select: {
-      product: { select: { id: true, articleNo: true, name: true } },
+      // isKids + sizes are the piecesPerSetFor shape (utils/piecesPerSet.js) — needed so a
+      // client (Bill Order's per-article total) can convert sets to pieces itself, same shape
+      // productController's productSelect already exposes elsewhere.
+      product: { select: { id: true, articleNo: true, name: true, isKids: true, sizes: { select: { sizeLabel: true } } } },
       color: { select: { id: true, name: true } },
     },
   },
@@ -43,6 +47,10 @@ function lineItemToResponse(li) {
     productId: li.bundle.product.id,
     productArticleNo: li.bundle.product.articleNo,
     productName: li.bundle.product.name,
+    // Flattened alongside the other product* fields above, same reasoning — lets a client
+    // reconstruct { isKids, sizes } and call its own piecesPerSetFor without a second request.
+    productIsKids: li.bundle.product.isKids,
+    productSizes: li.bundle.product.sizes,
     colorId: li.bundle.color.id,
     colorName: li.bundle.color.name,
     qtySetsRequested: li.qtySetsRequested,
@@ -199,7 +207,21 @@ async function listOrders(req, res) {
       packedAt: true,
       billedAt: true,
       shippedAt: true,
-      lineItems: { select: { qtySetsRequested: true, priceAtOrder: true } },
+      lineItems: {
+        // A cancelled line is never billed and has no business inflating either figure below —
+        // same filter revenue.js and the dashboard's openOrdersValue already apply, and the same
+        // "tally live lines only" convention every order detail screen (Pack/Bill) already uses
+        // for its own counts. Filtering here means lineItemCount and totalValue both come from
+        // this one already-correct array, rather than each needing its own exclusion logic.
+        where: { isCancelled: false },
+        select: {
+          qtySetsRequested: true,
+          priceAtOrder: true,
+          // Needed for piecesPerSetFor — costPrice/sizes.costPrice never touched, this is
+          // purely the piece-count shape (isKids + sizeLabel), same select revenue.js uses.
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+        },
+      },
     },
   });
 
@@ -212,8 +234,16 @@ async function listOrders(req, res) {
     packedAt: o.packedAt,
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
+    // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
+    // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,
-    totalValue: o.lineItems.reduce((sum, li) => sum + li.qtySetsRequested * Number(li.priceAtOrder), 0),
+    // qtySetsRequested × piecesPerSet × priceAtOrder — priceAtOrder is stored PER PIECE
+    // (rule 69's 2026-08-19 clarification), so a bare qtySets × price under-counts by the
+    // pieces-per-set factor. Same three-factor shape as revenue.js and the factory payable.
+    totalValue: o.lineItems.reduce(
+      (sum, li) => sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
+      0,
+    ),
   }));
 
   res.json(response);

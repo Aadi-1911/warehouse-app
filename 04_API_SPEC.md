@@ -295,7 +295,7 @@ Server-side logic:
 5. `priceAtOrder` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body**, same principle as `Transaction.costPriceSnapshot`.
 6. `Order.createdById` comes from the authenticated session, never the request body. `status` defaults to `PLACED`.
 
-Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`
+Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, productIsKids, productSizes, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`. `productIsKids`/`productSizes` (`[{ sizeLabel }]`) are the `piecesPerSetFor` shape (`utils/piecesPerSet.js`) — added 2026-08-20 so a client can convert a line's sets to pieces itself (e.g. Bill Order's per-article total) without a second request.
 Errors: `400 VALIDATION_ERROR`, `400 UNPRICED_PRODUCT`, `404 PARTY_NOT_FOUND`, `404 BUNDLE_NOT_FOUND`, `409 PARTY_ARCHIVED`.
 
 ### `GET /api/orders` 🔒
@@ -303,7 +303,7 @@ Query params: `?partyId=`, `?status=`, `?from=`, `?to=`.
 Lightweight list — party name and a line-item summary, not full nested detail (same "line count, value" shape `07_UI_DESIGN_BRIEF.md`'s Owner Dashboard Orders widget already documents).
 Response: `[{ id, partyId, partyName, status, createdAt, packedAt, billedAt, shippedAt, lineItemCount, totalValue }]`. Default order: newest first.
 
-The stage timestamps are included so a status-scoped list can show the date that matters for its own stage — Bill Orders (`?status=PACKED`) shows when the order was packed, Ship Order (`?status=BILLED`) shows when it was billed. They are `null` until the order reaches that stage. `totalValue` is computed from `qtySetsRequested`, so for a short-packed order it reflects what was **ordered**, not what will actually be billed — the per-line packed quantities on the detail screen are the authoritative figure before billing.
+The stage timestamps are included so a status-scoped list can show the date that matters for its own stage — Bill Orders (`?status=PACKED`) shows when the order was packed, Ship Order (`?status=BILLED`) shows when it was billed. They are `null` until the order reaches that stage. `totalValue` is `SUM(qtySetsRequested × piecesPerSet × priceAtOrder)` over the order's **non-cancelled** line items (`priceAtOrder` is stored per piece, rule 69) — computed from `qtySetsRequested`, so for a short-packed order it reflects what was **ordered**, not what will actually be billed — the per-line packed quantities on the detail screen are the authoritative figure before billing. `lineItemCount` counts the same non-cancelled set, so the two figures never contradict each other on screen; an order with every line cancelled reports `lineItemCount: 0, totalValue: 0`, not an error. Corrected 2026-08-19: previously omitted the `piecesPerSet` factor, under-counting 3–6× depending on the article. Corrected again 2026-08-20: previously included cancelled lines in both fields, overstating a partially-cancelled order's total and count.
 
 ### `GET /api/orders/:id` 🔒
 Full detail, same shape `POST` returns — every line item included, each with the article/color info needed to actually display it.
