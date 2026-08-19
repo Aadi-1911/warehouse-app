@@ -16,6 +16,7 @@ import {
   InvoiceIcon,
   SendIcon,
   ReturnIcon,
+  GridIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -87,6 +88,10 @@ const MORE_ITEMS = [
     Icon: KeyIcon,
     show: (user) => user.role === 'OWNER' && user.hasPinSet,
   },
+  // Owner-only, and the one entry point to the desktop dashboard (§8). Listed here rather than
+  // given a tile because it isn't a daily action — and because a tile would invite tapping it on
+  // the phone, which is the one device §8 explicitly does not design this surface for.
+  { to: '/dashboard', label: 'Owner Dashboard', Icon: GridIcon, show: (user) => user.role === 'OWNER' },
   { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
   { to: '/article-pricing', label: 'Article Pricing', Icon: TagIcon, show: (user) => user.role === 'OWNER' },
 ];

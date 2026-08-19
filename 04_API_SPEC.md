@@ -383,6 +383,28 @@ Errors: `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_BILLED`.
 
 ---
 
+## Owner Dashboard 👑
+
+### `GET /api/dashboard/overview` 👑
+Query: `?revenuePeriod=month|fy|all` (default `fy`; an unrecognised value falls back to `fy` rather than erroring).
+
+**OWNER only, and this one genuinely matters:** the response is derived from `Product.costPrice`, which CLAUDE.md forbids reaching a STAFF request under any circumstance. Note it returns the **total only**, never per-article cost — the same reasoning `GET /api/factories/:id/payable` gives for being owner-only.
+
+Backs the Owner Desktop Dashboard's Overview KPI row (`07_UI_DESIGN_BRIEF.md` §8). Everything is computed fresh from live rows on every request — no caching, no stored aggregates, same principle as rules 60, 81, 96 and 98.
+
+Response: `{ stockValue, setsInStock, bundlesWithStock, piecesInStock, openOrdersCount, openOrdersValue, lowStockCount, lowStockThreshold, revenue, revenuePeriod, revenueLabel }`
+
+- `stockValue` — `SUM(qtySets × piecesPerSet × costPrice)` over every `Stock` row. Per-piece basis (rule 69's 2026-08-19 clarification), so this agrees with the factory payable about what a unit of stock is worth. A null `costPrice` (pending-price article) contributes 0 rather than being guessed at.
+- `setsInStock` / `piecesInStock` — `SUM(qtySets)` and `SUM(qtySets × piecesPerSet)`. The conversion is the shared `piecesPerSetFor` helper (`utils/piecesPerSet.js`), so a Kids article counts 5/6/4 per its label, never `sizes.length`.
+- `bundlesWithStock` — count of **distinct Bundles** (article+colour) holding any Stock row. Distinct bundles, not rows: one bundle stocked at three locations is one article/colour line.
+- `openOrdersCount` / `openOrdersValue` — Orders at `PLACED` or `PACKED`, `isCancelled: false`; value is `SUM(qtySetsRequested × piecesPerSet × priceAtOrder)` over non-cancelled line items.
+- `lowStockCount` / `lowStockThreshold` — `Stock` rows at `qtySets <= 2`, rule 56's unified threshold, counted in the database so this and Live Stock can't drift on what "low" means. The threshold is returned so the client never hard-codes it.
+- `revenue` / `revenueLabel` — `SUM(qtySetsRequested × piecesPerSet × priceAtOrder)` over non-cancelled line items on non-cancelled Orders at `BILLED` or `SHIPPED` (rules 69 and 98). **Bucketed by `billedAt`** (falling back to `createdAt` only if null): billing is when the money is claimed, and it's the stable choice — shipping in a later month must not move revenue out of the month it was billed in. `month` is the whole current calendar month; `fy` is April–March (rule 98's anchor, not a rolling twelve); `all` is unbounded.
+
+The revenue arithmetic lives in `utils/revenue.js` (`periodToRange` / `computeRevenue` / `revenueForPeriod`), separate from this controller and accepting an optional `partyId`, because rule 98 requires the Parties page's per-party sales summary to use the identical calculation — "one calculation path, not five separate ones".
+
+---
+
 ## Good Returns (whole sets coming back from a Party) 🔒
 
 Rule 86: a simple event log, **not** a pending/settled workflow — no lifecycle, no approval state, no partial settlement. Logging a return puts real stock back and records what it was worth. **Never touches `Party.runningDueBalance`** — reconciling the return against what's owed is a deliberate manual step.

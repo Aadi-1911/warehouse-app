@@ -21,6 +21,9 @@ import BillOrderDetail from './pages/BillOrderDetail';
 import ShipOrderList from './pages/ShipOrderList';
 import ShipOrderDetail from './pages/ShipOrderDetail';
 import GoodReturns from './pages/GoodReturns';
+import DashboardLayout from './pages/dashboard/DashboardLayout';
+import Overview from './pages/dashboard/Overview';
+import ComingSoon from './pages/dashboard/ComingSoon';
 
 export default function App() {
   return (
@@ -193,6 +196,59 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* Owner Desktop Dashboard (07_UI_DESIGN_BRIEF.md §8). A NESTED route: the layout shell
+              renders the rail and header once and swaps only the content pane through <Outlet>,
+              which is what makes the rail persist across nav clicks instead of remounting. The
+              OWNER gate sits on the parent, so it covers every child route by construction — a new
+              dashboard page can't accidentally ship ungated. Matches the requireRole="OWNER"
+              pattern already used for Manage Users, Factory Payables and Article Pricing.
+              GET /api/dashboard/overview enforces the same restriction server-side. */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Overview />} />
+            <Route
+              path="orders"
+              element={
+                <ComingSoon
+                  title="Orders"
+                  note="The full orders table, filters and the order detail drawer are a separate task. Orders can be worked on now from the app's own Pack, Bill and Ship screens."
+                />
+              }
+            />
+            <Route
+              path="low-stock"
+              element={
+                <ComingSoon
+                  title="Low stock"
+                  note="The full list of every line at or below 2 sets is a separate task. The Overview's Low stock card already shows the live count."
+                />
+              }
+            />
+            <Route
+              path="parties"
+              element={
+                <ComingSoon
+                  title="Parties"
+                  note="The master-detail party view and per-party sales summary are a separate task. Parties can be viewed and added now from Manage Parties in the app."
+                />
+              }
+            />
+            <Route
+              path="history"
+              element={
+                <ComingSoon
+                  title="History"
+                  note="The filterable, day-grouped history view is a separate task. The Overview's Recent activity feed and the app's own History screen both show the same log."
+                />
+              }
+            />
+          </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

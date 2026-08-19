@@ -35,6 +35,7 @@
 
 - **Entities:** Party (now includes `address`, confirmed `contact` = phone, per rule 83), Order (4-stage: Placed → Packed → Billed → Shipped), OrderLineItem, OrderAdjustment.
 - **Screens:** New Order (factory-disambiguation built into the design), Pack Order (dual Tally + Pack List views), Low Stock list, History activity log, Owner Desktop Dashboard (§8 of the UI brief).
+- **Owner Desktop Dashboard status (2026-08-19):** ✅ shell + Overview built — OWNER-gated `/dashboard` with the five-item rail, header, and the six-KPI Overview backed by `GET /api/dashboard/overview`, plus the recent-activity feed reusing `GET /api/history` unchanged. **🔲 Orders / Low stock / Parties / History pages are named placeholders**, each its own follow-up task, as are the design's three "extras" widgets (top parties, stock value by location, low-stock preview). The New Order dialog, order drawer and owner PIN-gate dialog belong to the Orders task.
 - **Feature:** Live order capture during in-shop sample visits, plus the manual "Log Order from Photo" fallback.
 - **Note carried over from the original plan, still true:** this phase carries more real complexity than it looks like on paper — order status handling and constant mid-order adjustments are harder than anything in Phase 1.
 - **Estimate:** roughly comparable in raw size to Phase 1 (similar entity/screen count), but should move faster per-task given the reasons above — realistically still the single largest remaining phase.

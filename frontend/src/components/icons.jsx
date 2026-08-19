@@ -254,3 +254,32 @@ export function ReturnIcon({ size = 20 }) {
     </svg>
   );
 }
+
+// --- Owner Dashboard nav (paths taken from the design bundle's own SVGs so the rail matches it
+// exactly). Users/History/WarningTriangle are reused from above rather than re-drawn — the
+// design's versions of those three are the same feather-style shapes already in this set.
+
+// Overview — a four-pane grid, reading as "everything at once".
+export function GridIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="3" y="3" width="7" height="9" />
+      <rect x="14" y="3" width="7" height="5" />
+      <rect x="14" y="12" width="7" height="9" />
+      <rect x="3" y="16" width="7" height="5" />
+    </svg>
+  );
+}
+
+// Orders — a clipboard. Distinct from InvoiceIcon (billing) and PackageIcon (the app mark) so the
+// rail's five destinations stay tellable apart at 17px.
+export function ClipboardIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <path d="M8 11h8" />
+      <path d="M8 16h5" />
+    </svg>
+  );
+}

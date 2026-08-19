@@ -32,6 +32,7 @@ const userRoutes = require('./routes/users');
 const orderRoutes = require('./routes/orders');
 const returnRoutes = require('./routes/returns');
 const historyRoutes = require('./routes/history');
+const dashboardRoutes = require('./routes/dashboard');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -88,6 +89,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/returns', returnRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Must be the LAST app.use() — Express only routes errors to handlers mounted after
 // whatever threw them, and this is meant to catch anything any route above didn't.
