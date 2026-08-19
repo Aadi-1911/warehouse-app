@@ -34,6 +34,20 @@ function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
 }
 
+function formatCurrency(amount) {
+  return `₹${Number(amount).toLocaleString('en-IN')}`;
+}
+
+// Mirrors the backend's utils/piecesPerSet.js exactly (also duplicated in NewOrder.jsx /
+// GoodReturns.jsx / ReceiveStock.jsx) — frontend and backend are separate codebases with no
+// shared-constants package, so this small lookup gets copied rather than imported. Takes the
+// flattened productIsKids/productSizes fields getOrder() returns per line item.
+const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
+function piecesPerSetFor(li) {
+  if (li.productIsKids) return KIDS_PIECES_BY_LABEL[li.productSizes[0]?.sizeLabel] ?? 0;
+  return li.productSizes.length;
+}
+
 export default function BillOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -166,15 +180,22 @@ export default function BillOrderDetail() {
     );
   }
 
-  // Grouped by article, same shape PackOrderDetail and New Order's summary both use.
+  // Grouped by article, same shape PackOrderDetail and New Order's summary both use. `total` is
+  // this article's value across its non-cancelled lines only — qtySetsPacked, not
+  // qtySetsRequested, because this is the PRE-BILLING screen and packed quantity is the
+  // authoritative figure before billing (04_API_SPEC.md), exactly for a short-packed line like
+  // this. A cancelled line contributes nothing, same reasoning as listOrders' totalValue fix.
   const groups = order.lineItems
     .reduce((acc, li) => {
       let group = acc.find((g) => g.productId === li.productId);
       if (!group) {
-        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [] };
+        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [], total: 0 };
         acc.push(group);
       }
       group.lines.push(li);
+      if (!li.isCancelled) {
+        group.total += li.qtySetsPacked * piecesPerSetFor(li) * Number(li.priceAtOrder);
+      }
       return acc;
     }, [])
     .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
@@ -228,6 +249,9 @@ export default function BillOrderDetail() {
                   <div className="accordion-title-sm">
                     {group.articleNo}
                     <span className="muted"> — {group.productName}</span>
+                    {/* One total per article, not per colour line — the sum across this
+                        article's non-cancelled lines, at the header level only. */}
+                    <span className="muted"> · {formatCurrency(group.total)}</span>
                   </div>
                   {/* Surfaced on the COLLAPSED header specifically, so a blocked line doesn't
                       require expanding every article one by one to find. */}
