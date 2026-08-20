@@ -14,3 +14,16 @@ export const ORDER_STATUS_BADGE = {
   BILLED: 'badge-accent',
   SHIPPED: 'badge-accent',
 };
+
+// "Open order" — added 2026-08-20 for the Owner Dashboard Orders page's month-toggle split
+// (Open orders section vs. a month-filtered section for everything else). MUST mirror
+// dashboardController.js's own openOrders query exactly: `where: { isCancelled: false, status: {
+// in: ['PLACED', 'PACKED'] } }` — that's the Overview KPI's "openOrdersCount" definition, and this
+// predicate exists so the Orders page doesn't quietly redefine "open" a second, possibly
+// drifting way. Frontend and backend are separate runtimes with no shared code today, so this
+// can't literally import that where-clause — if it ever changes, this needs the matching change,
+// and dashboardController.js's own comment on that query points back here for the same reason.
+export const OPEN_ORDER_STATUSES = ['PLACED', 'PACKED'];
+export function isOpenOrder(order) {
+  return !order.isCancelled && OPEN_ORDER_STATUSES.includes(order.status);
+}

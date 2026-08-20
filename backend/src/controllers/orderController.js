@@ -212,6 +212,21 @@ async function listOrders(req, res) {
       packedAt: true,
       billedAt: true,
       shippedAt: true,
+      // The real cancellation moment — investigated 2026-08-20 for the Owner Dashboard Orders
+      // page's month bucketing. A cancelled order can have been cancelled while PLACED (no
+      // packedAt/billedAt/shippedAt at all), so those stage timestamps can't reliably date it.
+      // cancelOrder/cancelOrderLine both already write an order-level OrderAdjustment row
+      // (field: 'isCancelled', lineItemId: null) with a real changedAt the moment cancellation
+      // happens — the same append-only audit trail every other status transition uses (rule 9),
+      // not a new mechanism invented for this. take: 1 + orderBy desc gets the one that matters
+      // (an order can only be order-level-cancelled once — cancelOrder 409s on an already-
+      // cancelled order — but this is defensive rather than assuming that invariant here too).
+      adjustments: {
+        where: { field: 'isCancelled', lineItemId: null },
+        orderBy: { changedAt: 'desc' },
+        take: 1,
+        select: { changedAt: true },
+      },
       lineItems: {
         // A cancelled line is never billed and has no business inflating either figure below —
         // same filter revenue.js and the dashboard's openOrdersValue already apply, and the same
@@ -240,6 +255,12 @@ async function listOrders(req, res) {
     packedAt: o.packedAt,
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
+    // Only meaningful when isCancelled — the real cancellation timestamp (see the adjustments
+    // select above), falling back to the latest stage date that actually exists, then createdAt,
+    // ONLY for the unexpected case where an order is order-level-cancelled with no matching
+    // OrderAdjustment row (shouldn't happen through cancelOrder's own code path, but this is the
+    // one place that reads the fallback chain, not left implicit).
+    cancelledAt: o.isCancelled ? (o.adjustments[0]?.changedAt ?? o.billedAt ?? o.packedAt ?? o.createdAt) : null,
     // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
     // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,

@@ -68,6 +68,13 @@ async function getOverview(req, res) {
   // Open orders: Placed + Packed, excluding cancelled. Its secondary figure is the value still in
   // the pipe, on the same per-piece selling basis as Revenue — the two numbers sit on the same
   // screen, so they must be the same kind of number.
+  //
+  // This is the canonical "open order" definition — the Owner Dashboard's Orders page (added
+  // 2026-08-20) mirrors it exactly via frontend/src/utils/orderStatus.js's isOpenOrder(), to
+  // split its own order list into an "Open orders" section and a month-filtered section for
+  // everything else. That predicate can't literally import this where-clause (frontend/backend
+  // are separate runtimes with no shared code today), so if this where-clause ever changes,
+  // isOpenOrder() needs the matching change too — it says as much in its own comment.
   const openOrders = await prisma.order.findMany({
     where: { isCancelled: false, status: { in: ['PLACED', 'PACKED'] } },
     select: {
