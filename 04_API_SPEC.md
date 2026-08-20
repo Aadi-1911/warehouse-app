@@ -130,16 +130,23 @@ Sets `isActive: true` — reverses a deactivation.
 ## Locations 🔒
 
 ### `GET /api/locations` 🔒
-Response: `[{ id, name, isActive }]`
+Response: `[{ id, name, isActive, profitSharePercent }]`
 
 ### `POST /api/locations` 👑
-Body: `{ name }`
+Body: `{ name }`. `profitSharePercent` defaults to `100` — not settable at creation, same reasoning as every other soft-launch default in this schema; use the dedicated endpoint below to change it.
 
 ### `PATCH /api/locations/:id/deactivate` 👑
 Sets `isActive: false`. **Never hard-delete a Location** — Stock/Transaction rows reference `locationId` and must stay resolvable forever, same audit-trail principle as `User.isActive`. Owner-only — matches `POST /api/locations`' own gating, unlike Factory/Color/Product which are open to any role. Idempotent. **No lockout-prevention guard** — no equivalent risk to Users' last-active-owner case.
 
 ### `PATCH /api/locations/:id/reactivate` 👑
 Sets `isActive: true` — reverses a deactivation.
+
+### `PATCH /api/locations/:id/profit-share` 👑 — added 2026-08-20 (location-attributed revenue/profit split)
+Body: `{ profitSharePercent }` — integer `0`-`100`. `400 VALIDATION_ERROR` if not.
+
+**No PIN**, deliberately — this is an admin setting on `Location`, the same class of action as deactivate/reactivate above, not a `costPrice`/`sellingPrice` edit. The non-negotiable PIN rule (CLAUDE.md) is specific to those two fields; it doesn't extend to every owner-only money-adjacent setting in the system.
+
+What every location's stock value/revenue basis is, unchanged: cost price is identical regardless of location. Only the business's *share* of the resulting profit differs, which is why `profitSharePercent` multiplies profit (`revenue − cost`) in `utils/locationRevenue.js`, not revenue or cost individually — see that module for the full calculation.
 
 ---
 

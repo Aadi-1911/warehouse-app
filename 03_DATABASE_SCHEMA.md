@@ -165,6 +165,9 @@ model Location {
   id       String  @id @default(cuid())
   name     String  @unique
   isActive Boolean @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+  // Added 2026-08-20 for the location-attributed revenue/profit split (utils/locationRevenue.js).
+  // Defaults to 100 for every location — no location is special-cased by name in the migration.
+  profitSharePercent Int @default(100)
 
   stock             Stock[]
   loosePieces       LoosePieces[]

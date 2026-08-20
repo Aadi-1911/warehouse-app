@@ -3,7 +3,7 @@ const { sendError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 
-const SELECT = { id: true, name: true, isActive: true };
+const SELECT = { id: true, name: true, isActive: true, profitSharePercent: true };
 
 // GET /api/locations — any authenticated role (🔒)
 async function listLocations(req, res) {
@@ -73,4 +73,26 @@ async function reactivateLocation(req, res) {
   res.json(location);
 }
 
-module.exports = { listLocations, createLocation, deactivateLocation, reactivateLocation };
+// PATCH /api/locations/:id/profit-share — OWNER only (👑), matching create/deactivate's own
+// gating. Deliberately NO PIN — confirmed against the task's own instruction: this isn't a
+// costPrice/sellingPrice edit (the non-negotiable PIN rule is specific to those two fields), it's
+// an admin setting on Location, same class of action as deactivate/reactivate above.
+// Body: { profitSharePercent }, an integer 0-100.
+async function updateProfitShare(req, res) {
+  const { id } = req.params;
+  const { profitSharePercent } = req.body;
+
+  if (!Number.isInteger(profitSharePercent) || profitSharePercent < 0 || profitSharePercent > 100) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'profitSharePercent must be an integer between 0 and 100');
+  }
+
+  const existing = await prisma.location.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${id}`);
+  }
+
+  const location = await prisma.location.update({ where: { id }, data: { profitSharePercent }, select: SELECT });
+  res.json(location);
+}
+
+module.exports = { listLocations, createLocation, deactivateLocation, reactivateLocation, updateProfitShare };

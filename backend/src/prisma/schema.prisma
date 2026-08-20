@@ -199,6 +199,15 @@ model Location {
   id       String  @id @default(cuid())
   name     String  @unique
   isActive Boolean @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+  // What share of this location's profit actually belongs to the business, 0-100 (added
+  // 2026-08-20 for the location-attributed revenue/profit split). Defaults to 100 for every
+  // location, including any named Delhi — this migration doesn't special-case a location by
+  // name; setting a real location to something other than 100 is a real admin action taken
+  // through PATCH /api/locations/:id/profit-share, not a decision baked into the schema.
+  // Cost price is identical regardless of location; only the business's SHARE of the resulting
+  // profit differs, which is why this multiplies profit, not revenue or cost, in
+  // utils/locationRevenue.js.
+  profitSharePercent Int @default(100)
 
   stock             Stock[]
   loosePieces       LoosePieces[]
