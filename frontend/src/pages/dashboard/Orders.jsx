@@ -3,6 +3,7 @@ import { ChevronIcon } from '../../components/icons';
 import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
+import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
 //
@@ -25,12 +26,8 @@ import { piecesPerSetFor } from '../../utils/piecesPerSet';
 // one here, "Mark billed" included, even though billOrder() itself already rejects it server-side
 // (409 ORDER_CANCELLED) — confirmed that guard exists before treating this as frontend-only.
 
-const STATUS_LABEL = { PLACED: 'Placed', PACKED: 'Packed', BILLED: 'Billed', SHIPPED: 'Shipped' };
-// Rule mapping per 07_UI_DESIGN_BRIEF.md §3.4's token table: Placed/Packed share the
-// Warning/Pack role, Billed/Shipped share the Accent/Ship/Billed role — same pairing already
-// visible in PackOrderDetail ("Placed" badge-warning), BillOrderDetail ("Packed" badge-warning)
-// and ShipOrderDetail ("Billed" badge-accent).
-const STATUS_BADGE = { PLACED: 'badge-warning', PACKED: 'badge-warning', BILLED: 'badge-accent', SHIPPED: 'badge-accent' };
+// STATUS_LABEL/STATUS_BADGE now live in utils/orderStatus.js — consolidated 2026-08-20 when the
+// Parties page became a second dashboard surface needing the identical status→colour mapping.
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -173,8 +170,8 @@ export default function Orders() {
                       {order.isCancelled ? (
                         <span className="badge badge-danger dash-order-status-badge">Cancelled</span>
                       ) : (
-                        <span className={`badge ${STATUS_BADGE[order.status]} dash-order-status-badge`}>
-                          {STATUS_LABEL[order.status]}
+                        <span className={`badge ${ORDER_STATUS_BADGE[order.status]} dash-order-status-badge`}>
+                          {ORDER_STATUS_LABEL[order.status]}
                         </span>
                       )}
                     </div>

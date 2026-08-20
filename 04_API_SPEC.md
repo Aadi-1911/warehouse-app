@@ -195,6 +195,16 @@ Sets `isActive: false`. **Never hard-delete a Party** — Transaction/PartyStock
 ### `PATCH /api/parties/:id/reactivate` 👑
 Sets `isActive: true` — reverses a deactivation.
 
+### `GET /api/parties/:id/revenue` 👑 — added 2026-08-20 (Owner Dashboard Parties page, §8, rule 98)
+Query: either `period=month|six_months|fy|all`, or `period=custom&from=YYYY-MM&to=YYYY-MM`.
+Response: `{ revenue, period, label }`.
+
+**OWNER only** — matches `GET /api/dashboard/overview`'s own gating for the same underlying figure. The figure itself comes from `utils/revenue.js`'s `computeRevenue`/`periodToRange`/`revenueForPeriod` — the exact same calculation path the Overview Revenue KPI uses, just scoped to one party via the `partyId` param that module carried unused until this endpoint became its first real caller. Rule 98: only `BILLED`/`SHIPPED`, non-cancelled orders and non-cancelled line items count; month-bucketed, never a rolling day window.
+
+`six_months` and the `custom` range are both new additions to `periodToRange` itself (not endpoint-local logic) — `six_months` is the current calendar month plus the 5 before it, expressed as one month-aligned range (equivalent to summing 6 monthly totals, since `periodToRange` already computes a single `[from, to)` pair the same way every other period does); `custom` is the From/To month picker's range, built the identical way. This keeps rule 98's "one calculation path, not five separate ones" literally true — `periodToRange` is that one path for all five period shapes.
+
+`404 PARTY_NOT_FOUND` if `id` doesn't resolve. `400 VALIDATION_ERROR` if `period` isn't one of the four named values or `custom`, or if `custom` is missing/malformed `from`/`to`, or if `to` is before `from`.
+
 ---
 
 ## Bundles 🔒

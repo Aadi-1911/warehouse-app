@@ -283,3 +283,15 @@ export function ClipboardIcon({ size = 17 }) {
     </svg>
   );
 }
+
+// Two overlapping rectangles — the standard "copy" glyph. Used next to the GSTIN value on the
+// Owner Dashboard's Parties page (§8); swapped for CheckCircleIcon briefly after a successful
+// copy, reusing that icon's existing "confirmed" meaning rather than drawing a second checkmark.
+export function CopyIcon({ size = 15 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.8}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}

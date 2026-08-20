@@ -1,7 +1,13 @@
 const express = require('express');
 const requireAuth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
-const { listParties, createParty, deactivateParty, reactivateParty } = require('../controllers/partyController');
+const {
+  listParties,
+  createParty,
+  deactivateParty,
+  reactivateParty,
+  getPartyRevenue,
+} = require('../controllers/partyController');
 
 const router = express.Router();
 
@@ -17,5 +23,9 @@ router.post('/', requireAuth, createParty);
 // radius, so a different gate — this is not an oversight left behind by the change above.
 router.patch('/:id/deactivate', requireAuth, requireRole('OWNER'), deactivateParty);
 router.patch('/:id/reactivate', requireAuth, requireRole('OWNER'), reactivateParty);
+// OWNER only — matches GET /api/dashboard/overview's own gating for the same underlying figure
+// (utils/revenue.js's computeRevenue), just scoped to one party. Owner Dashboard's Parties page
+// (§8) is the only caller.
+router.get('/:id/revenue', requireAuth, requireRole('OWNER'), getPartyRevenue);
 
 module.exports = router;

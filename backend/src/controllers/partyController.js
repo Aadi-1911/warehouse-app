@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { revenueForPeriod, VALID_PERIODS } = require('../utils/revenue');
 
 const prisma = new PrismaClient();
 
@@ -107,4 +108,62 @@ async function reactivateParty(req, res) {
   res.json(party);
 }
 
-module.exports = { listParties, createParty, deactivateParty, reactivateParty };
+// GET /api/parties/:id/revenue?period=month|six_months|fy|all — OWNER only (👑), matching the
+// Owner Dashboard Overview revenue endpoint's own gating: same figure (utils/revenue.js's
+// computeRevenue, rule 98's "one calculation path"), just scoped to one party via the partyId
+// param that module already had wired through and unused until this page.
+//
+// Custom range: ?period=custom&from=YYYY-MM&to=YYYY-MM. Validated here (a well-formed month
+// string, `to` not before `from`) before ever reaching revenueForPeriod/periodToRange — those
+// trust their caller, this is the boundary that actually faces request input.
+const MONTH_PARAM_RE = /^(\d{4})-(\d{2})$/;
+
+function parseMonthParam(value) {
+  const match = MONTH_PARAM_RE.exec(value || '');
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1; // to 0-indexed
+  if (month < 0 || month > 11) return null;
+  return { year, month };
+}
+
+async function getPartyRevenue(req, res) {
+  const { id } = req.params;
+
+  const party = await prisma.party.findUnique({ where: { id }, select: { id: true } });
+  if (!party) {
+    return sendError(res, 404, 'PARTY_NOT_FOUND', `No party with id ${id}`);
+  }
+
+  const { period } = req.query;
+
+  if (period === 'custom') {
+    const from = parseMonthParam(req.query.from);
+    const to = parseMonthParam(req.query.to);
+    if (!from || !to) {
+      return sendError(res, 400, 'VALIDATION_ERROR', "from and to must be YYYY-MM for a custom range");
+    }
+    if (to.year < from.year || (to.year === from.year && to.month < from.month)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', "'to' must not be before 'from'");
+    }
+    const result = await revenueForPeriod(prisma, 'custom', {
+      partyId: id,
+      custom: { fromYear: from.year, fromMonth: from.month, toYear: to.year, toMonth: to.month },
+    });
+    return res.json({ revenue: result.revenue, period: result.period, label: result.label });
+  }
+
+  if (!VALID_PERIODS.includes(period) || period === 'custom') {
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      `period must be one of ${VALID_PERIODS.filter((p) => p !== 'custom').join(', ')}, or 'custom' with from/to`
+    );
+  }
+
+  const result = await revenueForPeriod(prisma, period, { partyId: id });
+  res.json({ revenue: result.revenue, period: result.period, label: result.label });
+}
+
+module.exports = { listParties, createParty, deactivateParty, reactivateParty, getPartyRevenue };

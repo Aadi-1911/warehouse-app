@@ -29,3 +29,16 @@ export function deactivateParty(id) {
 export function reactivateParty(id) {
   return apiFetch(`/api/parties/${id}/reactivate`, { method: 'PATCH' });
 }
+
+// GET /api/parties/:id/revenue?period=month|six_months|fy|all -> { revenue, period, label }
+//                              or ?period=custom&from=YYYY-MM&to=YYYY-MM
+// OWNER only. The Owner Dashboard Parties page's sales summary (§8, rule 98) — the same
+// computeRevenue/periodToRange path the Overview KPI uses, scoped to one party.
+export function getPartyRevenue(id, { period, from, to } = {}) {
+  const params = new URLSearchParams();
+  if (period) params.set('period', period);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const query = params.toString();
+  return apiFetch(`/api/parties/${id}/revenue${query ? `?${query}` : ''}`);
+}

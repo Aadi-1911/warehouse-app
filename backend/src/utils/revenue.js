@@ -5,8 +5,8 @@ const { piecesPerSetFor } = require('./piecesPerSet');
 // calculation path — "one calculation path, not five separate ones" — so this module exists to be
 // imported by both rather than each screen growing its own copy that drifts.
 //
-// The Parties page isn't built yet. `partyId` below is the seam it will use; it is deliberately
-// wired through and tested now, while the reasoning is fresh, rather than retrofitted later.
+// The Parties page's sales summary (built 2026-08-20) is the first real caller of `partyId`,
+// exactly the seam this module wired through in advance.
 //
 // BASIS (rule 98, rule 69): only BILLED and SHIPPED orders count. A Placed or Packed order is a
 // promise, not money — including it would let revenue fall when an order is cancelled, which is
@@ -24,13 +24,21 @@ function revenueDateOf(order) {
   return order.billedAt ?? order.createdAt;
 }
 
-// Month-aligned boundaries for the three periods the Overview's selector offers. Rule 98 insists
-// these are calendar-month buckets, never a rolling day window: "this month" is the whole current
-// calendar month, and the financial year is anchored April–March, not a rolling twelve.
+// Month-aligned boundaries for every period the Overview selector and the Parties page's sales
+// summary offer. Rule 98 insists these are calendar-month buckets, never a rolling day window:
+// "this month" is the whole current calendar month, the financial year is anchored April–March
+// (not a rolling twelve), and "Last 6 months" is the sum of the 6 most recent calendar months.
 //
-// Returns `from`/`to` as real Date boundaries so one comparison path serves every period, plus the
-// human label the UI shows. `from: null` means unbounded (All time).
-function periodToRange(period, now = new Date()) {
+// Returns `from`/`to` as real Date boundaries so one comparison path (computeRevenue's own
+// from/to check) serves every period, plus the human label the UI shows. `from: null` means
+// unbounded (All time).
+//
+// `custom` is only read when period === 'custom' — the Parties page's From/To month picker.
+// Kept as a branch of THIS function rather than a second exported range-builder, per rule 98:
+// "the From/To custom range picker uses the exact same month-summation function as the four
+// presets — one calculation path, not five separate ones." A custom range is just another
+// month-aligned [from, to) pair, computed the same way "this month"'s single-month pair is.
+function periodToRange(period, now = new Date(), custom = {}) {
   const year = now.getFullYear();
   const month = now.getMonth(); // 0-indexed
 
@@ -40,6 +48,24 @@ function periodToRange(period, now = new Date()) {
       from: new Date(year, month, 1, 0, 0, 0, 0),
       to: new Date(year, month + 1, 1, 0, 0, 0, 0),
       label: now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
+    };
+  }
+
+  if (period === 'six_months') {
+    // The current calendar month plus the 5 before it, expressed as one month-aligned [from, to)
+    // range — arithmetically identical to summing 6 separate monthly totals, since every order's
+    // revenue date (revenueDateOf) falls inside exactly one of those months either way. Using a
+    // single range keeps this one call to computeRevenue instead of 6.
+    const startOffset = month - 5;
+    const startYear = year + Math.floor(startOffset / 12);
+    const startMonth = ((startOffset % 12) + 12) % 12;
+    const from = new Date(startYear, startMonth, 1, 0, 0, 0, 0);
+    const to = new Date(year, month + 1, 1, 0, 0, 0, 0);
+    return {
+      period,
+      from,
+      to,
+      label: `${from.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })} – ${now.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}`,
     };
   }
 
@@ -56,10 +82,28 @@ function periodToRange(period, now = new Date()) {
     };
   }
 
+  if (period === 'custom') {
+    const { fromYear, fromMonth, toYear, toMonth } = custom;
+    // A caller reaching this branch with an incomplete/malformed `custom` (e.g. a bare
+    // ?period=custom with no month fields — the controller is expected to reject that with a 400
+    // before ever calling this, but this function shouldn't silently hand back an unbounded
+    // all-time figure mislabelled as a custom range if that validation is ever skipped) falls
+    // back to the same unbounded 'all' shape an unrecognised period gets below.
+    if (![fromYear, fromMonth, toYear, toMonth].every(Number.isInteger)) {
+      return { period: 'all', from: null, to: null, label: 'All time' };
+    }
+    const from = new Date(fromYear, fromMonth, 1, 0, 0, 0, 0);
+    // Same "+1 month, exclusive end" shape as every other branch above — the To month is
+    // included in full, not cut off partway through.
+    const to = new Date(toYear, toMonth + 1, 1, 0, 0, 0, 0);
+    const monthLabel = (y, m) => new Date(y, m, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    return { period, from, to, label: `${monthLabel(fromYear, fromMonth)} – ${monthLabel(toYear, toMonth)}` };
+  }
+
   return { period: 'all', from: null, to: null, label: 'All time' };
 }
 
-const VALID_PERIODS = ['month', 'fy', 'all'];
+const VALID_PERIODS = ['month', 'six_months', 'fy', 'all', 'custom'];
 
 // Everything a revenue line needs, in one place, so a caller can't accidentally select a
 // different shape and get a different answer.
@@ -119,11 +163,12 @@ async function computeRevenue(prisma, { from = null, to = null, partyId = null }
   }, 0);
 }
 
-// Convenience wrapper: period name in, figure + label out. The Overview KPI calls this; the future
-// Parties page can call it with a partyId, or call computeRevenue directly with a custom month
-// range for its From/To picker — either way it lands on the same arithmetic.
-async function revenueForPeriod(prisma, period, { partyId = null, now = new Date() } = {}) {
-  const range = periodToRange(VALID_PERIODS.includes(period) ? period : 'fy', now);
+// Convenience wrapper: period name in, figure + label out. The Overview KPI calls this with one of
+// the three named periods; the Parties page's sales summary calls it with a partyId for all five
+// (including 'custom', passing `custom: { fromYear, fromMonth, toYear, toMonth }` — the caller is
+// responsible for validating those before calling, same as any other request input).
+async function revenueForPeriod(prisma, period, { partyId = null, now = new Date(), custom = {} } = {}) {
+  const range = periodToRange(VALID_PERIODS.includes(period) ? period : 'fy', now, custom);
   const revenue = await computeRevenue(prisma, { from: range.from, to: range.to, partyId });
   return { ...range, revenue };
 }

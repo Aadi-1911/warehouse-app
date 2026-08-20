@@ -26,7 +26,7 @@ import Overview from './pages/dashboard/Overview';
 import Orders from './pages/dashboard/Orders';
 import DashboardHistory from './pages/dashboard/History';
 import DashboardLowStock from './pages/dashboard/LowStock';
-import ComingSoon from './pages/dashboard/ComingSoon';
+import DashboardParties from './pages/dashboard/Parties';
 
 export default function App() {
   return (
@@ -217,15 +217,7 @@ export default function App() {
             <Route index element={<Overview />} />
             <Route path="orders" element={<Orders />} />
             <Route path="low-stock" element={<DashboardLowStock />} />
-            <Route
-              path="parties"
-              element={
-                <ComingSoon
-                  title="Parties"
-                  note="The master-detail party view and per-party sales summary are a separate task. Parties can be viewed and added now from Manage Parties in the app."
-                />
-              }
-            />
+            <Route path="parties" element={<DashboardParties />} />
             <Route path="history" element={<DashboardHistory />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
