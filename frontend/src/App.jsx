@@ -25,6 +25,7 @@ import DashboardLayout from './pages/dashboard/DashboardLayout';
 import Overview from './pages/dashboard/Overview';
 import Orders from './pages/dashboard/Orders';
 import DashboardHistory from './pages/dashboard/History';
+import DashboardLowStock from './pages/dashboard/LowStock';
 import ComingSoon from './pages/dashboard/ComingSoon';
 
 export default function App() {
@@ -215,15 +216,7 @@ export default function App() {
           >
             <Route index element={<Overview />} />
             <Route path="orders" element={<Orders />} />
-            <Route
-              path="low-stock"
-              element={
-                <ComingSoon
-                  title="Low stock"
-                  note="The full list of every line at or below 2 sets is a separate task. The Overview's Low stock card already shows the live count."
-                />
-              }
-            />
+            <Route path="low-stock" element={<DashboardLowStock />} />
             <Route
               path="parties"
               element={

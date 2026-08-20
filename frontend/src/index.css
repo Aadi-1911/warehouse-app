@@ -2284,6 +2284,49 @@ body {
   color: var(--text-tertiary);
 }
 
+/* --- Owner Dashboard: Low Stock page (§8, §5.7, rule 56) --- */
+/* Same "plain heading, not a collapsible accordion" idiom as History's day-grouping — this list is
+   already filtered down to just the low rows, so it's short by construction and doesn't need the
+   extra interaction cost of a toggle. */
+.dash-lowstock-group + .dash-lowstock-group {
+  margin-top: 16px;
+}
+
+.dash-lowstock-group-heading {
+  margin-bottom: 6px;
+}
+
+.dash-lowstock-card {
+  padding: 4px 16px;
+}
+
+.dash-lowstock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.dash-lowstock-row + .dash-lowstock-row {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-lowstock-row-main {
+  min-width: 0;
+}
+
+.dash-lowstock-article {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.dash-lowstock-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
 .dash-coming-soon {
   padding: var(--space-6);
 }
