@@ -23,6 +23,7 @@ import ShipOrderDetail from './pages/ShipOrderDetail';
 import GoodReturns from './pages/GoodReturns';
 import DashboardLayout from './pages/dashboard/DashboardLayout';
 import Overview from './pages/dashboard/Overview';
+import Orders from './pages/dashboard/Orders';
 import ComingSoon from './pages/dashboard/ComingSoon';
 
 export default function App() {
@@ -212,15 +213,7 @@ export default function App() {
             }
           >
             <Route index element={<Overview />} />
-            <Route
-              path="orders"
-              element={
-                <ComingSoon
-                  title="Orders"
-                  note="The full orders table, filters and the order detail drawer are a separate task. Orders can be worked on now from the app's own Pack, Bill and Ship screens."
-                />
-              }
-            />
+            <Route path="orders" element={<Orders />} />
             <Route
               path="low-stock"
               element={

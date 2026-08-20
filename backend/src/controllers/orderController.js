@@ -200,6 +200,11 @@ async function listOrders(req, res) {
       partyId: true,
       party: { select: { name: true } },
       status: true,
+      // Selected (though excluded from the status-filtered worklist queries above) so an
+      // unfiltered caller — e.g. the Owner Dashboard's Orders page, which intentionally shows
+      // every order including cancelled ones (rule per the comment above) — can actually tell
+      // the two apart instead of a cancelled order rendering identically to an active one.
+      isCancelled: true,
       createdAt: true,
       // The stage timestamps ride along so a status-scoped list can show the date that actually
       // matters for ITS stage — Bill Orders (status=PACKED) shows when it was packed, Ship Order
@@ -230,6 +235,7 @@ async function listOrders(req, res) {
     partyId: o.partyId,
     partyName: o.party.name,
     status: o.status,
+    isCancelled: o.isCancelled,
     createdAt: o.createdAt,
     packedAt: o.packedAt,
     billedAt: o.billedAt,
@@ -437,6 +443,14 @@ async function billOrder(req, res) {
     select: {
       id: true,
       status: true,
+      // Was missing here (found 2026-08-20): the guard below read order.isCancelled, but nothing
+      // ever selected it at the Order level — only lineItems.isCancelled was fetched, so the
+      // field was `undefined`, and `if (order.isCancelled)` never fired for ANY order. Confirmed
+      // against the real cancelled order (cmsxewg0...) before this fix: the call bypassed this
+      // guard entirely and reached the stock-check stage (409 INSUFFICIENT_STOCK, not 409
+      // ORDER_CANCELLED) — it only avoided deducting real stock because that specific order
+      // happens to have a bundle with zero stock, not because this guard did its job.
+      isCancelled: true,
       lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true, isCancelled: true } },
     },
   });

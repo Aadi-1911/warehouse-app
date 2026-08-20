@@ -2220,6 +2220,70 @@ body {
   text-align: center;
 }
 
+/* --- Owner Dashboard: Orders page (§8) --- */
+/* Wraps the accordion toggle button and the sibling "Mark billed" button — kept as SEPARATE
+   elements (never a button nested inside the toggle button) for the same reason Pack Order's own
+   tap/adjust pair are siblings: a <button> inside a <button> is invalid HTML and browsers drop
+   the inner one's events. */
+.dash-order-row-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-order-row-header .accordion-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-order-row-header .btn-inline {
+  margin-top: 0;
+}
+
+.dash-order-status-badge {
+  margin-left: 8px;
+}
+
+.dash-order-line {
+  padding: 10px 0;
+  font-size: 12.5px;
+}
+
+.dash-order-line + .dash-order-line {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-order-line-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-order-line-label {
+  font-weight: 700;
+}
+
+.dash-order-line-cancelled .dash-order-line-label {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.dash-order-line-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* Same struck-through-name treatment as a cancelled line (.dash-order-line-cancelled above),
+   applied at the order level — never a fully-tinted card (rule 56's "small flag, not a solid
+   tint" convention extended to this row, consistent with how a cancelled line/order reads
+   everywhere else in this app: visible, struck through, not hidden or heavily recoloured). */
+.dash-order-row-cancelled .dash-order-party-name {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
 .dash-coming-soon {
   padding: var(--space-6);
 }
