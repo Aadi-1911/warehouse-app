@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { locationRevenueForPeriod } = require('../utils/locationRevenue');
 
 const prisma = new PrismaClient();
 
@@ -95,4 +96,37 @@ async function updateProfitShare(req, res) {
   res.json(location);
 }
 
-module.exports = { listLocations, createLocation, deactivateLocation, reactivateLocation, updateProfitShare };
+// GET /api/locations/revenue?period=month|six_months|fy|all — OWNER only (👑). Thin wrapper
+// around utils/locationRevenue.js's locationRevenueForPeriod — no revenue/profit math lives
+// here, same "endpoint just supplies a period name" shape as GET /api/parties/:id/revenue.
+// Deliberately no 'custom' From/To range (unlike the Parties page) — the Owner Dashboard's
+// Locations page (§8 extension, added 2026-08-20) only offers the four period chips.
+//
+// Returns EVERY location's figures in one call, not scoped to one id — locationRevenueForPeriod
+// already computes all locations in a single pass (one Stock query, one Transaction query), so
+// splitting this into a per-location endpoint would either waste that batching or force the
+// frontend to refetch on every toggle. One call per period change; toggling location client-side
+// is instant.
+//
+// OWNER only, non-negotiably — `profit` is derived from `costPrice`, which CLAUDE.md's first rule
+// says must never reach a STAFF request "under any circumstance," same reasoning as the Overview
+// KPI's own stockValue gating.
+const LOCATION_REVENUE_PERIODS = ['month', 'six_months', 'fy', 'all'];
+
+async function getLocationsRevenue(req, res) {
+  const { period } = req.query;
+  if (!LOCATION_REVENUE_PERIODS.includes(period)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `period must be one of ${LOCATION_REVENUE_PERIODS.join(', ')}`);
+  }
+  const result = await locationRevenueForPeriod(prisma, period);
+  res.json(result);
+}
+
+module.exports = {
+  listLocations,
+  createLocation,
+  deactivateLocation,
+  reactivateLocation,
+  updateProfitShare,
+  getLocationsRevenue,
+};

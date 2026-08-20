@@ -39,6 +39,15 @@ Sets `isActive: true` — reverses a deactivation.
 ### `PATCH /api/users/me/pin` 🔒 (OWNER only)
 Body: `{ newPin, currentPin? }`. Self-service PIN set/change — **the only way a PIN is ever set, never done by whoever created the account.** If `priceEditPinHash` is currently null (first-time setup), `currentPin` is not required. If a PIN already exists, `currentPin` must be provided and verified before the new one is accepted — same reasoning as a password change, prevents someone with just an active session from silently changing the PIN.
 
+### `POST /api/users/me/verify-pin` 📌 (OWNER only) — added 2026-08-21
+Body: `{ pin }`. Response: `200 { ok: true }`, or the standard PIN failure shape (`403` with `MISSING_PIN` / `INVALID_PIN` / `PIN_LOCKED` / `PIN_NOT_SET`, and `attemptsRemaining` alongside `INVALID_PIN`).
+
+**The only PIN endpoint with no side effects.** Every other PIN use in this API verifies the PIN as a precondition of a real write (price edits, factory payments/debits, password resets). The Owner Dashboard's lock screen has nothing to write — the question genuinely is just "is this the owner's PIN" — so it gets its own endpoint rather than a mutating one being repurposed with a no-op payload, which would leave the audit trail claiming a write that never happened.
+
+Verification is the `requirePin` middleware itself, unchanged: same hash comparison, same `failedPinAttempts` counter, same 5-attempt/15-minute lockout shared with every other PIN gate. A failed unlock attempt on the dashboard therefore counts toward the *same* lockout as a failed price edit — deliberately, since it's the same secret and the same brute-force surface.
+
+**Issues no token and grants no access.** The dashboard lock it serves is a privacy gate, not a security boundary: every dashboard route and every underlying endpoint is already `requireRole('OWNER')`-gated, so STAFF can never reach that data regardless. The lock exists so a legitimately-logged-in owner can blank his own screen from a bystander; the locked/unlocked state lives only in frontend memory.
+
 ### `PATCH /api/users/:id/password` 📌
 Body: `{ newPassword, pin }`. **Admin password reset — not self-service.** The `pin` verified is the *requester's own* PIN (same `req.user.id` lookup as every other PIN gate), not the target's — it proves who's making the change, not knowledge of the target's current password. This is deliberately the only way to give someone a working login again: there's no separate "forgot password" flow, and no `currentPassword` check, because the whole point is handing out a new password to someone who doesn't have (or doesn't remember) the old one.
 Resetting your own password through this endpoint is allowed — an active session plus a correct PIN is at least as strong as a typical self-service "enter current password" check.
@@ -147,6 +156,13 @@ Body: `{ profitSharePercent }` — integer `0`-`100`. `400 VALIDATION_ERROR` if 
 **No PIN**, deliberately — this is an admin setting on `Location`, the same class of action as deactivate/reactivate above, not a `costPrice`/`sellingPrice` edit. The non-negotiable PIN rule (CLAUDE.md) is specific to those two fields; it doesn't extend to every owner-only money-adjacent setting in the system.
 
 What every location's stock value/revenue basis is, unchanged: cost price is identical regardless of location. Only the business's *share* of the resulting profit differs, which is why `profitSharePercent` multiplies profit (`revenue − cost`) in `utils/locationRevenue.js`, not revenue or cost individually — see that module for the full calculation.
+
+### `GET /api/locations/revenue` 👑 — added 2026-08-20 (Owner Dashboard Locations page)
+Query: `?period=month|six_months|fy|all` — required, `400 VALIDATION_ERROR` if missing or not one of these four. No `custom` From/To range on this endpoint (unlike `GET /api/parties/:id/revenue`) — the Locations page only offers the four period chips.
+
+Response: `{ period, label, locations: [{ locationId, locationName, isActive, profitSharePercent, stockValue, revenue, profit }] }`. A thin wrapper around `utils/locationRevenue.js`'s `locationRevenueForPeriod` — no calculation logic lives in the controller. Returns **every** Location's figures in one call, not scoped to a single id: the underlying function already computes every location in one pass (one `Stock` query, one `Transaction` query), so a per-location endpoint would either waste that batching or force the frontend to refetch on every location toggle. `stockValue` is a live snapshot, unaffected by `period`; `revenue`/`profit` are scoped to the requested period.
+
+**OWNER only, non-negotiably** — `profit` is derived from `costPrice`, which must never reach a STAFF request under any circumstance (CLAUDE.md's first rule), same reasoning as the Overview KPI's `stockValue` gating.
 
 ---
 

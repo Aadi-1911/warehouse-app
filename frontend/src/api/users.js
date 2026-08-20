@@ -28,6 +28,15 @@ export function setOwnPin({ newPin, currentPin } = {}) {
   return apiFetch('/api/users/me/pin', { method: 'PATCH', body });
 }
 
+// POST /api/users/me/verify-pin -> { ok: true }, or throws with the same INVALID_PIN /
+// PIN_LOCKED / PIN_NOT_SET / MISSING_PIN codes (and INVALID_PIN's attemptsRemaining in
+// ApiError.extra) as every other PIN-gated call. The ONLY PIN endpoint with no side effects —
+// it exists for the Owner Dashboard's lock screen, which has nothing to write and shouldn't have
+// to fake a mutation just to ask "is this the right PIN?".
+export function verifyOwnPin(pin) {
+  return apiFetch('/api/users/me/verify-pin', { method: 'POST', body: { pin } });
+}
+
 // PATCH /api/users/:id/password -> the updated user (same shape as GET/POST above, no password
 // fields). Admin reset, not self-service: `pin` is the REQUESTING owner's own PIN, proving who's
 // making the change — not the target's password, which this endpoint exists precisely to

@@ -284,6 +284,31 @@ export function ClipboardIcon({ size = 17 }) {
   );
 }
 
+// A closed padlock — the Owner Dashboard's manual lock button and its locked-overlay mark
+// (added 2026-08-21). Deliberately the CLOSED shape in both places: the button's job is "make it
+// locked," and the overlay's state IS locked, so an open-shackle variant would never be correct
+// in either spot and isn't drawn.
+export function LockIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+// A map pin — Owner Dashboard nav for the Locations page (added 2026-08-20). Distinct from every
+// other rail icon (none of the existing set represents "a place"), matching size/weight to
+// GridIcon/ClipboardIcon so all five/six rail icons read as one coherent set at 17px.
+export function LocationPinIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <path d="M12 21s7-6.7 7-12a7 7 0 0 0-14 0c0 5.3 7 12 7 12z" />
+      <circle cx="12" cy="9" r="2.5" />
+    </svg>
+  );
+}
+
 // Two overlapping rectangles — the standard "copy" glyph. Used next to the GSTIN value on the
 // Owner Dashboard's Parties page (§8); swapped for CheckCircleIcon briefly after a successful
 // copy, reusing that icon's existing "confirmed" meaning rather than drawing a second checkmark.

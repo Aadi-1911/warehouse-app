@@ -2014,11 +2014,64 @@ body {
   letter-spacing: -0.01em;
 }
 
-.dash-header-date {
+/* Groups the date and the lock button as one right-hand cluster. margin-left:auto moves here
+   from .dash-header-date (which now sits inside this wrapper, so its own auto margin would have
+   pushed it away from the lock button instead of pushing the pair to the right). */
+.dash-header-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.dash-header-date {
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
+}
+
+/* --- Owner Dashboard PIN lock (added 2026-08-21) --- */
+.dash-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dash-lock-btn:hover:not(:disabled) {
+  background: var(--section-fill);
+  color: var(--text-primary);
+}
+
+.dash-lock-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The positioning context for the overlay below. */
+.dash-content-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* While locked, the content pane is clipped to the visible area rather than being allowed to
+   contribute its full scroll height. Without this, a long page (say Locations or a 30-row
+   History) would leave the absolutely-positioned overlay stretched over a tall region, putting
+   the PIN card wherever the owner happened to be scrolled. Clipping means the overlay is exactly
+   one screen and the card lands centred every time. */
+.dash-content-wrap-locked {
+  max-height: calc(100vh - 88px);
+  overflow: hidden;
 }
 
 .dash-content {
@@ -2546,6 +2599,103 @@ body {
   font-weight: 700;
   min-width: 90px;
   text-align: right;
+}
+
+/* Blur + fade, not display:none — the shapes stay faintly visible so it reads as "this screen is
+   covered," not "this screen is broken/empty". The figures themselves are unreadable at 14px.
+   pointer-events:none is belt-and-braces alongside the `inert` attribute on the same element:
+   inert already blocks interaction in every browser that supports it, this covers the rest. */
+.dash-content-locked {
+  filter: blur(14px);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+.dash-lock-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  /* Matches the app canvas rather than a dark scrim — the dashboard is a light surface, and a
+     dark modal veil here would read as an error state rather than a privacy screen. */
+  background: color-mix(in srgb, var(--section-fill) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.dash-lock-card {
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.dash-lock-mark {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-3);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+
+.dash-lock-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dash-lock-note {
+  margin: 0 0 var(--space-4);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* The PIN field/button inherit their look from .field / .btn-primary — only the alignment needs
+   overriding, since .dash-lock-card centres its text and a left-aligned label reads better. */
+.dash-lock-card .field-label {
+  text-align: left;
+}
+
+.dash-lock-card .btn-primary {
+  width: 100%;
+}
+
+.dash-lock-nopin {
+  text-align: left;
+}
+
+/* --- Owner Dashboard: Locations page (added 2026-08-20) --- */
+.dash-location-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dash-location-profit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dash-location-profit-input {
+  width: 70px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.dash-location-profit-saved {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--success-text);
 }
 
 .dash-coming-soon {

@@ -145,6 +145,28 @@ async function updateOwnPin(req, res) {
   res.json({ message: 'PIN updated successfully' });
 }
 
+// POST /api/users/me/verify-pin — OWNER only (👑) AND PIN-gated (📌, via requirePin in
+// routes/users.js). Added 2026-08-21 for the Owner Dashboard's PIN lock screen.
+//
+// The one PIN endpoint with NO side effects of its own — every other PIN use in this app
+// (price edits, factory payments/debits, password resets) verifies the PIN as a precondition of
+// a real write. The dashboard lock has nothing to write: the question genuinely is just "is this
+// the owner's PIN," so it gets its own endpoint rather than a mutating one being repurposed with
+// a no-op payload, which would make the audit story ("what was this request FOR?") a lie.
+//
+// requirePin does all the actual work — same hash comparison, same failedPinAttempts counter,
+// same 5-attempt/15-minute lockout, same INVALID_PIN/PIN_LOCKED/PIN_NOT_SET codes as everywhere
+// else. Reaching this handler at all means the PIN was correct, so it only reports success.
+//
+// NOT a security boundary, and deliberately not treated as one: the dashboard is already fully
+// protected by requireRole('OWNER') on every underlying route (a STAFF token can't read those
+// endpoints whatever the frontend renders). This is a privacy gate so the owner can blank his own
+// screen from a bystander — the lock state lives in frontend memory, and this endpoint issues no
+// token and grants no new access.
+function verifyOwnPin(req, res) {
+  res.json({ ok: true });
+}
+
 // PATCH /api/users/:id/password — OWNER only (👑) AND PIN-gated (📌, via requirePin in
 // routes/users.js), unconditionally. This is an ADMIN reset, not a self-service change: the
 // actor proves who THEY are (their own PIN, checked against req.user.id by requirePin — same
@@ -187,4 +209,12 @@ async function resetUserPassword(req, res) {
   res.json(user);
 }
 
-module.exports = { listUsers, createUser, deactivateUser, reactivateUser, updateOwnPin, resetUserPassword };
+module.exports = {
+  listUsers,
+  createUser,
+  deactivateUser,
+  reactivateUser,
+  updateOwnPin,
+  verifyOwnPin,
+  resetUserPassword,
+};
