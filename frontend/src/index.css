@@ -1638,6 +1638,17 @@ body {
    token .location-subgroup-header already uses for "this label needs to read as its own thing
    against a plain row," rather than inventing a new colour just for this. Needed now that the
    colour name no longer sits inside its own bordered card. */
+/* Wraps the colour chip and its optional low-stock badge (rule 56) so the two sit inline side by
+   side — .pack-line-tap-text (the parent) is flex-direction: column for its own reasons (chip
+   stacked above the ordered/status text), so without this the badge would stack under the chip
+   instead of beside it. Same 10px gap .color-chip-low-badge already uses for badge-next-to-pill
+   spacing, kept consistent rather than picking a new number. */
+.pack-line-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .pack-line-color-chip {
   display: inline-block;
   background: var(--section-fill);

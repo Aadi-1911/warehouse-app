@@ -12,6 +12,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { getOrder, packOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
+import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
 
 // Pack Order — Pack List detail, 07_UI_DESIGN_BRIEF.md §5.4 (both the original and "— updated"
 // sections). Tally view and "Mark shipped" are both out of scope here — Tally is a separate
@@ -21,6 +22,11 @@ import { listStock } from '../api/stock';
 // Packing no longer moves stock (backend change 2026-08-17) — this screen confirms COUNTS, and
 // the actual deduction happens later at Bill. The stock numbers shown per line are still real and
 // still worth showing: they're what staff use to decide how much they can actually pack.
+//
+// Rule 56's low-stock badge (added 2026-08-20, via the shared LOW_STOCK_THRESHOLD) reads straight
+// off this same stockByBundleId — no "before/after this order" adjustment needed, because packing
+// never touches Stock any more (see above): today's real number already IS what it'll be right up
+// until Bill, regardless of what this order itself packs.
 //
 // --- CHECKLIST-FIRST, not quantity-first (redesigned 2026-08-19) ---
 // This screen used to pre-fill every line's stepper to the ordered quantity and track which of
@@ -432,6 +438,7 @@ export default function PackOrderDetail() {
                     const isShort = state === 'short';
                     const isFull = state === 'full';
                     const stockAvail = stockByBundleId[li.bundleId] ?? 0;
+                    const low = stockAvail <= LOW_STOCK_THRESHOLD;
                     const isAdjusting = li.id in adjusting;
                     const adjustQty = adjusting[li.id] ?? confirmed[li.id] ?? ordered;
 
@@ -473,7 +480,14 @@ export default function PackOrderDetail() {
                               <StatusIcon size={18} />
                             </span>
                             <span className="pack-line-tap-text">
-                              <span className="pack-line-color-chip">{li.colorName}</span>
+                              <span className="pack-line-color-row">
+                                <span className="pack-line-color-chip">{li.colorName}</span>
+                                {/* Rule 56: a small red flag, never a fully-tinted row — same
+                                    badge-danger treatment Live Stock/New Order use, reused rather
+                                    than a new style. Shown regardless of confirm state: it's a
+                                    fact about current stock, not about this line's own progress. */}
+                                {low && <span className="badge badge-danger">Low stock</span>}
+                              </span>
                               <span className="pack-line-ordered">
                                 {isShort
                                   ? `Ordered: ${ordered} · Only ${stockAvail} in stock`
