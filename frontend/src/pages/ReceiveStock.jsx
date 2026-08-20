@@ -11,6 +11,7 @@ import { listCategories, createCategory, deactivateCategory, reactivateCategory 
 import { createBundle } from '../api/bundles';
 import { findExactMatch, getValidColors, createProduct } from '../api/products';
 import { createTransaction } from '../api/transactions';
+import { KIDS_PIECES_BY_LABEL, piecesPerSetFor } from '../utils/piecesPerSet';
 
 // Receive Stock — 07_UI_DESIGN_BRIEF.md §5.2 / §6 Round 6 refinements / 05_BUSINESS_RULES.md
 // rules 49-53.
@@ -35,12 +36,10 @@ const ADULT_SIZE_ORDER = [EXTRA_ADULT_SIZE, ...COMMON_ADULT_SIZES, ...EXTENDED_A
 // fixed property of whichever one category is chosen. Age ranges overlap deliberately (12-16
 // falls in both the 2nd and 3rd); staff pick whichever matches the actual garment, the same way
 // they'd pick "M" vs "L" — the system never resolves an age to a range programmatically.
-const KIDS_CATEGORIES = [
-  { label: '1-5yr', pieces: 5 },
-  { label: '6-16yr', pieces: 6 },
-  { label: '12-18yr', pieces: 4 },
-];
-const KIDS_PIECES_BY_LABEL = Object.fromEntries(KIDS_CATEGORIES.map((c) => [c.label, c.pieces]));
+//
+// Derived from the imported KIDS_PIECES_BY_LABEL (not a separate local table) so the chip
+// labels shown here can never drift from the actual conversion piecesPerSetFor uses.
+const KIDS_CATEGORIES = Object.entries(KIDS_PIECES_BY_LABEL).map(([label, pieces]) => ({ label, pieces }));
 
 export default function ReceiveStock() {
   // Location creation is OWNER-only on the backend (locationController.js); Factory/Color are
@@ -552,9 +551,7 @@ export default function ReceiveStock() {
     // ONE ProductSize row (the chosen category), so sizes.length would always be 1 — piece
     // count instead comes from the fixed category lookup, never from counting rows. Adult
     // sizing is untouched: sizes.length is still exactly the piece count there.
-    const piecesPerSet = lookup.product.isKids
-      ? KIDS_PIECES_BY_LABEL[lookup.product.sizes[0]?.sizeLabel] ?? 0
-      : lookup.product.sizes.length;
+    const piecesPerSet = piecesPerSetFor(lookup.product);
 
     const entry = {
       id: nextReceiptIdRef.current++,

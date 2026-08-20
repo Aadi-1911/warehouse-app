@@ -10,14 +10,15 @@
 // — once in Receive Stock's receipt table, once in the factory payable sum — where treating a
 // Kids article as sizes.length silently valued it at 1/4th to 1/6th of the truth.
 
-// Mirrors the frontend's KIDS_PIECES_BY_LABEL (ReceiveStock.jsx / NewOrder.jsx / GoodReturns.jsx)
-// exactly. A Kids article stores exactly ONE ProductSize row (the chosen category), so its piece
-// count is a fixed lookup by label, never sizes.length — that single row would otherwise report
-// "1 piece per set" for an article that really holds 4, 5 or 6 (rule 50).
+// Mirrors frontend/src/utils/piecesPerSet.js exactly (itself consolidated 2026-08-20 from four
+// separate copies in ReceiveStock.jsx/NewOrder.jsx/GoodReturns.jsx/BillOrderDetail.jsx into one
+// shared frontend module). A Kids article stores exactly ONE ProductSize row (the chosen
+// category), so its piece count is a fixed lookup by label, never sizes.length — that single row
+// would otherwise report "1 piece per set" for an article that really holds 4, 5 or 6 (rule 50).
 //
 // Duplicated on the frontend rather than imported because frontend and backend are separate
-// codebases with no shared-constants package; if these three categories ever change, every copy
-// needs updating together.
+// codebases with no shared-constants package; if these three categories ever change, both copies
+// need updating together.
 const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
 
 // Expects a Product with its `sizes` relation selected (at minimum `sizeLabel`). Returns 0 rather

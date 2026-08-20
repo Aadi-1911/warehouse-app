@@ -8,6 +8,7 @@ import { listFactories } from '../api/factories';
 import { listLocations, createLocation } from '../api/locations';
 import { listProducts, getValidColors } from '../api/products';
 import { createReturns } from '../api/returns';
+import { piecesPerSetFor } from '../utils/piecesPerSet';
 
 // Good Returns — logging whole sets a Party has sent back (05_BUSINESS_RULES.md rule 86).
 // Any authenticated role: taking returned goods at the counter is a staff job, same as receiving
@@ -45,16 +46,6 @@ const REASON_OPTIONS = [
 const REASON_REQUIRING_NOTE = 'OTHER';
 
 const REASON_LABELS = Object.fromEntries(REASON_OPTIONS.map((r) => [r.value, r.label]));
-
-// Rule 50's fixed Kids piece counts — same lookup ReceiveStock.jsx and NewOrder.jsx both keep
-// locally, for the same reason: a tiny fixed table tied to one business rule, not shared state.
-const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
-
-function piecesPerSetFor(product) {
-  return product.isKids
-    ? KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0
-    : product.sizes.length;
-}
 
 export default function GoodReturns() {
   // Location creation is OWNER-only on the backend (locationController.js) — the same gate

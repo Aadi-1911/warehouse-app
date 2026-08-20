@@ -4,12 +4,12 @@ import ScreenHeader from '../components/ScreenHeader';
 import { listStock } from '../api/stock';
 import { listProducts } from '../api/products';
 import { listFactories } from '../api/factories';
+import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
 
 // Live Stock View — 07_UI_DESIGN_BRIEF.md §5.5 / §6 Round 6-7 refinements / 05_BUSINESS_RULES.md
 // rules 56-57. Read-only: no mutations happen here, only GET requests.
 //
 // Rule 56: ≤2 sets = a small red flag/badge, never a fully-tinted row (kept subtle throughout).
-const LOW_STOCK_THRESHOLD = 2;
 
 export default function LiveStock() {
   const [stock, setStock] = useState([]);

@@ -6,6 +6,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
+import { piecesPerSetFor } from '../utils/piecesPerSet';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -38,14 +39,11 @@ function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
 }
 
-// Mirrors the backend's utils/piecesPerSet.js exactly (also duplicated in NewOrder.jsx /
-// GoodReturns.jsx / ReceiveStock.jsx) — frontend and backend are separate codebases with no
-// shared-constants package, so this small lookup gets copied rather than imported. Takes the
-// flattened productIsKids/productSizes fields getOrder() returns per line item.
-const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
-function piecesPerSetFor(li) {
-  if (li.productIsKids) return KIDS_PIECES_BY_LABEL[li.productSizes[0]?.sizeLabel] ?? 0;
-  return li.productSizes.length;
+// utils/piecesPerSet.js's piecesPerSetFor expects a product-shaped { isKids, sizes } object;
+// getOrder() returns those flattened onto the line item itself (productIsKids/productSizes), so
+// this adapts the shape at the one call site below rather than changing the shared function.
+function piecesPerSetForLine(li) {
+  return piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes });
 }
 
 export default function BillOrderDetail() {
@@ -194,7 +192,7 @@ export default function BillOrderDetail() {
       }
       group.lines.push(li);
       if (!li.isCancelled) {
-        group.total += li.qtySetsPacked * piecesPerSetFor(li) * Number(li.priceAtOrder);
+        group.total += li.qtySetsPacked * piecesPerSetForLine(li) * Number(li.priceAtOrder);
       }
       return acc;
     }, [])
