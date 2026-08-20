@@ -24,6 +24,7 @@ import GoodReturns from './pages/GoodReturns';
 import DashboardLayout from './pages/dashboard/DashboardLayout';
 import Overview from './pages/dashboard/Overview';
 import Orders from './pages/dashboard/Orders';
+import DashboardHistory from './pages/dashboard/History';
 import ComingSoon from './pages/dashboard/ComingSoon';
 
 export default function App() {
@@ -232,15 +233,7 @@ export default function App() {
                 />
               }
             />
-            <Route
-              path="history"
-              element={
-                <ComingSoon
-                  title="History"
-                  note="The filterable, day-grouped history view is a separate task. The Overview's Recent activity feed and the app's own History screen both show the same log."
-                />
-              }
-            />
+            <Route path="history" element={<DashboardHistory />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
