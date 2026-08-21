@@ -2373,9 +2373,11 @@ body {
 }
 
 /* --- Owner Dashboard: Low Stock page (§8, §5.7, rule 56) --- */
-/* Same "plain heading, not a collapsible accordion" idiom as History's day-grouping — this list is
-   already filtered down to just the low rows, so it's short by construction and doesn't need the
-   extra interaction cost of a toggle. */
+/* Factory heading: same "plain heading, not a collapsible accordion" idiom as History's
+   day-grouping — a factory rarely has more than a handful of low articles, so it doesn't need the
+   extra interaction cost of a toggle. Article level (restructured 2026-08-21) DOES collapse now,
+   reusing the shared .accordion-section.nested/.accordion-header.nested pattern (Live Stock/Pack
+   Order/Bill Order) inside this card, since one article can carry several colour/location rows. */
 .dash-lowstock-group + .dash-lowstock-group {
   margin-top: 16px;
 }
