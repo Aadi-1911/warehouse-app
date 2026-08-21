@@ -106,6 +106,12 @@ export default function Parties() {
   const [payableStatus, setPayableStatus] = useState('idle');
   const [payableError, setPayableError] = useState(null);
 
+  // Record Payment is now a three-state reveal, not two: collapsed (just a button) -> step 1
+  // (amount/date/note) -> step 2 (PinPrompt). paymentFormOpen is the new outer gate; paymentDraft
+  // (below) still distinguishes step 1 from step 2 exactly as before, so it's read as
+  // "!paymentFormOpen -> collapsed, paymentFormOpen && !paymentDraft -> step 1, paymentFormOpen
+  // && paymentDraft -> step 2" rather than two independent booleans that could disagree.
+  const [paymentFormOpen, setPaymentFormOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(() => todayIso());
   const [paymentNote, setPaymentNote] = useState('');
@@ -203,6 +209,7 @@ export default function Parties() {
     setCustomTo('');
     setCopiedGstin(false);
     setCopyError(null);
+    setPaymentFormOpen(false);
     setPaymentAmount('');
     setPaymentDate(todayIso());
     setPaymentNote('');
@@ -238,10 +245,22 @@ export default function Parties() {
     setPaymentDraft({ amount: amountNum, date: paymentDate, note: paymentNote.trim() || undefined });
   }
 
+  // Step 1 -> collapsed: an explicit way back out, so opening the form isn't a one-way trip.
+  // Clears the same fields handleSelectParty resets, so a cancelled attempt never leaves stale
+  // values behind for the next time this party's form is opened.
+  function handleCancelPayment() {
+    setPaymentFormOpen(false);
+    setPaymentAmount('');
+    setPaymentDate(todayIso());
+    setPaymentNote('');
+    setPaymentFormError(null);
+  }
+
   // Step 2: PinPrompt calls this with just the pin — throws on failure, which PinPrompt's own
   // error/lockout handling catches (see that component for why nothing is duplicated here).
   async function handleConfirmPayment(pin) {
     const created = await createPartyPayment({ partyId: selectedPartyId, ...paymentDraft, pin });
+    setPaymentFormOpen(false); // back to collapsed, not step 1 — see header comment
     setPaymentAmount('');
     setPaymentDate(todayIso());
     setPaymentNote('');
@@ -453,7 +472,11 @@ export default function Parties() {
                   <div className="dash-party-record-payment">
                     <h3 className="dash-party-record-payment-title">Record payment</h3>
                     {paymentSuccess && <p className="dash-party-payment-success">{paymentSuccess}</p>}
-                    {!paymentDraft ? (
+                    {!paymentFormOpen ? (
+                      <button type="button" className="btn-primary" onClick={() => setPaymentFormOpen(true)}>
+                        Record payment
+                      </button>
+                    ) : !paymentDraft ? (
                       <form onSubmit={handleContinueToPin}>
                         <label className="field">
                           <span className="field-label">Amount</span>
@@ -487,6 +510,9 @@ export default function Parties() {
                         )}
                         <button type="submit" className="btn-primary">
                           Continue
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={handleCancelPayment}>
+                          Cancel
                         </button>
                       </form>
                     ) : (
