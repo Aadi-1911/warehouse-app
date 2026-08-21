@@ -10,12 +10,17 @@ const {
   updateOwnPin,
   verifyOwnPin,
   resetUserPassword,
+  updateUser,
 } = require('../controllers/userController');
 
 const router = express.Router();
 
 router.get('/', requireAuth, requireRole('OWNER'), listUsers);
 router.post('/', requireAuth, requireRole('OWNER'), createUser);
+// A plain /:id route, added here (2026-08-21). No PIN — editing name/username is gated by
+// role + isPrimaryOwner alone, same as deactivate/reactivate below, not treated as sensitive as
+// price or password.
+router.patch('/:id', requireAuth, requireRole('OWNER'), updateUser);
 // Registered ahead of the /:id/* routes on principle (static path segments before dynamic
 // ones) — no actual collision today since /:id/deactivate, /:id/reactivate, and /:id/password
 // all end in a static suffix that /me/pin doesn't share, but this ordering costs nothing and

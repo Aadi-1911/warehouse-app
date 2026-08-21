@@ -209,6 +209,60 @@ async function resetUserPassword(req, res) {
   res.json(user);
 }
 
+// PATCH /api/users/:id — OWNER only (👑), no PIN. Edits name and/or username — never
+// role/password/PIN, each of those already has its own dedicated endpoint with its own gating.
+// Body is a partial: whichever of {name, username} is present gets updated, the other is left
+// untouched (not overwritten with an empty value).
+//
+// Same isPrimaryOwner restriction as resetUserPassword above (rule 97): a non-primary OWNER can
+// freely rename any STAFF account, and can rename themselves, but cannot touch a DIFFERENT
+// OWNER's name/username without isPrimaryOwner — same reasoning, this acts on an account that
+// already exists and a non-primary OWNER silently renaming another owner (least of all the
+// primary owner) is a real risk this closes, not a hypothetical.
+//
+// Username uniqueness is enforced the exact same way createUser already does it — no separate
+// pre-check, just attempt the write and let the DB's own @unique constraint reject a collision
+// via P2002. That keeps the case-sensitivity behavior identical to account creation by
+// construction (same constraint, same collation) rather than risking a second, subtly different
+// check drifting out of sync with it over time.
+async function updateUser(req, res) {
+  const { id } = req.params;
+  const { name, username } = req.body;
+
+  if (name === undefined && username === undefined) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'At least one of name or username is required');
+  }
+  if (name !== undefined && !name) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+  }
+  if (username !== undefined && !username) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'username cannot be empty');
+  }
+
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) {
+    return sendError(res, 404, 'USER_NOT_FOUND', `No user with id ${id}`);
+  }
+
+  if (target.role === 'OWNER' && target.id !== req.user.id && !req.user.isPrimaryOwner) {
+    return sendError(res, 403, 'FORBIDDEN_ROLE', 'Only the primary owner can edit another OWNER\'s details');
+  }
+
+  const data = {};
+  if (name !== undefined) data.name = name;
+  if (username !== undefined) data.username = username;
+
+  try {
+    const user = await prisma.user.update({ where: { id }, data, select: SELECT });
+    res.json(user);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_USERNAME', `Username "${username}" already exists`);
+    }
+    throw err;
+  }
+}
+
 module.exports = {
   listUsers,
   createUser,
@@ -217,4 +271,5 @@ module.exports = {
   updateOwnPin,
   verifyOwnPin,
   resetUserPassword,
+  updateUser,
 };

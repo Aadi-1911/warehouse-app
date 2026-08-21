@@ -587,6 +587,18 @@ That traded one problem for a smaller one: a real `Transfer` row IS picked up by
 
 ---
 
+### PATCH /api/users/:id — reusing resetUserPassword's isPrimaryOwner check verbatim (2026-08-21)
+
+**Why this endpoint gets no PIN, unlike password reset next to it.** The task was explicit that name/username editing sits at the same gating tier as deactivate/reactivate (role + `isPrimaryOwner`, no PIN) rather than the password-reset tier (role + `isPrimaryOwner` + PIN). Worth noting *why* that split makes sense rather than taking it on faith: a PIN in this app always marks "this specific write could let someone impersonate or lock out another person's access" (price, password) — renaming an account changes how it's labeled, not who can log into it or what it costs, so it doesn't cross that line.
+
+**The isPrimaryOwner check is copied, not reimplemented.** `resetUserPassword` already has the exact restriction this endpoint needs (rule 97: a non-primary OWNER can freely act on any STAFF account and on themselves, but not on a *different* OWNER account without `isPrimaryOwner: true`). Wrote `updateUser`'s guard as the identical condition — `target.role === 'OWNER' && target.id !== req.user.id && !req.user.isPrimaryOwner` — rather than deriving it independently, specifically so the two endpoints can't quietly drift into different definitions of "who counts as untouchable" over time.
+
+**Username uniqueness deliberately has no separate pre-check.** `createUser` doesn't pre-query for a collision — it attempts the `prisma.user.update`/`create` and catches the DB's own `@unique` constraint violation (`P2002`) as a `409`. `updateUser` does the same rather than adding a `findFirst`-style existence check first: a second, hand-written case-sensitivity rule would only be a duplicate of the DB's own collation to maintain and could drift out of sync with it (e.g. if the constraint's collation ever changed), where relying on the same constraint both endpoints already share can't.
+
+**Partial-body semantics.** Body is `any subset of { name, username }`, not a full replace — only keys actually present in `req.body` get written (`data.name = name` guarded by `name !== undefined`, not `if (name)`, since an update that only touches `username` must leave `name` completely alone rather than defaulting it to something falsy).
+
+---
+
 ## Mistakes & Fixes
 
 Every entry here follows the same five-part structure, backend or frontend, no exceptions: **(1) Original approach** — what was tried first and why it seemed right at the time. **(2) What went wrong** — the actual symptom, and how it was noticed. **(3) Diagnosis** — how the real cause was tracked down, not just guessed at. **(4) The fix** — what was actually changed. **(5) Why this fix is correct** — the reasoning for why it addresses the real cause, not just a workaround that happened to make the symptom disappear.
