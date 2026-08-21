@@ -100,6 +100,20 @@ enum TransactionCorrectionReason {
   OTHER          // escape hatch — the one value that makes `note` mandatory (app layer), same convention as GoodReturnReason.OTHER
 }
 
+// Why a Transfer needed correcting — its own reason set, not a reuse of
+// TransactionCorrectionReason: a Transfer has no Factory (WRONG_FACTORY doesn't apply — it has no
+// article-correction affordance at all, see TransferCorrection's own comment) and no price
+// (WRONG_PRICE doesn't apply — a Transfer's legs never carry a costPriceSnapshot, by design).
+// WRONG_LOCATION becomes two distinct values here, not one, because a Transfer genuinely has two
+// locations that can independently be wrong — collapsing them into one generic value would lose
+// which side the mistake was on.
+enum TransferCorrectionReason {
+  WRONG_QUANTITY
+  WRONG_FROM_LOCATION
+  WRONG_TO_LOCATION
+  OTHER  // escape hatch — makes `note` mandatory (app layer), same convention as every other reason enum here
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -119,6 +133,7 @@ model User {
   orders              Order[]            // orders this user logged (Order.createdById)
   orderAdjustments    OrderAdjustment[]  // adjustments this user made (OrderAdjustment.changedById)
   transactionCorrections TransactionCorrection[] // Receive Stock receipt corrections this OWNER made
+  transferCorrections TransferCorrection[] // Transfer corrections this OWNER made
 }
 
 model Factory {
@@ -363,6 +378,58 @@ model Transfer {
 
   // fromLocationId and toLocationId must never be equal — enforce at the application layer
   // (a "transfer" to the same location isn't a transfer, it's a no-op / data entry mistake).
+
+  // Added 2026-08-21 (Transfer Corrections). A Transfer row can play at most one of three roles in
+  // a correction: the ORIGINAL being corrected, the REVERSAL that undoes it, or the REPLACEMENT
+  // that applies the corrected values. See TransferCorrection's own comment for the full mechanism
+  // and why the reversal specifically needs its own excludable role (GET /api/history's Transfer
+  // query hides correctionAsReversal rows — they're pure bookkeeping, never a real business event
+  // a person asked for).
+  correctionAsOriginal    TransferCorrection? @relation("TransferCorrectionOriginal")
+  correctionAsReversal    TransferCorrection? @relation("TransferCorrectionReversal")
+  correctionAsReplacement TransferCorrection? @relation("TransferCorrectionReplacement")
+}
+
+model TransferCorrection {
+  // Corrects a wrongly-recorded Transfer — OWNER only, no PIN ever (a Transfer never touches
+  // price, unlike TransactionCorrection above). The original Transfer is NEVER edited or deleted
+  // (rule 9's audit-trail principle) — this row links it to a freshly-created REPLACEMENT Transfer
+  // carrying the corrected values, plus a REVERSAL Transfer that undoes the original's stock
+  // effect. Bundle/article is not correctable here (unlike the Receive Stock correction) — the
+  // task scoped this to quantity/from-location/to-location only, and a Transfer's bundleId always
+  // carries forward from the original unchanged.
+  //
+  // Mechanism, atomic in one DB transaction (see transferCorrectionController.js):
+  //   1. A REVERSAL Transfer, fromLocation/toLocation SWAPPED from the original (i.e. transferring
+  //      the same qtySets back the way it came) — reuses the exact same paired TRANSFER_OUT/
+  //      TRANSFER_IN + applyStockMovement mechanism a normal Transfer uses. Its own TRANSFER_OUT
+  //      leg (decrementing the original's DESTINATION) is where INSUFFICIENT_STOCK can surface: if
+  //      some of what arrived there has already left (sold, transferred onward, returned
+  //      elsewhere), it can't be un-transferred.
+  //   2. A REPLACEMENT Transfer at the corrected qtySets/fromLocation/toLocation — applies exactly
+  //      the way a brand-new Transfer would, including its own independent INSUFFICIENT_STOCK risk
+  //      at the corrected source.
+  //   3. This row is created, linking original -> reversal -> replacement.
+  // The reversal Transfer is real (not a bare Transaction pair) specifically so its two legs stay
+  // typed TRANSFER_OUT/TRANSFER_IN — which keeps them invisible to GET /api/transaction-corrections'
+  // sibling feature (Receive Stock's RECEIPT entries only ever look at type STOCK_IN) without any
+  // extra exclusion logic, the same "invisible by construction" property the receipt correction's
+  // own STOCK_OUT reversal already had. The one exclusion this DOES need — hiding the reversal
+  // Transfer itself from GET /api/history's ordinary Transfer listing — lives in
+  // historyController.js (`correctionAsReversal: null`), since Transfer's History entry is read
+  // from the Transfer table directly, unlike Transaction rows which are filtered by type.
+  id                     String                    @id @default(cuid())
+  originalTransferId     String                    @unique // one original can be corrected at most once — a further correction re-targets the REPLACEMENT, never the original again, same linear-chain rule as TransactionCorrection
+  originalTransfer       Transfer                  @relation("TransferCorrectionOriginal", fields: [originalTransferId], references: [id])
+  reversalTransferId     String                    @unique
+  reversalTransfer       Transfer                  @relation("TransferCorrectionReversal", fields: [reversalTransferId], references: [id])
+  replacementTransferId  String                    @unique
+  replacementTransfer    Transfer                  @relation("TransferCorrectionReplacement", fields: [replacementTransferId], references: [id])
+  reason                 TransferCorrectionReason
+  note                   String?                    // required at the app layer only when reason == OTHER
+  correctedById          String
+  correctedBy            User                       @relation(fields: [correctedById], references: [id])
+  createdAt              DateTime                   @default(now())
 }
 
 model TransactionCorrection {

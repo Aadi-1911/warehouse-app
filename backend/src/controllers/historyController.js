@@ -3,17 +3,25 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // GET /api/history — any authenticated role (🔒). A unified, read-only feed of what's happened
-// across Orders, Transfers, Good Returns, Receive Stock receipts, and Transaction Corrections,
-// newest first.
+// across Orders, Transfers, Good Returns, Receive Stock receipts, Transaction Corrections, and
+// Transfer Corrections, newest first.
 //
-// Receipts and Corrections added 2026-08-21 for the Transaction Correction feature — before that,
-// this feed had no receiving source at all (verified by reading this function directly, not
-// assumed). A receipt needed a place in this feed for two reasons: it's a real warehouse event
-// same as the others already here, and it's the only place an OWNER can find a specific receipt
-// to correct (the correction action lives on dashboard/History.jsx, so what it corrects has to be
-// visible there too). The correction ACTION itself is OWNER-gated (POST
-// /api/transaction-corrections, plus PIN when it touches price) — the ENTRIES describing a
-// receipt or a correction are not; both roles see them, same as every other entry type here.
+// Receipts and Transaction Corrections added 2026-08-21 for that feature — before that, this feed
+// had no receiving source at all (verified by reading this function directly, not assumed). A
+// receipt needed a place in this feed for two reasons: it's a real warehouse event same as the
+// others already here, and it's the only place an OWNER can find a specific receipt to correct
+// (the correction action lives on dashboard/History.jsx, so what it corrects has to be visible
+// there too). The correction ACTION itself is OWNER-gated (POST /api/transaction-corrections,
+// plus PIN when it touches price) — the ENTRIES describing a receipt or a correction are not;
+// both roles see them, same as every other entry type here.
+//
+// Transfer Corrections added the same day, as the deferred follow-up. The ordinary Transfer query
+// below now excludes REVERSAL transfers (`correctionAsReversal: null`) — a reversal is pure
+// internal bookkeeping (undoing the original's stock effect), never a real business event a
+// person asked for, so it stays invisible here even though it's a real `Transfer` row. The
+// original and the replacement both stay fully visible, same "corrected: true flag on the
+// original, the replacement reads as an ordinary fresh entry" shape the receipt correction
+// already established.
 //
 // DELIBERATELY A READ-TIME MERGE, NOT A SHARED EVENT-LOG TABLE. No such table exists in this
 // codebase and this endpoint doesn't create one. Every source below already carries the three
@@ -22,17 +30,18 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across six
+// The trade-off, stated honestly: because the sort happens in application memory across eight
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
 // real volume that's a non-issue. If it ever genuinely became one, the fix is per-source
 // pagination with a merge cursor — still not a shared table.
 //
 // costPrice never appears here, at any role: no price field of any kind is selected below.
-// priceAtOrder isn't selected either — a history feed has no need for it. The Correction entry
-// DOES read costPriceSnapshot on both the original and replacement Transaction, but only to
-// compute a boolean ("did price change") — the actual numbers are discarded before the response
-// is built, never forwarded (same "select it, use it internally, never let it reach the
-// response" shape createTransaction already uses for the same field).
+// priceAtOrder isn't selected either — a history feed has no need for it. The Transaction
+// Correction entry DOES read costPriceSnapshot on both the original and replacement Transaction,
+// but only to compute a boolean ("did price change") — the actual numbers are discarded before
+// the response is built, never forwarded (same "select it, use it internally, never let it reach
+// the response" shape createTransaction already uses for the same field). A Transfer never
+// carries a price at all, so its correction entry has no equivalent concern.
 
 // Human labels for OrderAdjustment.reason. Taken verbatim from the enum's own schema comments
 // (schema.prisma) rather than invented here, so the wording a user reads matches the wording the
@@ -75,6 +84,16 @@ const CORRECTION_REASON_LABELS = {
   OTHER: 'Other',
 };
 
+// Human labels for TransferCorrectionReason — its own enum, its own table, same reasoning as
+// CORRECTION_REASON_LABELS above: a Transfer can get its quantity or either location wrong, but
+// has no Factory and no price, so this list is deliberately shaped differently from that one.
+const TRANSFER_CORRECTION_REASON_LABELS = {
+  WRONG_QUANTITY: 'Wrong quantity',
+  WRONG_FROM_LOCATION: 'Wrong from-location',
+  WRONG_TO_LOCATION: 'Wrong to-location',
+  OTHER: 'Other',
+};
+
 // "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order shipped" without a
 // separate lookup table that would need updating every time OrderStatus gains a value.
 function statusWord(status) {
@@ -96,9 +115,9 @@ function articleLabel(lineItem) {
 }
 
 async function listHistory(req, res) {
-  // Six independent reads, run concurrently — they share no data, so there's no reason to
+  // Eight independent reads, run concurrently — they share no data, so there's no reason to
   // serialise them.
-  const [orders, adjustments, transfers, returns, receipts, corrections] = await Promise.all([
+  const [orders, adjustments, transfers, returns, receipts, corrections, transferCorrections] = await Promise.all([
     prisma.order.findMany({
       select: {
         id: true,
@@ -142,8 +161,14 @@ async function listHistory(req, res) {
     // them instead would mean pairing legs by transferId and risking two entries per transfer, to
     // arrive at data this table already holds directly.
     prisma.transfer.findMany({
+      // Excludes reversal transfers created by a Transfer Correction — pure bookkeeping, never a
+      // real business event a person asked for (see this file's own header comment).
+      where: { correctionAsReversal: null },
       select: {
         id: true,
+        bundleId: true,
+        fromLocationId: true,
+        toLocationId: true,
         createdAt: true,
         qtySets: true,
         user: { select: { name: true } },
@@ -155,6 +180,7 @@ async function listHistory(req, res) {
         },
         fromLocation: { select: { name: true } },
         toLocation: { select: { name: true } },
+        correctionAsOriginal: { select: { id: true } },
       },
     }),
 
@@ -255,6 +281,35 @@ async function listHistory(req, res) {
         },
       },
     }),
+
+    // Transfer Corrections — one entry per correction event. No price concern here at all: a
+    // Transfer never carries one.
+    prisma.transferCorrection.findMany({
+      select: {
+        id: true,
+        reason: true,
+        createdAt: true,
+        correctedBy: { select: { name: true } },
+        originalTransfer: {
+          select: {
+            qtySets: true,
+            fromLocationId: true,
+            toLocationId: true,
+            fromLocation: { select: { name: true } },
+            toLocation: { select: { name: true } },
+          },
+        },
+        replacementTransfer: {
+          select: {
+            qtySets: true,
+            fromLocationId: true,
+            toLocationId: true,
+            fromLocation: { select: { name: true } },
+            toLocation: { select: { name: true } },
+          },
+        },
+      },
+    }),
   ]);
 
   const entries = [];
@@ -336,6 +391,43 @@ async function listHistory(req, res) {
       actorName: t.user.name,
       partyName: null,
       description: `${t.qtySets} set${t.qtySets === 1 ? '' : 's'} of ${article} transferred ${t.fromLocation.name} → ${t.toLocation.name}`,
+      // Not purely display fields — read by dashboard/History.jsx's OWNER-only Correct action to
+      // pre-fill the correction form and to know whether one already exists. Same reasoning as
+      // RECEIPT's own extra fields above: any role can read these (IDs/qty/names, never price).
+      transferId: t.id,
+      corrected: t.correctionAsOriginal != null,
+      qtySets: t.qtySets,
+      bundleId: t.bundleId,
+      articleNo: t.bundle.product.articleNo,
+      colorName: t.bundle.color.name,
+      fromLocationId: t.fromLocationId,
+      toLocationId: t.toLocationId,
+      fromLocationName: t.fromLocation.name,
+      toLocationName: t.toLocation.name,
+    });
+  }
+
+  // --- Transfer Corrections: one entry per correction event, describing what changed.
+  for (const c of transferCorrections) {
+    const changes = [];
+    if (c.originalTransfer.qtySets !== c.replacementTransfer.qtySets) {
+      changes.push(`${c.originalTransfer.qtySets} → ${c.replacementTransfer.qtySets} sets`);
+    }
+    if (c.originalTransfer.fromLocationId !== c.replacementTransfer.fromLocationId) {
+      changes.push(`from ${c.originalTransfer.fromLocation.name} → ${c.replacementTransfer.fromLocation.name}`);
+    }
+    if (c.originalTransfer.toLocationId !== c.replacementTransfer.toLocationId) {
+      changes.push(`to ${c.originalTransfer.toLocation.name} → ${c.replacementTransfer.toLocation.name}`);
+    }
+
+    entries.push({
+      id: `TRANSFER_CORRECTION:${c.id}`,
+      type: 'TRANSFER_CORRECTION',
+      label: 'Corrected',
+      timestamp: c.createdAt,
+      actorName: c.correctedBy.name,
+      partyName: null,
+      description: `Transfer corrected — ${changes.join(', ')} (${TRANSFER_CORRECTION_REASON_LABELS[c.reason] ?? c.reason})`,
     });
   }
 

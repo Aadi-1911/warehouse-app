@@ -304,7 +304,7 @@ Response: `[{ id, type, qtySets, note, createdAt, userId, userName, bundleId, pr
 
 ## Transaction Corrections (fixing a wrongly-recorded Receive Stock receipt) — added 2026-08-21
 
-Corrects a `STOCK_IN` `Transaction` (a Receive Stock receipt) whose quantity, location, article/colour, and/or cost price was recorded wrong. The original `Transaction` is **never** edited or deleted (rule 9's audit-trail principle) — this creates a linked replacement instead, both visible in `GET /api/history`. Transfer corrections are a deliberately separate, deferred follow-up — this endpoint only accepts `STOCK_IN`.
+Corrects a `STOCK_IN` `Transaction` (a Receive Stock receipt) whose quantity, location, article/colour, and/or cost price was recorded wrong. The original `Transaction` is **never** edited or deleted (rule 9's audit-trail principle) — this creates a linked replacement instead, both visible in `GET /api/history`. Transfer corrections are a separate endpoint ("Transfer Corrections" below, added the same day as a deferred follow-up) — this endpoint only accepts `STOCK_IN`.
 
 ### `POST /api/transaction-corrections` 👑 (📌 required only if `costPrice` is included)
 Body: `{ transactionId, bundleId, locationId, qtySets, reason, note?, costPrice?, pin? }`
@@ -350,6 +350,30 @@ Errors: `400 SAME_LOCATION`, `400 INSUFFICIENT_STOCK`, `400 VALIDATION_ERROR`, `
 ### `GET /api/transfers` 🔒
 Query params: `?bundleId=`, `?fromLocationId=`, `?toLocationId=`, `?userId=`, `?from=`, `?to=`.
 Response: `[{ id, bundleId, productId, productArticleNo, productName, colorId, colorName, fromLocationId, fromLocationName, toLocationId, toLocationName, qtySets, note, createdAt, userId, userName }]`. Default order: newest first.
+
+---
+
+## Transfer Corrections (fixing a wrongly-recorded Transfer) — added 2026-08-21, the deferred follow-up to Transaction Corrections
+
+Corrects a `Transfer` whose quantity, from-location, or to-location was recorded wrong. Same principle as Transaction Corrections above (the original is **never** edited or deleted, both remain visible in `GET /api/history`), different shape: two paired legs per Transfer instead of one Transaction, and no price to correct at all.
+
+### `POST /api/transfer-corrections` 👑 — no PIN, ever
+Body: `{ transferId, fromLocationId, toLocationId, qtySets, reason, note? }`
+`reason ∈ TransferCorrectionReason { WRONG_QUANTITY, WRONG_FROM_LOCATION, WRONG_TO_LOCATION, OTHER }` — `note` required when `reason = OTHER`. Bundle/article is **not** correctable here — the original's `bundleId` always carries forward unchanged; this endpoint's scope is quantity and the two locations only.
+
+`fromLocationId`/`toLocationId`/`qtySets` are the corrected, full values, same "send the original's own current values for whichever fields weren't actually wrong" convention as Transaction Corrections. No PIN branch exists — unlike a receipt, a Transfer never carries a `costPriceSnapshot` on either leg (by design, see `POST /api/transfers` above), so there is nothing price-related this endpoint could ever touch.
+
+Server-side logic (atomic — a single DB transaction):
+1. Load the original `Transfer`; `404` if missing, `409 ALREADY_CORRECTED` if it already has a linked correction (re-target the *replacement* instead, same linear-chain rule as receipts).
+2. Validate the corrected locations exist and differ from each other (`400 SAME_LOCATION`, same rule `POST /api/transfers` enforces); `400` if the corrected values are identical to the original's.
+3. **Reversal**: a new `Transfer`, `fromLocation`/`toLocation` swapped from the original — i.e. moving the same `qtySets` back the way it came, reusing the identical paired-`TRANSFER_OUT`/`TRANSFER_IN` mechanism `POST /api/transfers` uses. This throws `400 INSUFFICIENT_STOCK` if some of what arrived at the original's destination has already left (sold, transferred onward, returned elsewhere) — that stock can't be un-transferred, and that rejection is correct, not a bug.
+4. **Replacement**: a new `Transfer` at the corrected `fromLocationId`/`toLocationId`/`qtySets`, applying exactly the way a brand-new Transfer would — independently `400 INSUFFICIENT_STOCK`-able at the corrected source.
+5. Create the `TransferCorrection` row linking `originalTransferId -> reversalTransferId -> replacementTransferId`, with `reason`/`note`/`correctedById`.
+
+Response: `{ id, originalTransferId, replacementTransferId, reason, note, createdAt }`
+Errors: `404 TRANSFER_NOT_FOUND` / `LOCATION_NOT_FOUND`; `400 SAME_LOCATION` / `VALIDATION_ERROR` / `INSUFFICIENT_STOCK`; `409 ALREADY_CORRECTED`.
+
+**Why the reversal is a real `Transfer`, not a bare pair of `Transaction` rows.** Its two legs stay typed `TRANSFER_OUT`/`TRANSFER_IN`, which keeps them automatically invisible to `GET /api/history`'s `RECEIPT` entries (those only ever look at `type: STOCK_IN`) — no extra exclusion logic needed, the same "invisible by construction" property the receipt correction's own `STOCK_OUT` reversal already had. The one exclusion this feature does need — hiding the reversal `Transfer` from the *ordinary* `TRANSFER` entries in `GET /api/history` — lives in that endpoint instead (`correctionAsReversal: null`), since a Transfer's History entry is read from the `Transfer` table directly, not filtered by `Transaction.type` the way receipts are.
 
 ---
 
@@ -524,27 +548,29 @@ Response `201`: an **array**, one entry per line in submission order — `[{ id,
 ### `GET /api/history` 🔒
 No query params. **Any authenticated role** — OWNER and STAFF receive the identical feed, with no role-based filtering of content. No price field of any kind (`costPrice`, `sellingPrice`, `priceAtOrder`) is selected or returned.
 
-A unified, read-only feed of what's happened across Orders, Transfers, Good Returns, Receive Stock receipts, and Transaction Corrections, newest first. **Deliberately a read-time merge across existing tables, not a shared event-log table** — no such table exists and this endpoint doesn't create one. Every source already carries a timestamp, an actor, and enough relations to describe itself, so a denormalised second copy would be a duplicate source of truth to keep in sync for no gain (same reasoning applied to the Factory payable figure and the party dues tracker).
+A unified, read-only feed of what's happened across Orders, Transfers, Good Returns, Receive Stock receipts, Transaction Corrections, and Transfer Corrections, newest first. **Deliberately a read-time merge across existing tables, not a shared event-log table** — no such table exists and this endpoint doesn't create one. Every source already carries a timestamp, an actor, and enough relations to describe itself, so a denormalised second copy would be a duplicate source of truth to keep in sync for no gain (same reasoning applied to the Factory payable figure and the party dues tracker).
 
-Six sources are merged:
+Eight sources are merged:
 1. **Order creation** — one entry per `Order`, from `Order.createdAt`/`createdBy`, with party name and line count. No `OrderAdjustment` row exists for creation itself, so this comes from `Order` directly.
 2. **`OrderAdjustment` rows** — every one, across every order: status transitions, quantity changes, short-packs. Article/colour is named whenever `lineItemId` is set.
-3. **Transfers** — one entry per `Transfer` row. Read from the `Transfer` table directly, **not** reconstructed from the paired `TRANSFER_OUT`/`TRANSFER_IN` `Transaction` rows: those are that row's stock-movement side effects (linked back via `Transaction.transferId`), not the event. One transfer = one entry, never two.
+3. **Transfers** — one entry per `Transfer` row. Read from the `Transfer` table directly, **not** reconstructed from the paired `TRANSFER_OUT`/`TRANSFER_IN` `Transaction` rows: those are that row's stock-movement side effects (linked back via `Transaction.transferId`), not the event. One transfer = one entry, never two. **Excludes reversal Transfers** created by a Transfer Correction (`correctionAsReversal: null`) — those are pure bookkeeping, never a real business event a person asked for.
 4. **Good Returns** — one entry per `PartyStockReturn` row, same choice and same reason as Transfers: the paired `STOCK_IN` `Transaction` is the side effect (linked via `Transaction.partyStockReturnId`), not the event. `priceAtReturn` is not selected — nothing forbids it (it's a selling price), a history feed just has no use for it, the same call already made for `priceAtOrder`.
 5. **Receive Stock receipts** — one entry per `STOCK_IN` `Transaction`. Added 2026-08-21 alongside Transaction Corrections — before that, this feed had no receiving source at all. A receipt needed a place here for two reasons: it's a real warehouse event same as the others, and it's the only place an OWNER can find a specific receipt to correct (the correction action lives on `dashboard/History.jsx`, so what it corrects has to be visible there too).
 6. **Transaction Corrections** — one entry per `TransactionCorrection` row, describing what changed (quantity/location/article/"cost price updated" — never the actual price numbers, see below) and the reason. The original receipt's own entry (#5) is untouched; the correction is a second, separate, linked entry, same "never edit in place" principle every other correction in this app already follows.
+7. **Transfer Corrections** — one entry per `TransferCorrection` row, describing what changed (quantity/from-location/to-location) and the reason. Same "original untouched, correction is a second linked entry" principle as #6, no price concern at all since a Transfer never carries one.
 
 Response: `[{ id, type, label, timestamp, actorName, partyName, description, ... }]`, sorted newest-first with `id` as a deterministic tiebreak (several events can share a timestamp — billing writes its stock transactions and its status adjustment in one database transaction — and without a tiebreak the order could differ between two identical requests).
 
-- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER` / `GOOD_RETURN` / `RECEIPT` / `RECEIPT_CORRECTION`, used by the client only to pick the tag's **colour**.
-- `label` is the tag's **text**: `"Placed"`, `"Packed"`, `"Billed"`, `"Shipped"`, `"Change"`, `"Cancelled"`, `"Transfer"`, `"Return"`, `"Received"`, or `"Corrected"`. Computed server-side, not derived from `type` by the client — one `type` (`ORDER_STATUS`) covers three genuinely different moments, so a per-type mapping could only render a single generic word for all of them. For `ORDER_STATUS` the label is derived from the same `OrderAdjustment.newValue` the description is built from, so the tag and the sentence can never disagree or miss a value if `OrderStatus` gains a stage.
-- `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`, `"SAI returned 3 sets of 6002 Wine into Delhi — Colour bleeding"`, `"5 sets of 6023 Beige received at Gurgaon"`, `"Receipt corrected — 5 → 3 sets, cost price updated (Wrong quantity)"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
+- `type` is one of `ORDER_PLACED` / `ORDER_STATUS` / `ORDER_ADJUSTMENT` / `TRANSFER` / `GOOD_RETURN` / `RECEIPT` / `RECEIPT_CORRECTION` / `TRANSFER_CORRECTION`, used by the client only to pick the tag's **colour**.
+- `label` is the tag's **text**: `"Placed"`, `"Packed"`, `"Billed"`, `"Shipped"`, `"Change"`, `"Cancelled"`, `"Transfer"`, `"Return"`, `"Received"`, or `"Corrected"` (shared by both correction types). Computed server-side, not derived from `type` by the client — one `type` (`ORDER_STATUS`) covers three genuinely different moments, so a per-type mapping could only render a single generic word for all of them. For `ORDER_STATUS` the label is derived from the same `OrderAdjustment.newValue` the description is built from, so the tag and the sentence can never disagree or miss a value if `OrderStatus` gains a stage.
+- `description` is the human-readable line, built server-side (e.g. `"Ashiyana order placed — 5 lines"`, `"Ashiyana: order packed"`, `"40 sets of 6044 Blue transferred Delhi → Gurgaon"`, `"SAI returned 3 sets of 6002 Wine into Delhi — Colour bleeding"`, `"5 sets of 6023 Beige received at Gurgaon"`, `"Receipt corrected — 5 → 3 sets, cost price updated (Wrong quantity)"`, `"Transfer corrected — from Delhi → Gurgaon (Wrong from-location)"`). Clients render this verbatim, so a new event type added server-side displays correctly without a frontend change.
 - `partyName` is `null` for transfers, receipts, and corrections — Good Returns always carry one.
 - `id` is prefixed by type (e.g. `TRANSFER:<cuid>`) to guarantee uniqueness across the merged sources.
 - **`RECEIPT` entries only** additionally carry `transactionId`, `corrected` (boolean), `qtySets`, `bundleId`, `locationId`, `articleNo`, `colorName`, `locationName` — read by `dashboard/History.jsx`'s OWNER-only Correct action to know which transaction to target and to pre-fill the correction form. Any role can read these fields (IDs/quantities/names, never price); the correction *action* is what's actually gated (see `POST /api/transaction-corrections` above).
-- `costPrice`/`costPriceSnapshot` is **never** in this response, for any entry type, at any role — including `RECEIPT_CORRECTION`, where price is compared server-side only to decide whether to say "cost price updated" in the description. This is the same "select it, use it internally, never forward it" discipline `POST /api/transactions` already applies when snapshotting `costPriceSnapshot` in the first place.
+- **`TRANSFER` entries only** additionally carry `transferId`, `corrected` (boolean), `qtySets`, `bundleId`, `articleNo`, `colorName`, `fromLocationId`, `toLocationId`, `fromLocationName`, `toLocationName` — same purpose as `RECEIPT`'s extra fields, for `POST /api/transfer-corrections`'s form. `bundleId`/`articleNo`/`colorName` are read-only display context here (not editable — a Transfer correction never changes the article).
+- `costPrice`/`costPriceSnapshot` is **never** in this response, for any entry type, at any role — including `RECEIPT_CORRECTION`, where price is compared server-side only to decide whether to say "cost price updated" in the description. This is the same "select it, use it internally, never forward it" discipline `POST /api/transactions` already applies when snapshotting `costPriceSnapshot` in the first place. `TRANSFER_CORRECTION` has no equivalent concern — a Transfer never carries a price.
 
-**No pagination or filtering in this first version** — the whole feed is returned. At this business's real volume that's a non-issue (currently well under 100 entries). The trade-off worth knowing: because the sort happens in application memory across six queries, this can't be paginated efficiently at the database layer; if that ever mattered, the fix is per-source pagination with a merge cursor, still not a shared table.
+**No pagination or filtering in this first version** — the whole feed is returned. At this business's real volume that's a non-issue (currently well under 100 entries). The trade-off worth knowing: because the sort happens in application memory across eight queries, this can't be paginated efficiently at the database layer; if that ever mattered, the fix is per-source pagination with a merge cursor, still not a shared table.
 
 ---
 

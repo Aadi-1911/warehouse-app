@@ -4,6 +4,7 @@ import { listLocations } from '../../api/locations';
 import { listFactories } from '../../api/factories';
 import { listProducts, getValidColors } from '../../api/products';
 import { createTransactionCorrection } from '../../api/transactionCorrections';
+import { createTransferCorrection } from '../../api/transferCorrections';
 import PinPrompt from '../../components/PinPrompt';
 
 // Owner Dashboard — History (07_UI_DESIGN_BRIEF.md §8's "History page" section, rules 58 and 70).
@@ -15,6 +16,13 @@ import PinPrompt from '../../components/PinPrompt';
 // /api/history is unfiltered and already returns every entry with no pagination (04_API_SPEC.md),
 // so this page adds no query params — it renders the full feed, whereas Overview's own activity
 // widget deliberately only shows a recent slice.
+//
+// Transfer Corrections (added 2026-08-21, same day as Transaction Corrections) — the deferred
+// follow-up. Same principle (never edit in place, atomic reversal + reapplication), no PIN branch
+// at all this time: a Transfer never touches price (costPriceSnapshot is null on both legs by
+// design), so there's nothing conditional to build here, unlike the receipt form below. Bundle/
+// article isn't correctable either — a Transfer's own scope is quantity/from-location/to-location
+// only, so this form has no article-search sub-flow.
 //
 // Transaction Corrections (added 2026-08-21) — rule 70 REVERSED, not extended. Rule 70 originally
 // read "Owner's view of History is read-only — no correction affordance on the owner surface,
@@ -43,6 +51,7 @@ const TYPE_BADGE_CLASSES = {
   GOOD_RETURN: 'badge-warning',
   RECEIPT: 'badge-accent', // stock movement, same colour role as TRANSFER
   RECEIPT_CORRECTION: 'badge-warning', // a correction, same colour role as ORDER_ADJUSTMENT/GOOD_RETURN
+  TRANSFER_CORRECTION: 'badge-warning',
 };
 
 const FALLBACK_BADGE_CLASS = 'badge-accent';
@@ -53,6 +62,13 @@ const CORRECTION_REASONS = [
   { value: 'WRONG_LOCATION', label: 'Wrong location' },
   { value: 'WRONG_FACTORY', label: 'Wrong factory' },
   { value: 'WRONG_PRICE', label: 'Wrong price' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const TRANSFER_CORRECTION_REASONS = [
+  { value: 'WRONG_QUANTITY', label: 'Wrong quantity' },
+  { value: 'WRONG_FROM_LOCATION', label: 'Wrong from-location' },
+  { value: 'WRONG_TO_LOCATION', label: 'Wrong to-location' },
   { value: 'OTHER', label: 'Other' },
 ];
 
@@ -115,6 +131,22 @@ export default function History() {
   const [colors, setColors] = useState([]);
   const [colorsStatus, setColorsStatus] = useState('idle');
   const [colorsError, setColorsError] = useState(null);
+
+  // --- Transfer correction: same "collapsed by default, one open at a time" shape as the receipt
+  // correction above, kept as its own parallel state rather than unified with it — the two forms
+  // genuinely differ (no price/PIN branch, no article search, two locations instead of one), and
+  // OrderAdjustmentReason/GoodReturnReason already established this codebase's convention of
+  // keeping superficially-similar-but-distinct reason flows separate rather than forcing one
+  // shared shape.
+  const [correctingTransferId, setCorrectingTransferId] = useState(null);
+  const [transferQtySets, setTransferQtySets] = useState('');
+  const [transferFromLocationId, setTransferFromLocationId] = useState('');
+  const [transferToLocationId, setTransferToLocationId] = useState('');
+  const [transferReason, setTransferReason] = useState('');
+  const [transferNote, setTransferNote] = useState('');
+  const [transferFormError, setTransferFormError] = useState(null);
+  const [transferDraft, setTransferDraft] = useState(null);
+  const [transferConfirmSubmitting, setTransferConfirmSubmitting] = useState(false);
 
   function loadHistory() {
     setStatus('loading');
@@ -315,6 +347,77 @@ export default function History() {
     finishCorrection();
   }
 
+  function handleStartCorrectTransfer(entry) {
+    setCorrectingTransferId(entry.transferId);
+    setTransferQtySets(String(entry.qtySets));
+    setTransferFromLocationId(entry.fromLocationId);
+    setTransferToLocationId(entry.toLocationId);
+    setTransferReason('');
+    setTransferNote('');
+    setTransferFormError(null);
+    setTransferDraft(null);
+  }
+
+  function handleCancelCorrectTransfer() {
+    setCorrectingTransferId(null);
+    setTransferDraft(null);
+    setTransferFormError(null);
+  }
+
+  // Single step of validation before a plain confirm button — no PIN branch exists for this form
+  // at all (see header comment), so this always lands on the same "Confirm correction" control,
+  // never PinPrompt.
+  function handleContinueCorrectTransfer(event) {
+    event.preventDefault();
+    setTransferFormError(null);
+    const qty = Number(transferQtySets);
+    if (!transferQtySets || !Number.isInteger(qty) || qty <= 0) {
+      setTransferFormError('Enter a valid whole number of sets, greater than 0.');
+      return;
+    }
+    if (!transferFromLocationId || !transferToLocationId) {
+      setTransferFormError('Pick both locations.');
+      return;
+    }
+    if (transferFromLocationId === transferToLocationId) {
+      setTransferFormError('From and to locations must be different.');
+      return;
+    }
+    if (!transferReason) {
+      setTransferFormError('Pick a reason.');
+      return;
+    }
+    if (transferReason === 'OTHER' && !transferNote.trim()) {
+      setTransferFormError('A note is required when the reason is Other.');
+      return;
+    }
+    setTransferDraft({
+      transferId: correctingTransferId,
+      fromLocationId: transferFromLocationId,
+      toLocationId: transferToLocationId,
+      qtySets: qty,
+      reason: transferReason,
+      note: transferNote.trim() || undefined,
+    });
+  }
+
+  async function handleConfirmTransferCorrection() {
+    setTransferConfirmSubmitting(true);
+    setTransferFormError(null);
+    try {
+      await createTransferCorrection(transferDraft);
+      setCorrectingTransferId(null);
+      setTransferDraft(null);
+      setCorrectionSuccess('Transfer corrected.');
+      setTimeout(() => setCorrectionSuccess(null), 3000);
+      loadHistory();
+    } catch (err) {
+      setTransferFormError(err.message);
+    } finally {
+      setTransferConfirmSubmitting(false);
+    }
+  }
+
   // Same "insert a heading only when the calendar day changes" grouping as staff's screen —
   // the server already sorts newest-first, this never re-sorts.
   const days = [];
@@ -361,6 +464,8 @@ export default function History() {
                 const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
                 const isReceipt = entry.type === 'RECEIPT';
                 const correcting = isReceipt && correctingId === entry.transactionId;
+                const isTransfer = entry.type === 'TRANSFER';
+                const correctingTransfer = isTransfer && correctingTransferId === entry.transferId;
                 return (
                   <div key={entry.id} className="history-row">
                     <div className="history-row-top">
@@ -597,6 +702,129 @@ export default function History() {
                               {confirmSubmitting ? 'Correcting…' : 'Confirm correction'}
                             </button>
                             <button type="button" className="link-button" onClick={() => setDraft(null)}>
+                              Change details
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isTransfer && !entry.corrected && !correctingTransfer && (
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => handleStartCorrectTransfer(entry)}
+                      >
+                        Correct
+                      </button>
+                    )}
+                    {isTransfer && entry.corrected && (
+                      <span className="muted history-row-corrected-note">Already corrected</span>
+                    )}
+
+                    {correctingTransfer && (
+                      <div className="dash-history-correction">
+                        {!transferDraft ? (
+                          <form onSubmit={handleContinueCorrectTransfer}>
+                            <label className="field">
+                              <span className="field-label">Quantity (sets)</span>
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min="1"
+                                step="1"
+                                value={transferQtySets}
+                                onChange={(e) => setTransferQtySets(e.target.value)}
+                                required
+                              />
+                            </label>
+
+                            <label className="field">
+                              <span className="field-label">From location</span>
+                              <select
+                                value={transferFromLocationId}
+                                onChange={(e) => setTransferFromLocationId(e.target.value)}
+                                required
+                              >
+                                {locations.map((l) => (
+                                  <option key={l.id} value={l.id}>
+                                    {l.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span className="field-label">To location</span>
+                              <select
+                                value={transferToLocationId}
+                                onChange={(e) => setTransferToLocationId(e.target.value)}
+                                required
+                              >
+                                {locations.map((l) => (
+                                  <option key={l.id} value={l.id}>
+                                    {l.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="field">
+                              <span className="field-label">Reason</span>
+                              <select
+                                value={transferReason}
+                                onChange={(e) => setTransferReason(e.target.value)}
+                                required
+                              >
+                                <option value="" disabled>
+                                  Select a reason
+                                </option>
+                                {TRANSFER_CORRECTION_REASONS.map((r) => (
+                                  <option key={r.value} value={r.value}>
+                                    {r.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span className="field-label">
+                                Note {transferReason === 'OTHER' ? '' : '(optional)'}
+                              </span>
+                              <input
+                                type="text"
+                                value={transferNote}
+                                onChange={(e) => setTransferNote(e.target.value)}
+                              />
+                            </label>
+
+                            {transferFormError && (
+                              <p className="error-banner" role="alert">
+                                {transferFormError}
+                              </p>
+                            )}
+
+                            <button type="submit" className="btn-primary">
+                              Continue
+                            </button>
+                            <button type="button" className="btn-secondary" onClick={handleCancelCorrectTransfer}>
+                              Cancel
+                            </button>
+                          </form>
+                        ) : (
+                          <div>
+                            {transferFormError && (
+                              <p className="error-banner" role="alert">
+                                {transferFormError}
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              onClick={handleConfirmTransferCorrection}
+                              disabled={transferConfirmSubmitting}
+                            >
+                              {transferConfirmSubmitting ? 'Correcting…' : 'Confirm correction'}
+                            </button>
+                            <button type="button" className="link-button" onClick={() => setTransferDraft(null)}>
                               Change details
                             </button>
                           </div>

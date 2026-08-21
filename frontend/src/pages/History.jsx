@@ -40,6 +40,8 @@ const TYPE_BADGE_CLASSES = {
   // History page (rule 70) renders a Correct action on top of them; this screen stays read-only.
   RECEIPT: 'badge-accent',
   RECEIPT_CORRECTION: 'badge-warning',
+  // Transfer Corrections (added the same day) — same amber role as every other correction type.
+  TRANSFER_CORRECTION: 'badge-warning',
 };
 
 // Unknown types still render — see the component comment above.
