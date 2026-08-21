@@ -46,6 +46,18 @@ enum GoodReturnReason {
   OTHER                // escape hatch — and the one value that makes `note` mandatory (app layer)
 }
 
+// Why a Receive Stock receipt (STOCK_IN Transaction) needed correcting — added 2026-08-21.
+// WRONG_FACTORY is not structurally distinct from a bare wrong-article fix: Transaction has no
+// Factory field of its own, Factory is only ever inherited via Bundle -> Product.factoryId. Kept
+// as its own value purely for a more specific audit-trail label.
+enum TransactionCorrectionReason {
+  WRONG_QUANTITY
+  WRONG_LOCATION
+  WRONG_FACTORY  // mechanically identical to a bundle correction — see comment above
+  WRONG_PRICE    // Receive Stock only — a Transfer leg's costPriceSnapshot is always null by design
+  OTHER          // escape hatch — makes `note` mandatory (app layer), same convention as GoodReturnReason.OTHER
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -234,6 +246,12 @@ model Transaction {
   transferId           String?           // populated only for TRANSFER_OUT / TRANSFER_IN — links the two paired legs of a single Transfer back to that Transfer record. Null for every other type.
   transfer             Transfer?         @relation(fields: [transferId], references: [id])
   createdAt            DateTime          @default(now())
+
+  // Added 2026-08-21 (Transaction Corrections). A STOCK_IN row can be the ORIGINAL of at most one
+  // correction — a further correction re-targets the REPLACEMENT it produced, never the original
+  // again, so the chain stays linear. See TransactionCorrection's own comment for the mechanism.
+  correctionAsOriginal    TransactionCorrection? @relation("CorrectionOriginal")
+  correctionAsReplacement TransactionCorrection? @relation("CorrectionReplacement")
 }
 
 model TransactionSizeBreakdown {
@@ -289,6 +307,36 @@ model Transfer {
 
   // fromLocationId and toLocationId must never be equal — enforce at the application layer
   // (a "transfer" to the same location isn't a transfer, it's a no-op / data entry mistake).
+}
+
+model TransactionCorrection {
+  // Corrects a wrongly-recorded Receive Stock receipt (a STOCK_IN Transaction) — OWNER only, no
+  // PIN except when the correction touches cost price (POST /api/transaction-corrections). The
+  // original Transaction is NEVER edited or deleted (rule 9's audit-trail principle) — this row
+  // instead links the original to a freshly-created REPLACEMENT Transaction carrying the
+  // corrected values.
+  //
+  // Mechanism, atomic in one DB transaction:
+  //   1. A STOCK_OUT Transaction reverses the original's exact stock effect (original bundle,
+  //      location, qtySets) — throws INSUFFICIENT_STOCK if some of that wrongly-received stock
+  //      has already left the building.
+  //   2. A STOCK_IN Transaction applies the corrected effect — corrected bundle/location/qtySets,
+  //      and either a corrected costPriceSnapshot or the ORIGINAL's own snapshot carried forward
+  //      unchanged when price wasn't what was wrong.
+  //   3. This row links original -> replacement.
+  // getFactoryPayable's SUM(STOCK_IN) excludes any Transaction with a non-null
+  // correctionAsOriginal — without that exclusion, a correction would double the payable figure
+  // rather than fix it (the reversal is a STOCK_OUT, never counted there by type alone).
+  id            String                       @id @default(cuid())
+  originalId    String                       @unique // one original can be corrected at most once — see Transaction.correctionAsOriginal
+  original      Transaction                  @relation("CorrectionOriginal", fields: [originalId], references: [id])
+  replacementId String                       @unique
+  replacement   Transaction                  @relation("CorrectionReplacement", fields: [replacementId], references: [id])
+  reason        TransactionCorrectionReason
+  note          String?                       // required at the app layer only when reason == OTHER
+  correctedById String
+  correctedBy   User                          @relation(fields: [correctedById], references: [id])
+  createdAt     DateTime                      @default(now())
 }
 
 model PartyStockReturn {

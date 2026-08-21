@@ -3,7 +3,17 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 // GET /api/history — any authenticated role (🔒). A unified, read-only feed of what's happened
-// across Orders, Transfers and Good Returns, newest first.
+// across Orders, Transfers, Good Returns, Receive Stock receipts, and Transaction Corrections,
+// newest first.
+//
+// Receipts and Corrections added 2026-08-21 for the Transaction Correction feature — before that,
+// this feed had no receiving source at all (verified by reading this function directly, not
+// assumed). A receipt needed a place in this feed for two reasons: it's a real warehouse event
+// same as the others already here, and it's the only place an OWNER can find a specific receipt
+// to correct (the correction action lives on dashboard/History.jsx, so what it corrects has to be
+// visible there too). The correction ACTION itself is OWNER-gated (POST
+// /api/transaction-corrections, plus PIN when it touches price) — the ENTRIES describing a
+// receipt or a correction are not; both roles see them, same as every other entry type here.
 //
 // DELIBERATELY A READ-TIME MERGE, NOT A SHARED EVENT-LOG TABLE. No such table exists in this
 // codebase and this endpoint doesn't create one. Every source below already carries the three
@@ -12,14 +22,17 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across four
+// The trade-off, stated honestly: because the sort happens in application memory across six
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
-// real volume that's a non-issue (the whole feed is currently ~19 entries, and even a few hundred
-// events a month stays trivial for years). If it ever genuinely became one, the fix is per-source
+// real volume that's a non-issue. If it ever genuinely became one, the fix is per-source
 // pagination with a merge cursor — still not a shared table.
 //
 // costPrice never appears here, at any role: no price field of any kind is selected below.
-// priceAtOrder isn't selected either — a history feed has no need for it.
+// priceAtOrder isn't selected either — a history feed has no need for it. The Correction entry
+// DOES read costPriceSnapshot on both the original and replacement Transaction, but only to
+// compute a boolean ("did price change") — the actual numbers are discarded before the response
+// is built, never forwarded (same "select it, use it internally, never let it reach the
+// response" shape createTransaction already uses for the same field).
 
 // Human labels for OrderAdjustment.reason. Taken verbatim from the enum's own schema comments
 // (schema.prisma) rather than invented here, so the wording a user reads matches the wording the
@@ -51,6 +64,17 @@ const RETURN_REASON_LABELS = {
   OTHER: 'Other',
 };
 
+// Human labels for TransactionCorrectionReason — a third separate table, same reasoning
+// REASON_LABELS/RETURN_REASON_LABELS above already give for keeping these apart: a different
+// enum answering a different question (why a Receive Stock receipt was wrong).
+const CORRECTION_REASON_LABELS = {
+  WRONG_QUANTITY: 'Wrong quantity',
+  WRONG_LOCATION: 'Wrong location',
+  WRONG_FACTORY: 'Wrong factory',
+  WRONG_PRICE: 'Wrong price',
+  OTHER: 'Other',
+};
+
 // "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order shipped" without a
 // separate lookup table that would need updating every time OrderStatus gains a value.
 function statusWord(status) {
@@ -72,9 +96,9 @@ function articleLabel(lineItem) {
 }
 
 async function listHistory(req, res) {
-  // Three independent reads, run concurrently — they share no data, so there's no reason to
+  // Six independent reads, run concurrently — they share no data, so there's no reason to
   // serialise them.
-  const [orders, adjustments, transfers, returns] = await Promise.all([
+  const [orders, adjustments, transfers, returns, receipts, corrections] = await Promise.all([
     prisma.order.findMany({
       select: {
         id: true,
@@ -154,6 +178,81 @@ async function listHistory(req, res) {
           },
         },
         location: { select: { name: true } },
+      },
+    }),
+
+    // Receive Stock receipts (STOCK_IN Transactions). Added 2026-08-21 alongside Transaction
+    // Corrections — this feed had NO receiving source at all before (verified by reading this
+    // function, not assumed from the task's own description of "current sources," which named
+    // Transactions as already-merged when it wasn't). A receipt needs to be visible here for two
+    // reasons: it's a real warehouse event same as a Transfer or a Good Return, and it's the only
+    // place an OWNER can find a specific receipt to correct — the correction action lives on this
+    // feed (dashboard/History.jsx), so what it corrects has to live here too. `corrections` rides
+    // along (not exposed directly) purely so the entry can flag whether it's already been
+    // corrected, without a second round trip.
+    prisma.transaction.findMany({
+      where: { type: 'STOCK_IN' },
+      select: {
+        id: true,
+        qtySets: true,
+        createdAt: true,
+        user: { select: { name: true } },
+        stock: {
+          select: {
+            bundleId: true,
+            locationId: true,
+            bundle: {
+              select: {
+                product: { select: { articleNo: true } },
+                color: { select: { name: true } },
+              },
+            },
+            location: { select: { name: true } },
+          },
+        },
+        correctionAsOriginal: { select: { id: true } },
+      },
+    }),
+
+    // Transaction Corrections — one entry per correction event. costPriceSnapshot IS selected on
+    // both sides below, but ONLY to compute a boolean ("did price change") — never forwarded into
+    // the response. This feed excludes cost price for every role, always (see this file's own
+    // header comment); a correction is no exception just because it's owner-triggered, since
+    // GET /api/history itself has no role branching at all.
+    prisma.transactionCorrection.findMany({
+      select: {
+        id: true,
+        reason: true,
+        createdAt: true,
+        correctedBy: { select: { name: true } },
+        original: {
+          select: {
+            qtySets: true,
+            costPriceSnapshot: true,
+            stock: {
+              select: {
+                bundleId: true,
+                locationId: true,
+                bundle: { select: { product: { select: { articleNo: true } }, color: { select: { name: true } } } },
+                location: { select: { name: true } },
+              },
+            },
+          },
+        },
+        replacement: {
+          select: {
+            qtySets: true,
+            costPriceSnapshot: true,
+            stock: {
+              select: {
+                bundleId: true,
+                locationId: true,
+                bundle: { select: { product: { select: { articleNo: true } }, color: { select: { name: true } } } },
+                location: { select: { name: true } },
+              },
+            },
+          },
+        },
       },
     }),
   ]);
@@ -254,6 +353,69 @@ async function listHistory(req, res) {
       // The reason is the whole point of a return entry — what came back matters less than why,
       // so it's in the sentence itself rather than a parenthetical afterthought.
       description: `${r.party.name} returned ${r.qtySets} set${r.qtySets === 1 ? '' : 's'} of ${article} into ${r.location.name} — ${reasonLabel}`,
+    });
+  }
+
+  // --- Receive Stock receipts: one entry per STOCK_IN transaction.
+  for (const t of receipts) {
+    const article = `${t.stock.bundle.product.articleNo} ${t.stock.bundle.color.name}`;
+    entries.push({
+      id: `RECEIPT:${t.id}`,
+      type: 'RECEIPT',
+      label: 'Received',
+      timestamp: t.createdAt,
+      actorName: t.user.name,
+      partyName: null,
+      description: `${t.qtySets} set${t.qtySets === 1 ? '' : 's'} of ${article} received at ${t.stock.location.name}`,
+      // Not purely display fields — read by dashboard/History.jsx's OWNER-only Correct action to
+      // pre-fill the correction form with this receipt's current values, and to know whether one
+      // already exists. Any role can read these (IDs/qty/names, never price); the correction
+      // ACTION itself is what's actually gated, both server-side (POST
+      // /api/transaction-corrections requires OWNER) and client-side (the button only renders on
+      // the dashboard's own OWNER-gated route).
+      transactionId: t.id,
+      corrected: t.correctionAsOriginal != null,
+      qtySets: t.qtySets,
+      bundleId: t.stock.bundleId,
+      locationId: t.stock.locationId,
+      articleNo: t.stock.bundle.product.articleNo,
+      colorName: t.stock.bundle.color.name,
+      locationName: t.stock.location.name,
+    });
+  }
+
+  // --- Transaction Corrections: one entry per correction event, describing what changed.
+  for (const c of corrections) {
+    const origArticle = `${c.original.stock.bundle.product.articleNo} ${c.original.stock.bundle.color.name}`;
+    const newArticle = `${c.replacement.stock.bundle.product.articleNo} ${c.replacement.stock.bundle.color.name}`;
+    const priceChanged =
+      (c.original.costPriceSnapshot != null ? c.original.costPriceSnapshot.toString() : null) !==
+      (c.replacement.costPriceSnapshot != null ? c.replacement.costPriceSnapshot.toString() : null);
+
+    const changes = [];
+    if (c.original.qtySets !== c.replacement.qtySets) {
+      changes.push(`${c.original.qtySets} → ${c.replacement.qtySets} sets`);
+    }
+    if (c.original.stock.bundleId !== c.replacement.stock.bundleId) {
+      changes.push(`${origArticle} → ${newArticle}`);
+    }
+    if (c.original.stock.locationId !== c.replacement.stock.locationId) {
+      changes.push(`${c.original.stock.location.name} → ${c.replacement.stock.location.name}`);
+    }
+    // Deliberately no numbers here — costPrice never appears in this feed, at any role (see this
+    // file's own header comment). The fact that price changed is still worth stating.
+    if (priceChanged) {
+      changes.push('cost price updated');
+    }
+
+    entries.push({
+      id: `RECEIPT_CORRECTION:${c.id}`,
+      type: 'RECEIPT_CORRECTION',
+      label: 'Corrected',
+      timestamp: c.createdAt,
+      actorName: c.correctedBy.name,
+      partyName: null,
+      description: `Receipt corrected — ${changes.join(', ')} (${CORRECTION_REASON_LABELS[c.reason] ?? c.reason})`,
     });
   }
 

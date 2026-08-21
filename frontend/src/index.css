@@ -1749,6 +1749,19 @@ body {
   font-size: 11.5px;
 }
 
+/* --- Owner Dashboard History: Transaction Correction (added 2026-08-21, rule 70 reversed) --- */
+.history-row-corrected-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 11.5px;
+}
+
+.dash-history-correction {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+}
+
 /* --- Bill Orders / Ship Order: read-only line rows inside an expanded article. Lighter than
    Pack Order's .pack-line-row (which has to host a stepper and a status icon) — here a line is
    just "colour: quantity", so it's a single flex row sharing the same divider idiom. The colour

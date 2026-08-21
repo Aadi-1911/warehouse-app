@@ -34,6 +34,12 @@ const TYPE_BADGE_CLASSES = {
   // to "something went differently than planned," which is what a return is. A transfer is
   // routine internal movement (accent/blue) — physically similar, semantically not the same event.
   GOOD_RETURN: 'badge-warning',
+  // Receive Stock receipts and their corrections (added 2026-08-21) — same colour split as above:
+  // a receipt is routine stock movement (accent, like TRANSFER), a correction is amber (like
+  // ORDER_ADJUSTMENT/GOOD_RETURN). Both roles see these entries — only the Owner Dashboard's own
+  // History page (rule 70) renders a Correct action on top of them; this screen stays read-only.
+  RECEIPT: 'badge-accent',
+  RECEIPT_CORRECTION: 'badge-warning',
 };
 
 // Unknown types still render — see the component comment above.

@@ -132,6 +132,14 @@ async function reactivateFactory(req, res) {
 // itself, not a separate figure alongside it — 05_BUSINESS_RULES.md rule 96 explains why a
 // manual "amount owed" entry has to raise the same totalOwed the transaction sum contributes
 // to, not sit next to it as something amountPayable would have to separately account for.
+//
+// correctionAsOriginal: null (added for Transaction Corrections, see transactionCorrectionController.js)
+// excludes any STOCK_IN row that has been corrected away. Without this, a correction would double
+// the payable figure rather than fix it: the correction's own reversal is a STOCK_OUT (never
+// counted here by type alone, same as any ordinary sale/shipment), so the wrongly-recorded
+// original would otherwise keep contributing its old, wrong amount forever, on top of whatever
+// the corrected replacement STOCK_IN newly contributes. Excluding the superseded original is what
+// makes a price/quantity correction actually change this figure instead of just adding to it.
 async function getFactoryPayable(req, res) {
   const { id } = req.params;
 
@@ -143,6 +151,7 @@ async function getFactoryPayable(req, res) {
   const stockInTransactions = await prisma.transaction.findMany({
     where: {
       type: 'STOCK_IN',
+      correctionAsOriginal: null,
       stock: { bundle: { product: { factoryId: id } } },
     },
     select: {

@@ -79,6 +79,27 @@ enum GoodReturnReason {
   OTHER                // escape hatch — and the one value that makes `note` mandatory (app layer)
 }
 
+// Why a Receive Stock receipt (a STOCK_IN Transaction) needed correcting — rule 65's fixed-
+// category-plus-Other shape, cashed out concretely for this specific correction type (same
+// relationship GoodReturnReason above already has to rule 65's general wording).
+//
+// WRONG_FACTORY is NOT a structurally different fix from WRONG_LOCATION/a bare wrong-article
+// case below — Transaction has no Factory field of its own; Factory is only ever inherited via
+// Bundle -> Product.factoryId. Correcting "wrong factory" and correcting "wrong article, same
+// factory" both mean exactly one thing at the data layer: re-point the transaction at a
+// different bundleId. WRONG_FACTORY is kept as its own reason value anyway, purely because
+// "picked the wrong factory's identically-numbered article" is more specific, more useful
+// information for a human reading the audit trail than a bare "wrong article" would be —
+// confirmed by reading transactionController.js/Stock's own shape directly rather than assuming
+// Factory was ever a field to correct in isolation.
+enum TransactionCorrectionReason {
+  WRONG_QUANTITY
+  WRONG_LOCATION
+  WRONG_FACTORY  // see comment above — mechanically identical to a bundle correction
+  WRONG_PRICE    // Receive Stock only — a Transfer leg's costPriceSnapshot is always null by design (see Transfer's own comment), so there is never a price to correct there
+  OTHER          // escape hatch — the one value that makes `note` mandatory (app layer), same convention as GoodReturnReason.OTHER
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -97,6 +118,7 @@ model User {
   transfers           Transfer[]
   orders              Order[]            // orders this user logged (Order.createdById)
   orderAdjustments    OrderAdjustment[]  // adjustments this user made (OrderAdjustment.changedById)
+  transactionCorrections TransactionCorrection[] // Receive Stock receipt corrections this OWNER made
 }
 
 model Factory {
@@ -277,6 +299,15 @@ model Transaction {
   createdAt            DateTime          @default(now())
 
   sizeBreakdown        TransactionSizeBreakdown[] // populated only when isCustomComposition = true
+
+  // A STOCK_IN row can be the ORIGINAL of at most one correction (correctionAsOriginal) — once
+  // corrected, a further correction re-targets the REPLACEMENT it produced, not this row again,
+  // so the correction chain is always linear, never branching. A row can also independently BE a
+  // replacement (correctionAsReplacement) if it was itself created by an earlier correction.
+  // Both are optional 1:1s, not lists — see TransactionCorrection's own header comment for why
+  // this is the mechanism getFactoryPayable relies on to stop counting a superseded receipt.
+  correctionAsOriginal    TransactionCorrection? @relation("CorrectionOriginal")
+  correctionAsReplacement TransactionCorrection? @relation("CorrectionReplacement")
 }
 
 model TransactionSizeBreakdown {
@@ -332,6 +363,39 @@ model Transfer {
 
   // fromLocationId and toLocationId must never be equal — enforce at the application layer
   // (a "transfer" to the same location isn't a transfer, it's a no-op / data entry mistake).
+}
+
+model TransactionCorrection {
+  // Corrects a wrongly-recorded Receive Stock receipt (a STOCK_IN Transaction) — OWNER only, no
+  // PIN except when the correction touches cost price (POST /api/transaction-corrections). The
+  // original Transaction is NEVER edited or deleted (rule 9's audit-trail principle, same as
+  // OrderAdjustment's own "append-only log" convention above) — this row instead links the
+  // original to a freshly-created REPLACEMENT Transaction that carries the corrected values.
+  //
+  // Mechanism, atomic in one DB transaction (see transactionCorrectionController.js):
+  //   1. A STOCK_OUT Transaction reverses the original's exact stock effect (original bundle,
+  //      original location, original qtySets) — throws INSUFFICIENT_STOCK if some of that
+  //      wrongly-received stock has already left the building (sold, transferred, returned),
+  //      which is correct: you cannot un-receive stock that's no longer on hand.
+  //   2. A STOCK_IN Transaction applies the corrected effect (corrected bundle/location/qtySets,
+  //      and either a corrected costPriceSnapshot or — when price wasn't what was wrong — the
+  //      ORIGINAL's own costPriceSnapshot carried forward unchanged, since the receipt still
+  //      happened at the same real moment, just with one detail mis-recorded).
+  //   3. This row is created, linking original -> replacement.
+  // The reversal Transaction itself isn't referenced here — its only job is zeroing out the old
+  // Stock row, and once that's done it needs no further bookkeeping. What DOES need bookkeeping
+  // is that the original must stop being counted a second time: getFactoryPayable's SUM(STOCK_IN)
+  // now excludes any Transaction with a non-null correctionAsOriginal, exactly this link.
+  id            String                       @id @default(cuid())
+  originalId    String                       @unique // one original can be corrected at most once — see Transaction.correctionAsOriginal's own comment for why a second correction re-targets the replacement instead
+  original      Transaction                  @relation("CorrectionOriginal", fields: [originalId], references: [id])
+  replacementId String                       @unique
+  replacement   Transaction                  @relation("CorrectionReplacement", fields: [replacementId], references: [id])
+  reason        TransactionCorrectionReason
+  note          String?                       // required at the app layer only when reason == OTHER, same convention as GoodReturnReason.OTHER
+  correctedById String
+  correctedBy   User                          @relation(fields: [correctedById], references: [id])
+  createdAt     DateTime                      @default(now())
 }
 
 model PartyStockReturn {
