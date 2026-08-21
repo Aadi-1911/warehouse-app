@@ -8,6 +8,7 @@ const {
   packOrder,
   billOrder,
   shipOrder,
+  updateOrderLines,
   cancelOrderLine,
   cancelOrder,
 } = require('../controllers/orderController');
@@ -23,6 +24,9 @@ router.patch('/:id/pack', requireAuth, packOrder);
 // this project has shipped a role-gate mistake before (POST /api/bundles, see LEARNING_LOG.md).
 router.patch('/:id/bill', requireAuth, requireRole('OWNER'), billOrder);
 router.patch('/:id/ship', requireAuth, shipOrder);
+// OWNER-only, no PIN — closer to "modifying committed order data" than to order creation, which
+// is deliberately any-role. Matches the existing line-cancellation endpoint's own gating below.
+router.patch('/:id/lines', requireAuth, requireRole('OWNER'), updateOrderLines);
 // Cancellation is OWNER-only, like billing — it voids real committed work and, unlike packing,
 // isn't something staff should be able to do unilaterally. The more specific /lines/... route is
 // declared before /:id/cancel purely for readability; Express matches on the full path, so their

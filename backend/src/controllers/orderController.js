@@ -664,13 +664,219 @@ async function shipOrder(req, res) {
   res.json(orderDetailToResponse(updated));
 }
 
+// Shared by updateOrderLines below AND the Cancellation endpoints further down — both are the
+// same "still-editable" window rule 23 defines: everything is locked from Billed on, since stock
+// has already moved and any change from that point would have to be a Return, not an edit.
+// Declared once, up here, so both sections read from the exact same list rather than two copies
+// that could silently drift out of sync.
+const CANCELLABLE_STATUSES = ['PLACED', 'PACKED'];
+
+// PATCH /api/orders/:id/lines — OWNER only (👑), no PIN (routes/orders.js). Edits a committed
+// order's lines: change an existing (non-cancelled) line's requested quantity, add a brand-new
+// line, or both in one request — an order edit is usually one real event, not two API calls.
+//
+// Allowed while PLACED or PACKED, same two-status window as cancellation (CANCELLABLE_STATUSES
+// above).
+//
+// If the order is currently PACKED, this edit reverts it to PLACED — logged as its own
+// OrderAdjustment (field: 'status', reason: 'ORDER_EDITED'), not a silent field flip. Safe to do
+// unconditionally: Pack no longer touches stock (2026-08-17), so nothing can double-deduct from
+// re-packing, and Bill re-checks real stock availability at bill time regardless of what pack
+// last recorded.
+//
+// qtySetsPacked reset is TOUCHED-LINE-ONLY, not whole-order (see LEARNING_LOG.md for the
+// investigation this was based on): the edited/added line's qtySetsPacked clears to 0 because a
+// packed count against the OLD quantity is meaningless once that quantity has changed, but every
+// OTHER live line's qtySetsPacked is left exactly as it was — confirmed safe because nothing in
+// the frontend reads that field for a PLACED order, and PATCH /:id/pack fully overwrites every
+// live line's value the next time this order is actually re-packed regardless.
+async function updateOrderLines(req, res) {
+  const { id } = req.params;
+  const { lineChanges, newLines } = req.body;
+
+  if (lineChanges !== undefined && !Array.isArray(lineChanges)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'lineChanges must be an array');
+  }
+  if (newLines !== undefined && !Array.isArray(newLines)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'newLines must be an array');
+  }
+  const hasLineChanges = Array.isArray(lineChanges) && lineChanges.length > 0;
+  const hasNewLines = Array.isArray(newLines) && newLines.length > 0;
+  if (!hasLineChanges && !hasNewLines) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'At least one of lineChanges or newLines must be a non-empty array');
+  }
+
+  if (hasLineChanges) {
+    const seen = new Set();
+    for (const lc of lineChanges) {
+      if (!lc || !lc.lineItemId) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in lineChanges requires a lineItemId');
+      }
+      if (!Number.isInteger(lc.qtySetsRequested) || lc.qtySetsRequested <= 0) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in lineChanges requires a positive integer qtySetsRequested');
+      }
+      if (seen.has(lc.lineItemId)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${lc.lineItemId} submitted more than once in lineChanges`);
+      }
+      seen.add(lc.lineItemId);
+    }
+  }
+  if (hasNewLines) {
+    for (const nl of newLines) {
+      if (!nl || !nl.bundleId) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in newLines requires a bundleId');
+      }
+      if (!Number.isInteger(nl.qtySetsRequested) || nl.qtySetsRequested <= 0) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in newLines requires a positive integer qtySetsRequested');
+      }
+    }
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      isCancelled: true,
+      lineItems: { select: { id: true, qtySetsRequested: true, isCancelled: true } },
+    },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!CANCELLABLE_STATUSES.includes(order.status)) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_EDITABLE',
+      `Lines can only be edited while an order is Placed or Packed — this order is ${order.status}`
+    );
+  }
+  // Same reasoning as packOrder/billOrder's own guard: dropping off a worklist is a display
+  // concern, not enforcement — a direct call must still be rejected.
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be edited');
+  }
+
+  const lineById = new Map(order.lineItems.map((li) => [li.id, li]));
+  const resolvedChanges = [];
+  if (hasLineChanges) {
+    for (const lc of lineChanges) {
+      const line = lineById.get(lc.lineItemId);
+      if (!line) {
+        return sendError(res, 404, 'LINE_ITEM_NOT_FOUND', `No line ${lc.lineItemId} on order ${id}`);
+      }
+      if (line.isCancelled) {
+        return sendError(res, 409, 'LINE_ALREADY_CANCELLED', `Line ${lc.lineItemId} is cancelled and cannot be edited`);
+      }
+      if (lc.qtySetsRequested === line.qtySetsRequested) {
+        return sendError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          `Nothing to change for line ${lc.lineItemId} — qtySetsRequested is already ${line.qtySetsRequested}`
+        );
+      }
+      resolvedChanges.push({ lineItemId: lc.lineItemId, oldQty: line.qtySetsRequested, newQty: lc.qtySetsRequested });
+    }
+  }
+
+  // priceAtOrder for a new line is resolved HERE, from Product.sellingPrice at this exact moment
+  // — never trusted from the request body, same principle createOrder already applies.
+  const resolvedNewLines = [];
+  if (hasNewLines) {
+    const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
+    const bundles = await prisma.bundle.findMany({
+      where: { id: { in: bundleIds } },
+      select: { id: true, product: { select: { sellingPrice: true } } },
+    });
+    const bundleById = new Map(bundles.map((b) => [b.id, b]));
+    for (const nl of newLines) {
+      const bundle = bundleById.get(nl.bundleId);
+      if (!bundle) {
+        return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${nl.bundleId}`);
+      }
+      if (bundle.product.sellingPrice == null) {
+        return sendError(
+          res,
+          400,
+          'UNPRICED_PRODUCT',
+          `The article for bundle ${nl.bundleId} has no selling price set yet and cannot be ordered`
+        );
+      }
+      resolvedNewLines.push({ bundleId: nl.bundleId, qtySetsRequested: nl.qtySetsRequested, priceAtOrder: bundle.product.sellingPrice });
+    }
+  }
+
+  const wasPacked = order.status === 'PACKED';
+
+  const updated = await prisma.$transaction(async (tx) => {
+    for (const change of resolvedChanges) {
+      await tx.orderLineItem.update({
+        where: { id: change.lineItemId },
+        data: { qtySetsRequested: change.newQty, qtySetsPacked: 0 },
+      });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          lineItemId: change.lineItemId,
+          changedById: req.user.id,
+          field: 'qtySetsRequested',
+          oldValue: String(change.oldQty),
+          newValue: String(change.newQty),
+          reason: 'QUANTITY_CHANGED',
+        },
+      });
+    }
+
+    for (const nl of resolvedNewLines) {
+      const created = await tx.orderLineItem.create({
+        data: { orderId: id, bundleId: nl.bundleId, qtySetsRequested: nl.qtySetsRequested, priceAtOrder: nl.priceAtOrder },
+      });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          lineItemId: created.id,
+          changedById: req.user.id,
+          field: 'qtySetsRequested',
+          // '0' — there is no real "old" value for a line that didn't exist before this request;
+          // treating "didn't exist" as "requested 0 of it" lets this render through the same
+          // qtySetsRequested-change display logic QUANTITY_CHANGED uses.
+          oldValue: '0',
+          newValue: String(nl.qtySetsRequested),
+          reason: 'LINE_ADDED',
+        },
+      });
+    }
+
+    if (wasPacked) {
+      await tx.order.update({ where: { id }, data: { status: 'PLACED', packedAt: null } });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          changedById: req.user.id,
+          field: 'status',
+          oldValue: 'PACKED',
+          newValue: 'PLACED',
+          reason: 'ORDER_EDITED',
+        },
+      });
+    }
+
+    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  });
+
+  res.json(orderDetailToResponse(updated));
+}
+
 // --- Cancellation (added 2026-08-18) ---------------------------------------------------------
 // Both endpoints below are OWNER ONLY (routes/orders.js), and both are allowed only while the
-// order is PLACED or PACKED. From Billed onward rule 23's hard lock applies: stock has already
-// moved and the order is immutable, so a cancellation there would have to be a Return, not an
-// edit. Neither endpoint ever rewrites a quantity — qtySetsRequested/qtySetsPacked stay exactly
-// as they were, so the original ask and count remain readable forever; only a flag flips.
-const CANCELLABLE_STATUSES = ['PLACED', 'PACKED'];
+// order is PLACED or PACKED (CANCELLABLE_STATUSES, declared above updateOrderLines — shared with
+// it since it's the identical editability window). From Billed onward rule 23's hard lock
+// applies: stock has already moved and the order is immutable, so a cancellation there would
+// have to be a Return, not an edit. Neither endpoint ever rewrites a quantity —
+// qtySetsRequested/qtySetsPacked stay exactly as they were, so the original ask and count remain
+// readable forever; only a flag flips.
 
 // PATCH /api/orders/:id/lines/:lineItemId/cancel — OWNER only (👑).
 async function cancelOrderLine(req, res) {
@@ -774,4 +980,14 @@ async function cancelOrder(req, res) {
   res.json(orderDetailToResponse(updated));
 }
 
-module.exports = { createOrder, listOrders, getOrder, packOrder, billOrder, shipOrder, cancelOrderLine, cancelOrder };
+module.exports = {
+  createOrder,
+  listOrders,
+  getOrder,
+  packOrder,
+  billOrder,
+  shipOrder,
+  updateOrderLines,
+  cancelOrderLine,
+  cancelOrder,
+};

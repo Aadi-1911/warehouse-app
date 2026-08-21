@@ -59,6 +59,21 @@ enum OrderAdjustmentReason {
                           // PATCH /api/orders/:id/pack whenever qtySetsPacked lands below qtySetsRequested for
                           // a line (rule 64's clamp-not-block). The only reason value a human never chooses —
                           // every other value is picked by whoever's logging a correction by hand.
+  QUANTITY_CHANGED       // "Quantity changed" — added 2026-08-21 for PATCH /api/orders/:id/lines. Deliberately
+                          // separate from QUANTITY_REDUCED: that value's name (and every comment near it) only
+                          // ever describes a decrease, but an order-line edit can go either direction, and a
+                          // symmetric value beats silently reusing a decrease-only one for an increase.
+  LINE_ADDED              // "Line added" — added 2026-08-21, same endpoint. A brand-new line has no real "old"
+                          // value; the adjustment for it records oldValue: '0' (nothing requested before this
+                          // line existed) so it renders through the same qtySetsRequested-change display logic
+                          // QUANTITY_CHANGED uses, with no separate field name needed for "created vs changed".
+  ORDER_EDITED            // "Order edited — reverted to Placed for re-packing" — added 2026-08-21, same
+                          // endpoint. Covers the order-level `status` adjustment written when an edit to a
+                          // PACKED order reverts it to PLACED (03_DATABASE_SCHEMA.md §2's "routine forward
+                          // transition" carve-out only excuses PLACED→PACKED/BILLED→SHIPPED etc from needing a
+                          // reason — a BACKWARD transition is not that, and OrderAdjustment has no `note` field
+                          // to fall back on OTHER with an explanation, so this is a real, named category rather
+                          // than an opaque escape hatch).
   OTHER                  // escape hatch, same reasoning as rule 65's own "Other" category
 }
 
@@ -516,7 +531,10 @@ model Order {
   createdById String            // whoever logged the order — live capture (rule 25) or the "Log Order from Photo" fallback (rule 26)
   createdBy   User              @relation(fields: [createdById], references: [id])
   createdAt   DateTime          @default(now())
-  packedAt    DateTime?         // set when status transitions to PACKED
+  packedAt    DateTime?         // set when status transitions to PACKED, cleared back to null if PATCH
+                                 // /api/orders/:id/lines reverts a PACKED order back to PLACED (added
+                                 // 2026-08-21) — the field's own meaning ("set when...PACKED") stops being
+                                 // true the moment the order isn't PACKED any more, so it doesn't stay stamped
   billedAt    DateTime?         // set when status transitions to BILLED
   shippedAt   DateTime?         // set when status transitions to SHIPPED
   // Deliberately a separate flag rather than a fifth OrderStatus value (added 2026-08-18):
@@ -546,7 +564,7 @@ model OrderLineItem {
   bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at BILLING (rule 64's FIFO-across-locations), not at order time. (Was decided at packing until 2026-08-17, when deduction moved to Bill.)
   bundle           Bundle            @relation(fields: [bundleId], references: [id])
   qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
-  qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for.
+  qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for. PATCH /api/orders/:id/lines (added 2026-08-21) resets this to 0 on the specific line it edits or creates — never on every OTHER live line on the order — since a correction against the OLD quantity is meaningless once that quantity has changed, but an untouched line's real packed count is genuine historical data with nowhere else it's recorded. Safe to leave untouched lines exactly as they are: nothing in the frontend reads this field for a PLACED order (Pack Order's own checklist never rehydrates from it — see LEARNING_LOG.md — and the Owner Dashboard explicitly shows "Not yet packed" instead of this value whenever status is PLACED), and the next real PATCH /:id/pack call fully overwrites every live line's value regardless, touched or not.
   // Cancelling a line NEVER rewrites qtySetsRequested/qtySetsPacked — those stay as the real
   // historical record of what was asked for and what was counted. Only this flag changes, which
   // is what keeps a cancelled line legible in History and on screen rather than silently zeroed.

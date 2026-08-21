@@ -466,6 +466,24 @@ Server-side logic:
 Response: full order, same shape as `GET /api/orders/:id`.
 Errors: `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PACKED`, `409 INSUFFICIENT_STOCK`.
 
+### `PATCH /api/orders/:id/lines` 👑 — added 2026-08-21
+Body: `{ lineChanges?: [{ lineItemId, qtySetsRequested }], newLines?: [{ bundleId, qtySetsRequested }] }` — at least one of the two arrays must be present and non-empty. Supports changing an existing line's quantity and adding a brand-new line in the same request, since a real order edit is usually one event, not two API calls.
+
+**OWNER only, no PIN** — closer to "modifying committed order data" than to order creation (which is deliberately any-role), matching the gating `PATCH /api/orders/:id/lines/:lineItemId/cancel` already uses.
+
+Allowed only while the order is `PLACED` or `PACKED` (`409 ORDER_NOT_EDITABLE` otherwise, same two-status window as the cancellation endpoints below) — `Billed` on is rule 23's hard lock; a change from there would have to be a Return, not an edit. `409 ORDER_CANCELLED` if the whole order is already cancelled.
+
+Server-side logic:
+1. Each `lineChanges` entry must reference a live (non-cancelled) line on this order (`404 LINE_ITEM_NOT_FOUND` / `409 LINE_ALREADY_CANCELLED`) with a positive-integer `qtySetsRequested` that actually differs from the current value (`400 VALIDATION_ERROR` if it matches — nothing to change).
+2. Each `newLines` entry's `priceAtOrder` is resolved server-side from `Product.sellingPrice` **at the moment of this request** — never trusted from the request body, same principle `POST /api/orders` already applies (`400 UNPRICED_PRODUCT` if the article has no selling price set).
+3. For every changed or added line, `qtySetsPacked` resets to `0` — **only on that line**, not on every other live line on the order. A packed count against the OLD quantity is meaningless once the quantity has changed; a different line's real packed count is untouched historical data with nowhere else it's recorded. This is safe specifically because nothing in the frontend reads `qtySetsPacked` for a `PLACED` order, and the next real `PATCH /:id/pack` call fully overwrites every live line's value regardless (see `LEARNING_LOG.md` for the investigation this was based on).
+4. One `OrderAdjustment` per changed line (`field: "qtySetsRequested"`, `reason: QUANTITY_CHANGED`) and per added line (`field: "qtySetsRequested"`, `oldValue: "0"`, `reason: LINE_ADDED` — a new line has no real "old" value, so "didn't exist" is recorded as "requested 0").
+5. **If the order was `PACKED`, this reverts it to `PLACED`** (`packedAt` cleared to `null`) and writes one more `OrderAdjustment` (`field: "status"`, `oldValue: "PACKED"`, `newValue: "PLACED"`, `reason: ORDER_EDITED` — a logged exception, not routine progress, since it's a backward transition). Safe unconditionally: Pack no longer touches stock, so nothing can double-deduct from re-packing, and Bill re-checks real stock availability regardless of what pack last recorded. If the order was already `PLACED`, no status adjustment is written.
+6. All of the above happens atomically in one transaction.
+
+Response: full order, same shape as `GET /api/orders/:id`.
+Errors: `400 VALIDATION_ERROR`, `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `404 LINE_ITEM_NOT_FOUND`, `404 BUNDLE_NOT_FOUND`, `400 UNPRICED_PRODUCT`, `409 ORDER_NOT_EDITABLE`, `409 ORDER_CANCELLED`, `409 LINE_ALREADY_CANCELLED`.
+
 ### `PATCH /api/orders/:id/lines/:lineItemId/cancel` 👑
 No body. **OWNER only** — cancelling voids real committed work and isn't something staff should do unilaterally.
 
