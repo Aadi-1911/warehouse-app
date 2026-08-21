@@ -7,6 +7,7 @@ const {
   deactivateParty,
   reactivateParty,
   getPartyRevenue,
+  getPartyPayable,
 } = require('../controllers/partyController');
 
 const router = express.Router();
@@ -27,5 +28,9 @@ router.patch('/:id/reactivate', requireAuth, requireRole('OWNER'), reactivatePar
 // (utils/revenue.js's computeRevenue), just scoped to one party. Owner Dashboard's Parties page
 // (§8) is the only caller.
 router.get('/:id/revenue', requireAuth, requireRole('OWNER'), getPartyRevenue);
+// OWNER only, PIN not required — matches GET /api/factories/:id/payable's own gating (reading a
+// figure isn't itself a financial action; PIN is reserved for the actual writes on
+// /api/party-payments). Party Payables, added 2026-08-21.
+router.get('/:id/payable', requireAuth, requireRole('OWNER'), getPartyPayable);
 
 module.exports = router;

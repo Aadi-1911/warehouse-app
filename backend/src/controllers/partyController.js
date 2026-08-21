@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
-const { revenueForPeriod, VALID_PERIODS } = require('../utils/revenue');
+const { revenueForPeriod, computeRevenue, VALID_PERIODS } = require('../utils/revenue');
+const { piecesPerSetFor } = require('../utils/piecesPerSet');
 
 const prisma = new PrismaClient();
 
@@ -166,4 +167,73 @@ async function getPartyRevenue(req, res) {
   res.json({ revenue: result.revenue, period: result.period, label: result.label });
 }
 
-module.exports = { listParties, createParty, deactivateParty, reactivateParty, getPartyRevenue };
+// GET /api/parties/:id/payable — OWNER only (👑), PIN NOT required (matching
+// GET /api/factories/:id/payable's own gating — reading a figure isn't itself a financial
+// action; PIN is reserved for POST/PATCH/DELETE below, the actual writes). Party Payables, the
+// mirror of Factory Payables in the reverse direction (added 2026-08-21).
+//
+// Amount Due = totalBilled − totalPaid − totalReturned:
+//   - totalBilled reuses utils/revenue.js's computeRevenue(prisma, { partyId, from: null, to:
+//     null }) DIRECTLY — not reimplemented. That call already computes exactly "SUM over
+//     non-cancelled BILLED+SHIPPED orders/lines for this party, all-time, per-piece basis"
+//     (rule 98), which is exactly what "totalBilled" means here.
+//   - totalPaid is SUM(PartyPayment.amount) for this party.
+//   - totalReturned is SUM(qtySets × piecesPerSet × priceAtReturn) over this party's
+//     PartyStockReturn rows — rule 86's corrected, per-piece formula. This is that formula's
+//     first real caller anywhere in the codebase; verified against real hand-computed numbers
+//     when this endpoint was built, not just smoke-tested (see LEARNING_LOG.md).
+//
+// Computed fresh from live rows on every call, no caching — same principle as every other money
+// figure in this system (rules 60, 81, 96, 98).
+async function getPartyPayable(req, res) {
+  const { id } = req.params;
+
+  const party = await prisma.party.findUnique({ where: { id } });
+  if (!party) {
+    return sendError(res, 404, 'PARTY_NOT_FOUND', `No party with id ${id}`);
+  }
+
+  const [totalBilled, payments, returns] = await Promise.all([
+    computeRevenue(prisma, { partyId: id, from: null, to: null }),
+    prisma.partyPayment.findMany({
+      where: { partyId: id },
+      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      // Two-level sort, same reasoning as the factory payable: `date` is the real-world order a
+      // backdated entry belongs in, `createdAt` (never user-edited) tiebreaks entries sharing a
+      // date by which was actually recorded first.
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    }),
+    prisma.partyStockReturn.findMany({
+      where: { partyId: id },
+      select: {
+        qtySets: true,
+        priceAtReturn: true,
+        bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+      },
+    }),
+  ]);
+
+  const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const totalReturned = returns.reduce(
+    (sum, r) => sum + r.qtySets * piecesPerSetFor(r.bundle.product) * Number(r.priceAtReturn),
+    0
+  );
+
+  res.json({
+    partyId: id,
+    totalBilled,
+    totalPaid,
+    totalReturned,
+    amountDue: totalBilled - totalPaid - totalReturned,
+    payments,
+  });
+}
+
+module.exports = {
+  listParties,
+  createParty,
+  deactivateParty,
+  reactivateParty,
+  getPartyRevenue,
+  getPartyPayable,
+};

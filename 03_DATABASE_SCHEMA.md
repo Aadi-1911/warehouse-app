@@ -192,6 +192,7 @@ model Party {
 
   transactions      Transaction[]
   partyStockReturns PartyStockReturn[]
+  payments          PartyPayment[] // added 2026-08-21, Party Payables — see PartyPayment below
 }
 
 model Stock {
@@ -377,6 +378,35 @@ model FactoryDebit {
 //                                + SUM(FactoryDebit.amount for that factory)
 //                                − SUM(FactoryPayment.amount for that factory).
 // Same lightweight, computed-not-formal pattern as the Phase 2.5 party-dues tracker — not a formal ledger/invoice system.
+
+model PartyPayment {
+  // The mirror of FactoryPayment, reverse direction — money a Party pays TO the business,
+  // reducing what they owe (Party Payables, added 2026-08-21). Identical shape and the same
+  // "lightweight, not a formal ledger" framing (rules 81/96): same wasEdited flag (explicit,
+  // set true on any edit, never reset), same createdById/createdAt/updatedAt pattern.
+  //
+  // No "debit" mirror needed here, unlike Factory: FactoryDebit exists specifically because a
+  // factory's totalOwed had no way to represent real pre-app debt with no STOCK_IN history
+  // behind it (rule 96). A Party's side of that problem is already solved — Good Returns
+  // (PartyStockReturn) already serve as the "something reduces what's owed, with no Order behind
+  // it" case, via the totalReturned term in the Amount Due formula below.
+  id          String   @id @default(cuid())
+  partyId     String
+  party       Party    @relation(fields: [partyId], references: [id])
+  amount      Decimal
+  date        DateTime
+  note        String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wasEdited   Boolean  @default(false)
+}
+// Amount Due from a Party = totalBilled (utils/revenue.js's computeRevenue(prisma, { partyId }),
+//                                        all-time, BILLED+SHIPPED, non-cancelled — rule 98's basis)
+//                            − SUM(PartyPayment.amount for that party)
+//                            − SUM(PartyStockReturn.qtySets × piecesPerSet × priceAtReturn for that party) (rule 86)
+// Same lightweight, computed-fresh-every-call pattern as the Factory payable — no caching, no
+// stored aggregate, recomputed from live rows on every request.
 ```
 
 ### 1.1 Hard Rules to Enforce in Application Code (not expressible in schema alone)

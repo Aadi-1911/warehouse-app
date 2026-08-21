@@ -42,3 +42,11 @@ export function getPartyRevenue(id, { period, from, to } = {}) {
   const query = params.toString();
   return apiFetch(`/api/parties/${id}/revenue${query ? `?${query}` : ''}`);
 }
+
+// GET /api/parties/:id/payable -> { partyId, totalBilled, totalPaid, totalReturned, amountDue,
+// payments: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }] }. OWNER only, PIN not
+// required (reading isn't itself a financial action — see api/partyPayments.js for the writes).
+// Party Payables (added 2026-08-21), the mirror of Factory Payables in the reverse direction.
+export function getPartyPayable(id) {
+  return apiFetch(`/api/parties/${id}/payable`);
+}

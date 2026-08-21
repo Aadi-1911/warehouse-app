@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { CopyIcon, CheckCircleIcon } from '../../components/icons';
-import { listParties, getPartyRevenue } from '../../api/parties';
+import { listParties, getPartyRevenue, getPartyPayable } from '../../api/parties';
+import { createPartyPayment } from '../../api/partyPayments';
 import { listOrders } from '../../api/orders';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../utils/orderStatus';
 import { copyToClipboard } from '../../utils/clipboard';
+import PinPrompt from '../../components/PinPrompt';
 
 // Owner Dashboard — Parties (07_UI_DESIGN_BRIEF.md §8's "Parties page" section, rule 98).
 // Desktop-only per rule 15 and §8's own note — no mobile/responsive version is attempted here.
@@ -26,6 +28,18 @@ import { copyToClipboard } from '../../utils/clipboard';
 // 6 months" and the custom From/To range were both added to revenue.js itself (not here), per
 // rule 98's "one calculation path" requirement — this page just supplies a period name or a
 // from/to month pair, same as the Overview KPI supplies a period name.
+//
+// Party Payables (added 2026-08-21) — the mirror of Factory Payables, reverse direction. Same
+// "no revenue/profit math in this file" rule: amountDue = totalBilled − totalPaid − totalReturned
+// is computed entirely server-side (GET /api/parties/:id/payable), this page only renders it.
+//
+// "Record payment" is a two-step reveal rather than one combined form: amount/date/note first,
+// then PinPrompt for the actual PIN + submit. This is what lets PinPrompt be reused completely
+// unmodified — it's a real <form> of its own (just the PIN field + button), so it can't be
+// nested inside a second <form> the way the three older inline PIN prompts (ArticlePricing,
+// FactoryPayables) put the PIN field alongside other required inputs in ONE form. Staging the
+// other fields first, then swapping to PinPrompt only once they're valid, sidesteps that
+// entirely rather than fighting it.
 
 const PERIOD_CHIPS = [
   { value: 'month', label: 'This month' },
@@ -44,6 +58,20 @@ function formatDate(iso) {
 
 // Same tiny helper DashboardLayout.jsx already has for the owner's own rail avatar — duplicated
 // rather than extracted for a two-line pure function used in exactly two places.
+// Local calendar date, NOT toISOString().slice(0, 10) — that reads UTC, which is silently the
+// wrong day for a chunk of every IST day (this app's real timezone): e.g. 00:44 IST on 21 Aug is
+// still 19:14 UTC on 20 Aug, so an ISO-string default would pre-fill the Record Payment date
+// picker with yesterday. Caught by testing this exact form for real, not spotted by inspection —
+// see LEARNING_LOG.md. getFullYear/getMonth/getDate all read local time, matching what
+// <input type="date"> shows and what a user actually means by "today."
+function todayIso() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function initialsOf(name) {
   return name
     .split(/\s+/)
@@ -73,6 +101,19 @@ export default function Parties() {
 
   const [copiedGstin, setCopiedGstin] = useState(false);
   const [copyError, setCopyError] = useState(null);
+
+  const [payable, setPayable] = useState(null);
+  const [payableStatus, setPayableStatus] = useState('idle');
+  const [payableError, setPayableError] = useState(null);
+
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(() => todayIso());
+  const [paymentNote, setPaymentNote] = useState('');
+  // Staged { amount, date, note } once the amount/date/note step is confirmed valid — its
+  // presence is what switches the form over to PinPrompt. null means still on the details step.
+  const [paymentDraft, setPaymentDraft] = useState(null);
+  const [paymentFormError, setPaymentFormError] = useState(null);
+  const [paymentSuccess, setPaymentSuccess] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +158,23 @@ export default function Parties() {
     };
   }, [selectedPartyId, revenuePeriod, customFrom, customTo]);
 
+  // Party Payables — only depends on which party is selected. Extracted as a named function
+  // (not just inlined in the effect) so the "record payment" success handler can call the exact
+  // same reload rather than duplicating the fetch.
+  function loadPayable(partyId) {
+    setPayableStatus('loading');
+    setPayableError(null);
+    return getPartyPayable(partyId)
+      .then((data) => setPayable(data))
+      .catch((err) => setPayableError(err.message))
+      .finally(() => setPayableStatus('loaded'));
+  }
+
+  useEffect(() => {
+    if (!selectedPartyId) return;
+    loadPayable(selectedPartyId);
+  }, [selectedPartyId]);
+
   // Orders and bills — only depends on which party is selected, not on the revenue period.
   useEffect(() => {
     if (!selectedPartyId) return;
@@ -145,6 +203,12 @@ export default function Parties() {
     setCustomTo('');
     setCopiedGstin(false);
     setCopyError(null);
+    setPaymentAmount('');
+    setPaymentDate(todayIso());
+    setPaymentNote('');
+    setPaymentDraft(null);
+    setPaymentFormError(null);
+    setPaymentSuccess(null);
   }
 
   function handleCustomFromChange(e) {
@@ -155,6 +219,39 @@ export default function Parties() {
   function handleCustomToChange(e) {
     setCustomTo(e.target.value);
     setRevenuePeriod('custom');
+  }
+
+  // Step 1 of Record Payment: validate amount/date, then stage them — this is what reveals
+  // PinPrompt (see the header comment on why this is two steps, not one combined form).
+  function handleContinueToPin(event) {
+    event.preventDefault();
+    setPaymentFormError(null);
+    const amountNum = Number(paymentAmount);
+    if (!paymentAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+      setPaymentFormError('Enter a valid amount greater than 0.');
+      return;
+    }
+    if (!paymentDate) {
+      setPaymentFormError('Pick a date.');
+      return;
+    }
+    setPaymentDraft({ amount: amountNum, date: paymentDate, note: paymentNote.trim() || undefined });
+  }
+
+  // Step 2: PinPrompt calls this with just the pin — throws on failure, which PinPrompt's own
+  // error/lockout handling catches (see that component for why nothing is duplicated here).
+  async function handleConfirmPayment(pin) {
+    const created = await createPartyPayment({ partyId: selectedPartyId, ...paymentDraft, pin });
+    setPaymentAmount('');
+    setPaymentDate(todayIso());
+    setPaymentNote('');
+    setPaymentDraft(null);
+    setPaymentSuccess(`Payment of ${inr(created.amount)} recorded.`);
+    setTimeout(() => setPaymentSuccess(null), 3000);
+    // Refetch so amountDue/totalPaid/the payment list all reflect the new entry — the same
+    // "trust a fresh server computation over local arithmetic" rule the Locations page's
+    // profit-share save already established.
+    await loadPayable(selectedPartyId);
   }
 
   async function handleCopyGstin(value) {
@@ -304,6 +401,112 @@ export default function Parties() {
                 <>
                   <div className="dash-party-summary-value">{inr(revenue.revenue)}</div>
                   <div className="muted dash-party-summary-label">{revenue.label}</div>
+                </>
+              )}
+            </div>
+
+            <div className="dash-card">
+              <h2 className="dash-section-title">Party Payables</h2>
+              {payableError ? (
+                <p className="error-banner" role="alert">
+                  Could not load payables: {payableError}
+                </p>
+              ) : payableStatus !== 'loaded' || !payable ? (
+                <p className="muted dash-empty">Loading…</p>
+              ) : (
+                <>
+                  <div className="stat-row">
+                    <div className="stat-card">
+                      <span className="stat-value">{inr(payable.totalBilled)}</span>
+                      <span className="stat-label">Total billed</span>
+                    </div>
+                    <div className="stat-card">
+                      <span className="stat-value">{inr(payable.totalPaid)}</span>
+                      <span className="stat-label">Total paid</span>
+                    </div>
+                    <div className="stat-card">
+                      <span className="stat-value">{inr(payable.totalReturned)}</span>
+                      <span className="stat-label">Total returned</span>
+                    </div>
+                  </div>
+
+                  <div className="stat-hero">
+                    <span className="stat-hero-value">{inr(payable.amountDue)}</span>
+                    <span className="stat-hero-label">Amount due</span>
+                  </div>
+
+                  {payable.payments.length === 0 ? (
+                    <p className="muted dash-empty">No payments recorded yet.</p>
+                  ) : (
+                    payable.payments.map((p) => (
+                      <div key={p.id} className="dash-party-payment-row">
+                        <div className="dash-party-payment-main">
+                          <span className="dash-party-payment-date">{formatDate(p.date)}</span>
+                          {p.wasEdited && <span className="badge badge-warning">Edited</span>}
+                        </div>
+                        {p.note && <span className="muted dash-party-payment-note">{p.note}</span>}
+                        <span className="dash-party-payment-value">{inr(p.amount)}</span>
+                      </div>
+                    ))
+                  )}
+
+                  <div className="dash-party-record-payment">
+                    <h3 className="dash-party-record-payment-title">Record payment</h3>
+                    {paymentSuccess && <p className="dash-party-payment-success">{paymentSuccess}</p>}
+                    {!paymentDraft ? (
+                      <form onSubmit={handleContinueToPin}>
+                        <label className="field">
+                          <span className="field-label">Amount</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0.01"
+                            step="0.01"
+                            value={paymentAmount}
+                            onChange={(e) => setPaymentAmount(e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Date</span>
+                          <input
+                            type="date"
+                            value={paymentDate}
+                            onChange={(e) => setPaymentDate(e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Note (optional)</span>
+                          <input type="text" value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} />
+                        </label>
+                        {paymentFormError && (
+                          <p className="error-banner" role="alert">
+                            {paymentFormError}
+                          </p>
+                        )}
+                        <button type="submit" className="btn-primary">
+                          Continue
+                        </button>
+                      </form>
+                    ) : (
+                      <div>
+                        <p className="muted">
+                          Recording {inr(paymentDraft.amount)} on {formatDate(paymentDraft.date)}
+                          {paymentDraft.note ? ` — "${paymentDraft.note}"` : ''}. Enter your PIN to confirm.
+                        </p>
+                        <PinPrompt
+                          submitLabel="Record payment"
+                          submittingLabel="Recording…"
+                          autoFocus
+                          onSubmit={handleConfirmPayment}
+                        />
+                        <button type="button" className="link-button" onClick={() => setPaymentDraft(null)}>
+                          Change details
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>

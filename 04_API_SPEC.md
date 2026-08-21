@@ -228,6 +228,30 @@ Response: `{ revenue, period, label }`.
 
 `404 PARTY_NOT_FOUND` if `id` doesn't resolve. `400 VALIDATION_ERROR` if `period` isn't one of the four named values or `custom`, or if `custom` is missing/malformed `from`/`to`, or if `to` is before `from`.
 
+### `GET /api/parties/:id/payable` 👑 — added 2026-08-21 (Party Payables, the mirror of Factory Payables)
+Response: `{ partyId, totalBilled, totalPaid, totalReturned, amountDue, payments: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }] }`
+
+**Owner-only, PIN not required** — matches `GET /api/factories/:id/payable`'s own gating: reading a figure isn't itself a financial action, the PIN gate is reserved for the actual writes (`POST`/`PATCH`/`DELETE /api/party-payments`).
+
+`amountDue = totalBilled − totalPaid − totalReturned`, computed fresh from live rows on every call, no caching — same principle as every other money figure in this system (rules 60, 81, 96, 98):
+- `totalBilled` calls `utils/revenue.js`'s `computeRevenue(prisma, { partyId, from: null, to: null })` **directly, unmodified** — the same all-time, `BILLED`+`SHIPPED`, non-cancelled, per-piece-basis sum rule 98 already defines, not a second implementation of it.
+- `totalPaid` = `SUM(PartyPayment.amount)` for this party.
+- `totalReturned` = `SUM(qtySets × piecesPerSet × priceAtReturn)` over this party's `PartyStockReturn` rows — rule 86's corrected per-piece formula, via the shared `piecesPerSetFor` helper. This endpoint is that formula's first real caller anywhere in the codebase (no screen or endpoint had computed a return's value before it) — verified against real hand-computed numbers, not just smoke-tested, when this endpoint was built.
+
+Unlike the Factory payable, there's no "debit" mirror here: `FactoryDebit` exists because a factory's `totalOwed` had no way to represent real pre-app debt with no `STOCK_IN` history behind it (rule 96). A Party's equivalent gap is already closed by Good Returns — `totalReturned` already plays that "reduces what's owed, with no Order behind it" role, so a second manual-adjustment entity would duplicate it rather than fill a gap.
+
+`404 PARTY_NOT_FOUND` if `id` doesn't resolve.
+
+### `POST /api/party-payments` 📌
+Body: `{ partyId, amount, date, note?, pin }`
+Records a payment made *by* a Party to the business, reducing `amountDue` — the mirror of `POST /api/factory-payments` in the reverse direction. Same `requirePin` middleware, same lockout behavior, same error codes (`403 MISSING_PIN`/`INVALID_PIN`/`PIN_LOCKED`/`PIN_NOT_SET`) as every other PIN-gated write in this API — not reimplemented here. Response includes `wasEdited: false` — always false for a freshly-created entry. `404 PARTY_NOT_FOUND` if `partyId` doesn't resolve.
+
+### `PATCH /api/party-payments/:id` 📌
+Body: any subset of `{ amount, date, note }`, plus `pin` (always required, same unconditional reasoning as `PATCH /api/factory-payments/:id` — every field here is itself a financial detail). Sets `wasEdited: true` unconditionally whenever a real edit is saved, never reset back to `false`. `404 PARTY_PAYMENT_NOT_FOUND` if the id doesn't exist.
+
+### `DELETE /api/party-payments/:id` 📌
+No body beyond `{ pin }` (always required, same unconditional gating as `PATCH` above). **A genuine hard delete** — safe specifically because nothing else in the schema references `PartyPayment` by foreign key (confirmed by inspecting `schema.prisma`: only `Party.payments PartyPayment[]`, the back-relation of `PartyPayment.partyId` itself, points at this model), same reasoning `DELETE /api/factory-payments/:id`'s own docs state explicitly rather than assume. Returns `204` with no body on success. `404 PARTY_PAYMENT_NOT_FOUND` if the id doesn't exist.
+
 ---
 
 ## Bundles 🔒
