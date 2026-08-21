@@ -171,7 +171,7 @@ A component's background/border/text should always share the same role tint toge
 - **Party dropdown behavior** *(added 2026-08-15)*: a row of filter chips sits above the party list — "All", one chip per Party `location` currently in use, plus a trailing "Other" chip for parties with no `location` set. Below the chips, the list itself is grouped by location: one section header per location, parties listed alphabetically within each group, with a trailing "Other" group (also alphabetical within it) for parties with no location. Tapping a chip narrows the visible groups to just that one ("Other" shows only the no-location group); "All" shows every group. The dropdown always opens with "All" selected as the default state.
 
 ### 5.4 Pack Order — updated
-- Two views, toggled from the header: **Tally** (flat checklist of all open order lines, for physical counting only — does not change order status) and **Pack List** (the existing grouped-by-order view).
+- ~~Two views, toggled from the header: **Tally** (flat checklist of all open order lines, for physical counting only — does not change order status) and **Pack List** (the existing grouped-by-order view).~~ **DROPPED 2026-08-21, not deferred** — see §5.4 (Pack List)'s 2026-08-19 checklist-first redesign below: its tap-to-confirm, strike-it-off flow plus the per-article/order tally counts on the collapsed accordion header already give the same physical-counting visibility Tally was meant to provide, so the second view was never built.
 - Low stock after packing: a small red flag/badge only when remaining stock would be **≤2 sets** — never fully tint the card. Don't overstate ordinary shortfalls.
 - After Billed, add a **"Mark shipped"** action (order lifecycle is Placed → Packed → Billed → Shipped).
 

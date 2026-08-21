@@ -17,6 +17,7 @@ import {
   SendIcon,
   ReturnIcon,
   GridIcon,
+  WarningTriangleIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -60,6 +61,11 @@ const TILES = [
 // only ever mirrors Set PIN's condition, never Change PIN's.
 const MORE_ITEMS = [
   { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
+  // Unconditional — GET /api/stock (which this screen reuses as-is, see LowStockList.jsx's own
+  // header comment) is any-role already. A plain row rather than a coloured tile, same reasoning
+  // as History right below: a look-something-up utility, not one of the core frequent actions
+  // §5.1 reserves tiles for, even though it's closely related to Live Stock (which does get one).
+  { to: '/low-stock', label: 'Low Stock', Icon: WarningTriangleIcon, show: () => true },
   // Unconditional, like Transfer above — both roles see the identical feed. A plain row rather
   // than a coloured tile: History is a look-something-up utility, not one of the core frequent
   // actions §5.1 reserves tiles for.

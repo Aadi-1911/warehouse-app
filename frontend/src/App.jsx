@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Home from './pages/Home';
 import ReceiveStock from './pages/ReceiveStock';
 import LiveStock from './pages/LiveStock';
+import LowStockList from './pages/LowStockList';
 import Transfer from './pages/Transfer';
 import ManageUsers from './pages/ManageUsers';
 import SetPin from './pages/SetPin';
@@ -59,6 +60,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <LiveStock />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/low-stock"
+            element={
+              // No requireRole — 07_UI_DESIGN_BRIEF.md §5.7: a stock-visibility screen, same
+              // category as Live Stock itself, not owner-only.
+              <ProtectedRoute>
+                <LowStockList />
               </ProtectedRoute>
             }
           />
