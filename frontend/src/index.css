@@ -23,6 +23,38 @@
   --purple-bg: #F2EAFB;
   --purple-text: #6B2FA8;
 
+  /* Added 2026-08-22 for the OWNER Home tile reorganisation: Ship Order needed a colour
+     distinct from both Live Stock (kept Accent) and Bill Orders (moved to Danger), and the
+     existing 5-role palette had no tone left unclaimed by a tile. A genuinely new hex value,
+     not a reuse — see Home.jsx's OWNER_TILES comment and LEARNING_LOG.md for why. As of the
+     same-day follow-up below, Ship Order uses this tone for BOTH roles, not just OWNER. */
+  --teal-border: #9ED6D0;
+  --teal-bg: #E6F6F4;
+  --teal-text: #146B63;
+
+  /* Added 2026-08-22 (same-day follow-up) for OWNER's Article Pricing tile, replacing the
+     placeholder neutral treatment it launched with earlier the same day. See Home.jsx's
+     OWNER_TILES comment and LEARNING_LOG.md for why. */
+  --rust-border: #E8B896;
+  --rust-bg: #FBF0E8;
+  --rust-text: #A85A2E;
+
+  /* Added 2026-08-22 (same-day follow-up) for OWNER's History tile, same reasoning as Rust
+     directly above — replaces the placeholder neutral treatment. */
+  --lavender-border: #C7C0D6;
+  --lavender-bg: #F2F0F7;
+  --lavender-text: #5D5470;
+
+  /* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. A
+     ninth genuinely new tone, not a reuse of an existing one — see Home.jsx's STAFF_TILES
+     comment and LEARNING_LOG.md for the reasoning (Danger risks a false "something's wrong"
+     signal for a routine action; Rust/Lavender would mean "Article Pricing"/"History" on
+     OWNER's own Home screen and "Transfer" on STAFF's, confusing for an owner who sees both).
+     Distinct blue-violet, cooler/deeper than both Accent and Purple. */
+  --indigo-border: #A8B4E8;
+  --indigo-bg: #ECEEFB;
+  --indigo-text: #3D4A9E;
+
   --card-border: #E4E2DE;
   --card-bg: #fff;
   --text-primary: #1C1B19;
@@ -702,6 +734,46 @@ body {
   background: var(--warning-bg);
   border-color: var(--warning-border);
   color: var(--warning-text);
+}
+
+/* Added 2026-08-22 alongside the new --teal-* tokens above, for Ship Order's tile — as of the
+   same-day follow-up below, this is shared by BOTH roles' Ship Order entries. */
+.tile-teal {
+  background: var(--teal-bg);
+  border-color: var(--teal-border);
+  color: var(--teal-text);
+}
+
+/* Added 2026-08-22 for OWNER's Bill Orders tile, reusing the existing Danger role (previously
+   unused as a tile anywhere) rather than inventing a colour — see Home.jsx's OWNER_TILES
+   comment for why Bill Orders specifically got this one over Ship Order. */
+.tile-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+/* Added 2026-08-22 (same-day follow-up) for OWNER's Article Pricing tile — replaces the
+   placeholder .tile-neutral treatment it launched with earlier the same day. */
+.tile-rust {
+  background: var(--rust-bg);
+  border-color: var(--rust-border);
+  color: var(--rust-text);
+}
+
+/* Added 2026-08-22 (same-day follow-up) for OWNER's History tile — same replacement as Rust
+   directly above. */
+.tile-lavender {
+  background: var(--lavender-bg);
+  border-color: var(--lavender-border);
+  color: var(--lavender-text);
+}
+
+/* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. */
+.tile-indigo {
+  background: var(--indigo-bg);
+  border-color: var(--indigo-border);
+  color: var(--indigo-text);
 }
 
 /* --- Footer note (§5.1): small muted banner, staff only --- */
@@ -1525,33 +1597,47 @@ body {
 
 /* Compound selector (not a bare .pack-line-row-short) so this wins over the adjacency divider
    rule above at equal specificity — a straight divider line cutting across this tinted block's
-   rounded corners would look like a rendering glitch, not a second visual treatment. */
+   rounded corners would look like a rendering glitch, not a second visual treatment.
+   Same whisper-tint-plus-left-border treatment as .pack-line-row-confirmed below, and for the
+   same reason (quieted 2026-08-21) — a full solid --warning-bg fill on every short-packed line
+   was just as loud as the green one, and a tone pass that quieted one but not the other would
+   still leave the screen with a full-saturation state competing for attention. */
 .pack-line-row.pack-line-row-short {
-  background: var(--warning-bg);
+  background: color-mix(in srgb, var(--warning-bg) 45%, transparent);
   border-top: none;
-  border-radius: 8px;
-  padding: 10px;
+  border-left: 3px solid var(--warning-border);
+  border-radius: 6px;
+  padding: 10px 10px 10px 9px;
   margin: 4px 0;
 }
 
-/* Checklist-first row treatment (2026-08-19). A confirmed line reads as DONE at a glance —
-   success-green tint plus struck-through text — using the same --success-* tokens every other
-   "this succeeded" surface in this app uses, rather than a green invented for this screen.
+/* Checklist-first row treatment (2026-08-19; quieted 2026-08-21 — see LEARNING_LOG.md). A
+   confirmed line reads as DONE at a glance, but no longer via a full solid --success-bg fill
+   covering the whole row: on a several-line order that meant multiple full-saturation green
+   cards competing with the amber short-pack cards, the persistent red cancel link, AND the
+   primary action bar all at once. Now it's a whisper tint (color-mix, not the raw token — this
+   is a NEW, screen-local way of using the shared success tokens more sparingly, not a redefinition
+   of what they mean) plus a left accent border; the actual "confirmed" signal is carried by the
+   green checkmark icon (.pack-line-status-full) and the strikethrough, not by recoloring the row.
    Compound selector for the same reason .pack-line-row-short needs one: it has to beat the
    .pack-line-row + .pack-line-row divider at equal specificity, or a border cuts across the
    tinted block's rounded corners and reads as a rendering glitch. */
 .pack-line-row.pack-line-row-confirmed {
-  background: var(--success-bg);
+  background: color-mix(in srgb, var(--success-bg) 45%, transparent);
   border-top: none;
-  border-radius: 8px;
-  padding: 10px;
+  border-left: 3px solid var(--success-border);
+  border-radius: 6px;
+  padding: 10px 10px 10px 9px;
   margin: 4px 0;
 }
 
+/* Text stays muted, not green — recoloring both the chip and the ordered-quantity text on every
+   confirmed row was the row's second competing colour signal (the icon is the first and only one
+   needed). Strikethrough alone already communicates "done" without adding saturation. */
 .pack-line-row-confirmed .pack-line-color-chip,
 .pack-line-row-confirmed .pack-line-ordered {
   text-decoration: line-through;
-  color: var(--success-text);
+  color: var(--text-secondary);
 }
 
 .pack-line-row-confirmed .pack-line-color-chip {
@@ -1590,6 +1676,21 @@ body {
 .pack-line-tap:disabled {
   cursor: default;
   opacity: 0.6;
+}
+
+/* Deliberate keyboard-focus treatment (2026-08-21) — replacing the unstyled browser default,
+   which was a flat rectangular UA blue (#005fcc-ish) with hard square corners slapped over a
+   rounded row: visible, but foreign to this app's own palette and shape language, not a colour
+   or corner radius that exists anywhere else on this screen. Neutral dark, not a semantic role
+   colour (§3.1 reserves success/danger/warning/accent for MEANING; a focus ring is chrome, not a
+   state), same tone the "Selected chip" token already uses elsewhere for "this is deliberately
+   highlighted." Offset + a radius on the button itself so the ring reads as a soft rounded
+   outline around the row rather than a hard box cutting across it. */
+.pack-line-tap:focus-visible,
+.pack-line-adjust-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .pack-line-tap-text {
@@ -1699,6 +1800,52 @@ body {
 .pack-order-tally {
   margin: 0 0 8px;
   font-size: 12.5px;
+}
+
+/* Bottom action bar (2026-08-21 tone pass, part 2) — the one thing the per-line pass left alone,
+   and it visibly clashed with the quieted rows above it: a solid heavy blue block sitting right
+   on top of a solid heavy red block, right under a screen that had otherwise gone quiet.
+   Both buttons KEEP .btn-primary/.btn-danger in their className for shared LAYOUT (width,
+   min-height, radius, type scale — structural, not colour, and shared with every button in the
+   app). Only colour is overridden here, via a MORE SPECIFIC class added alongside — never by
+   editing .btn-primary/.btn-danger themselves, which BillOrderDetail.jsx and presumably other
+   screens also use; touching those directly would have silently changed every one of them. */
+
+/* Mark as packed stays the one deliberately bold thing on the screen — it's the real, frequent,
+   primary action, and last round's own guidance said keep the boldness here. Only the exact shade
+   softens, a hair off the raw --accent-text token via color-mix, so it reads as considered rather
+   than a flat heavy wall of colour now that everything above it is quiet — not "less bold," just
+   less inky. */
+.pack-mark-packed-btn {
+  background: color-mix(in srgb, var(--accent-text) 85%, white);
+  border-color: color-mix(in srgb, var(--accent-text) 85%, white);
+}
+
+/* Cancel this order: same "quiet by default, full weight only on real interaction" principle as
+   .pack-line-cancel-link above, extended to a rarer, more consequential version of the same kind
+   of action — whole order, not one line, so the same restraint applies at least as strongly.
+   Outlined and muted at rest; escalates to the real solid --danger-text fill only on hover/focus.
+   The ConfirmModal this button already leads to is the actual safety gate for the destructive
+   action itself, so the button doesn't need to pre-emptively shout before that point. */
+.pack-order-cancel-btn {
+  background: transparent;
+  border: 1.5px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+.pack-order-cancel-btn:hover,
+.pack-order-cancel-btn:focus-visible {
+  background: var(--danger-text);
+  border-color: var(--danger-text);
+  color: #fff;
+}
+
+/* Same neutral deliberate focus ring as the per-line controls above, not the browser's default
+   blue box — see .pack-line-tap:focus-visible's comment for the full reasoning. */
+.pack-mark-packed-btn:focus-visible,
+.pack-order-cancel-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
 }
 
 /* --- History: a flat reverse-chronological feed, grouped into day sections for scannability.
@@ -1856,6 +2003,26 @@ body {
    "Mark as packed"/"Bill this order" and "Cancel this order" can never be tapped for each other. */
 .order-cancel-button {
   margin-top: 10px;
+}
+
+/* Pack Order's OWN per-row cancel link (2026-08-21 tone pass) — deliberately a separate class
+   from .line-cancel-link above, not a modification of it: that class (plus .danger-text) is also
+   used by BillOrderDetail.jsx, so changing it would have silently muted Bill Order's own cancel
+   link too, a screen this task was never asked to touch. "Cancel this line" is a rare, deliberate
+   action repeated on every single row — full saturated --danger-text as a PERMANENT link colour
+   on every row of a several-line order reads as ambient noise, not a real warning, and dilutes
+   what red actually means everywhere else on this screen. Muted by default; only actually turns
+   red on hover/focus, when someone is genuinely about to use it. */
+.pack-line-cancel-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.pack-line-cancel-link:hover,
+.pack-line-cancel-link:focus-visible {
+  color: var(--danger-text);
 }
 
 /* ===================================================================================
@@ -2781,6 +2948,114 @@ body {
   color: var(--text-secondary);
   max-width: 60ch;
   line-height: 1.5;
+}
+
+/* --- Article Pricing (added 2026-08-21, beyond §8's original nav) — the dashboard's first real
+   sortable desktop grid, deliberately its OWN class rather than reusing mobile's .pricing-table:
+   that table is tuned for a 480px phone column (12.5px text, horizontal scroll as the escape
+   valve); this one is explicitly asked to read at a glance on a big screen, so it gets its own,
+   noticeably larger type scale — 15px body text vs. 13px elsewhere on this dashboard, not just
+   "consistent with the rest of the dashboard." */
+.dash-pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.dash-pricing-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-pricing-table td {
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-pricing-table tr:last-child > td {
+  border-bottom: none;
+}
+
+/* The header label IS a real <button> (real keyboard/click sortability, not a div with an
+   onClick) reset to look like plain header text at rest — the pointer cursor and hover colour
+   are the only affordances, same restraint this app now applies broadly rather than dressing up
+   every clickable thing as an obvious button shape. */
+.dash-pricing-th-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dash-pricing-th-btn:hover {
+  color: var(--text-primary);
+}
+
+.dash-pricing-th-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.dash-pricing-sort-indicator {
+  font-size: 10px;
+}
+
+.dash-pricing-num {
+  text-align: right;
+}
+
+.dash-pricing-action {
+  text-align: right;
+  padding-right: 0;
+}
+
+.dash-pricing-action .link-button + .link-button {
+  margin-left: 14px;
+}
+
+/* A row mid-edit gets a quiet neutral tint — same whisper-tint restraint Pack Order's own tone
+   pass settled on (LEARNING_LOG.md), not a saturated highlight competing with the Pending badges
+   and the PIN step directly below it. */
+.dash-pricing-row-editing > td {
+  background: var(--section-fill);
+}
+
+.dash-pricing-inline-input {
+  width: 100px;
+  padding: 6px 8px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 15px;
+  font-family: inherit;
+  text-align: right;
+}
+
+.dash-pricing-error-row > td,
+.dash-pricing-pin-row > td {
+  padding: 12px 14px;
+  background: var(--section-fill);
+}
+
+/* PinPrompt renders its own <form>, and its field/button are full-width by default (built for a
+   narrow mobile column) — capped here so it doesn't stretch edge-to-edge across a wide desktop
+   row. */
+.dash-pricing-pin-row .field,
+.dash-pricing-pin-row .btn-primary {
+  max-width: 280px;
 }
 
 /* The rail collapses to icons on narrow windows rather than disappearing — §8 is explicit that

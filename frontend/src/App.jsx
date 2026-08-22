@@ -29,6 +29,7 @@ import DashboardHistory from './pages/dashboard/History';
 import DashboardLowStock from './pages/dashboard/LowStock';
 import DashboardParties from './pages/dashboard/Parties';
 import DashboardLocations from './pages/dashboard/Locations';
+import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
 
 export default function App() {
   return (
@@ -232,6 +233,7 @@ export default function App() {
             <Route path="parties" element={<DashboardParties />} />
             <Route path="history" element={<DashboardHistory />} />
             <Route path="locations" element={<DashboardLocations />} />
+            <Route path="article-pricing" element={<DashboardArticlePricing />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />

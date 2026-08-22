@@ -11,6 +11,7 @@ import {
   UsersIcon,
   HistoryIcon,
   LocationPinIcon,
+  TagIcon,
   LockIcon,
 } from '../../components/icons';
 
@@ -67,6 +68,9 @@ const NAV_ITEMS = [
   // mid-list, so it doesn't reshuffle the position of every existing nav item someone's already
   // used to clicking.
   { to: '/dashboard/locations', label: 'Locations', Icon: LocationPinIcon },
+  // Added 2026-08-21, same "append beyond §8's original list, don't renumber it" precedent as
+  // Locations right above. Same TagIcon the mobile Article Pricing screen already uses.
+  { to: '/dashboard/article-pricing', label: 'Article Pricing', Icon: TagIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -78,6 +82,7 @@ const PAGE_META = {
   '/dashboard/parties': ['Customer accounts', 'Parties'],
   '/dashboard/history': ['Everything that happened', 'History'],
   '/dashboard/locations': ['Revenue and profit by location', 'Locations'],
+  '/dashboard/article-pricing': ['Cost and selling price by article', 'Article Pricing'],
 };
 
 function initialsOf(name) {

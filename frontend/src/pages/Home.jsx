@@ -22,36 +22,83 @@ import {
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
 //
-// Colored tiles are reserved for core, frequent, semantically-distinct actions only. The four
-// order-lifecycle stages now each have one — New Order (purple) -> Pack Order (amber) ->
-// Bill Orders (accent) -> Ship Order (accent) — alongside Receive Stock (green) and Live Stock
-// (accent). Everything else lives in the plain "More" list below: icon + label only, no color
-// tint, same treatment §5.1 gives Transfer/Low Stock/History in the reference.
+// As of 2026-08-22 the OWNER and STAFF tile grids are genuinely different arrays, not one
+// array filtered by role. That split became necessary (not just tidier) once Ship Order's
+// *colour* started differing by role too — this was true even in that day's first version
+// (STAFF on Accent, OWNER on Teal); a same-day follow-up then moved STAFF onto Teal as well,
+// so the two arrays now agree on Ship Order's tone but still diverge on which tiles exist at
+// all (Transfer Stock is a STAFF-only tile; Article Pricing/History are OWNER-only tiles). A
+// single `show(user)`-filtered array can vary *visibility* per role but not a tile's own tone
+// for the same route on the day the two roles briefly disagreed, so it stopped fitting then and
+// staying split is simpler than reconverging now.
 //
-// Tones come from §3.4's semantic token table, not picked freely. That table's Accent row is
-// literally labelled "Accent / Info / Stock / Ship / Billed", which is why Bill, Ship AND Live
-// Stock all legitimately land on accent — following the project's own tokens rather than
-// inventing new colours to keep them visually distinct. Their icons and labels are what tell
-// them apart.
+// Colored tiles are reserved for core, frequent, semantically-distinct actions — everything
+// else lives in the plain "More" list, icon + label only, no colour tint.
+
+// STAFF's tile grid — 2026-08-22, two same-day changes: Ship Order moved from Accent to Teal
+// (deliberately matching OWNER's tile now, a confirmed reversal of the original "STAFF stays
+// byte-for-byte unchanged" rule, scoped to just this one tile's colour), and Transfer Stock was
+// promoted from MORE_ITEMS — staff use it often enough to earn a tile, and OWNER's grid was
+// already fixed at exactly 8 tiles with no room/need for it there.
 //
-// `show(user)` was added here when Bill Orders arrived: this array used to be flat and
-// unconditional, and its old comment asserted nothing in it was ever role-gated. That stopped
-// being true — billing is OWNER-only (rule 63) — so tiles now carry the same visibility
-// predicate MORE_ITEMS already used, rather than a second mechanism. Everything else stays
-// `() => true`, which is exactly what it meant before.
-const TILES = [
-  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon, show: () => true },
-  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon, show: () => true },
-  { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon, show: () => true },
-  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon, show: () => true },
-  { to: '/bill-orders', label: 'Bill Orders', tone: 'accent', Icon: InvoiceIcon, show: (user) => user.role === 'OWNER' },
+// Transfer's tone (`indigo`) is a ninth, genuinely new token — not a reuse. By this point every
+// existing tone (Success, Danger, Warning, Accent, Purple, Teal, Rust, Lavender) is already in
+// use somewhere across the two role screens. Danger was ruled out for the same reason it was
+// ruled out for Ship Order earlier — a routine action shouldn't borrow the tone the rest of the
+// app uses for "something's wrong" (low stock, damaged, remove). Rust and Lavender were ruled
+// out because those exact colours mean "Article Pricing" and "History" on OWNER's own Home
+// screen (see OWNER_TILES below) — reusing either for "Transfer" on STAFF's screen would make
+// the same colour mean two different things to the one person (the owner) who sees both
+// screens. A genuinely new tone avoids all three collisions, same precedent as Teal/Rust/
+// Lavender each being added when an actual need arose rather than forced into an existing slot.
+// Appended at the end of the array (no explicit order was specified) — same "append, don't
+// renumber" precedent Locations/Article Pricing already established elsewhere in this app.
+const STAFF_TILES = [
+  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
+  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
+  { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
   // Any role, rule 63 — staff mark orders shipped, same reasoning as Pack Order above.
-  { to: '/ship-orders', label: 'Ship Order', tone: 'accent', Icon: SendIcon, show: () => true },
+  { to: '/ship-orders', label: 'Ship Order', tone: 'teal', Icon: SendIcon },
+  { to: '/transfer', label: 'Transfer Stock', tone: 'indigo', Icon: TransferIcon },
 ];
 
-// Each entry decides its own visibility from `user` — Transfer is unconditional (any
-// authenticated role), the other five are owner-only. Set PIN/Change PIN are a deliberately
-// exclusive pair — exact inverse conditions on the same hasPinSet flag, routing to the same
+// OWNER's tile grid — reorganised 2026-08-22: Article Pricing and History promoted here from
+// MORE_ITEMS (frequent enough for an owner to earn a tile), in this exact order, plus a colour
+// fix for the clash Live Stock/Bill Orders/Ship Order used to share on Accent blue (§3.4's own
+// token table groups "Stock / Ship / Billed" under one Accent row, which is *why* they clashed
+// — this reorganisation is a deliberate departure from that table, not a bug).
+//
+// Live Stock keeps Accent. Bill Orders moves to Danger — reusing it (it was otherwise unused
+// as a tile) rather than inventing a colour, on the reasoning that billing/money-owed is the
+// closer semantic fit of the two for a red the app otherwise means "remove/low-stock/damaged"
+// by. Ship Order gets a Teal token (--teal-*, added to index.css and 07_UI_DESIGN_BRIEF §3.4) —
+// the palette only had one tone free (Danger) for two tiles that needed distinct new colours,
+// so one had to be genuinely new; as of a same-day follow-up, STAFF's Ship Order tile uses this
+// same Teal too (see STAFF_TILES above), a deliberate, confirmed reversal for this one tile.
+//
+// Article Pricing (Rust) and History (Lavender) launched the same day with a placeholder
+// `tile-neutral` treatment (existing card tokens, no semantic colour) since the task that added
+// them didn't specify a colour and every semantic tone was already claimed. A same-day
+// follow-up replaced that placeholder with two real, genuinely new tones once specific colours
+// were requested — `tile-neutral` itself was removed from index.css as dead code once nothing
+// referenced it any more.
+const OWNER_TILES = [
+  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
+  { to: '/article-pricing', label: 'Article Pricing', tone: 'rust', Icon: TagIcon },
+  { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
+  { to: '/bill-orders', label: 'Bill Orders', tone: 'danger', Icon: InvoiceIcon },
+  { to: '/ship-orders', label: 'Ship Order', tone: 'teal', Icon: SendIcon },
+  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
+  { to: '/history', label: 'History', tone: 'lavender', Icon: HistoryIcon },
+];
+
+// Each entry decides its own visibility from `user`. Low Stock, Good Returns and Manage Parties
+// are unconditional (any authenticated role); Transfer is OWNER-only here as of 2026-08-22 (see
+// its own comment below — it's a STAFF-only tile instead now); the rest are owner-only. Set
+// PIN/Change PIN are a deliberately exclusive pair — exact inverse conditions on the same
+// hasPinSet flag, routing to the same
 // SetPin.jsx screen, which now branches on hasPinSet itself to decide which mode to render (no
 // currentPin field for first-time setup, currentPin required once a PIN already exists — see
 // SetPin.jsx). Exactly one of the two is ever visible for a given owner, never both, never
@@ -60,20 +107,28 @@ const TILES = [
 // now no Factory Payments either), which is a different job than a plain list row — the banner
 // only ever mirrors Set PIN's condition, never Change PIN's.
 const MORE_ITEMS = [
-  { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: () => true },
+  // OWNER only, as of 2026-08-22 (same-day follow-up) — Transfer was unconditional until it was
+  // promoted to a tile for STAFF specifically (see STAFF_TILES above), so it would otherwise
+  // render in both places for a staff account. Same asymmetric-handling shape History used
+  // above when IT was promoted for OWNER, just the roles reversed: OWNER's view of this row is
+  // untouched (same label, same position, same icon), since `role === 'OWNER'` was already true
+  // for every case that mattered to OWNER before this change.
+  { to: '/transfer', label: 'Transfer Stock', Icon: TransferIcon, show: (user) => user.role === 'OWNER' },
   // Unconditional — GET /api/stock (which this screen reuses as-is, see LowStockList.jsx's own
   // header comment) is any-role already. A plain row rather than a coloured tile, same reasoning
   // as History right below: a look-something-up utility, not one of the core frequent actions
   // §5.1 reserves tiles for, even though it's closely related to Live Stock (which does get one).
   { to: '/low-stock', label: 'Low Stock', Icon: WarningTriangleIcon, show: () => true },
-  // Unconditional, like Transfer above — both roles see the identical feed. A plain row rather
-  // than a coloured tile: History is a look-something-up utility, not one of the core frequent
-  // actions §5.1 reserves tiles for.
-  { to: '/history', label: 'History', Icon: HistoryIcon, show: () => true },
+  // STAFF only, as of 2026-08-22 — History was unconditional until OWNER's tile reorganisation
+  // promoted it to a tile for OWNER (see OWNER_TILES above), so it would otherwise render in
+  // both places for an owner. STAFF's own view of this row is untouched: same label, same
+  // position, same icon, still visible, since `role !== 'OWNER'` is exactly `true` for STAFF.
+  { to: '/history', label: 'History', Icon: HistoryIcon, show: (user) => user.role !== 'OWNER' },
   // Unconditional — both roles log returns (POST /api/returns is any-role). A plain row rather
   // than a coloured tile, deliberately: tiles are reserved for the core frequent actions, and a
   // Party sending goods back is a real but occasional event, not part of the daily loop.
-  { to: '/good-returns', label: 'Good Returns', Icon: ReturnIcon, show: () => true },
+  // Label reads "GR - Goods Return" as of 2026-08-22 (was "Good Returns") — task-directed rename.
+  { to: '/good-returns', label: 'GR - Goods Return', Icon: ReturnIcon, show: () => true },
   // Any-role as of 2026-08-18. This was owner-only on the grounds that the screen had no
   // staff-facing purpose "until New Order exists" — it does now, and picks a Party on every
   // order, so staff genuinely need to browse and add customers. (Note this reverses an earlier
@@ -99,7 +154,9 @@ const MORE_ITEMS = [
   // the phone, which is the one device §8 explicitly does not design this surface for.
   { to: '/dashboard', label: 'Owner Dashboard', Icon: GridIcon, show: (user) => user.role === 'OWNER' },
   { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
-  { to: '/article-pricing', label: 'Article Pricing', Icon: TagIcon, show: (user) => user.role === 'OWNER' },
+  // Article Pricing lived here until 2026-08-22, when it was promoted to a tile for OWNER (see
+  // OWNER_TILES above). It was already owner-only, so removing the row here doesn't change what
+  // STAFF ever saw (STAFF's filtered view never included it).
 ];
 
 export default function Home() {
@@ -130,7 +187,7 @@ export default function Home() {
       </ScreenHeader>
 
       <nav className="tile-grid">
-        {TILES.filter((tile) => tile.show(user)).map(({ to, label, tone, Icon }) => (
+        {(isOwner ? OWNER_TILES : STAFF_TILES).map(({ to, label, tone, Icon }) => (
           // Rendered as real links rather than buttons with click handlers: navigation is what
           // an anchor is for, so middle-click/long-press to open in a new tab keeps working,
           // and the browser shows the destination on hover.
@@ -161,12 +218,13 @@ export default function Home() {
       )}
 
       {/* §5.1's "More" list — everything that isn't a core, frequent, semantically-distinct
-          action lives here instead of competing for a colored tile: Transfer (any role) plus
-          the owner-only admin/finance screens. Each item's own `show(user)` decides inclusion,
-          since the conditions genuinely differ per item (Set PIN's is stricter than the rest —
-          see MORE_ITEMS' own comment for why). The `some(...)` guard means a "More" label never
-          renders above zero rows — not reachable today (Transfer always shows), but free
-          insurance against that changing later. */}
+          action lives here instead of competing for a colored tile: Low Stock/Good Returns/
+          Manage Parties (any role) plus the owner-only admin/finance screens (Transfer included,
+          as of 2026-08-22 — it's a tile for STAFF instead). Each item's own `show(user)` decides
+          inclusion, since the conditions genuinely differ per item (Set PIN's is stricter than
+          the rest — see MORE_ITEMS' own comment for why). The `some(...)` guard means a "More"
+          label never renders above zero rows — not reachable today (Low Stock always shows),
+          but free insurance against that changing later. */}
       {MORE_ITEMS.some((item) => item.show(user)) && (
         <div className="more-list">
           <div className="eyebrow more-list-label">More</div>

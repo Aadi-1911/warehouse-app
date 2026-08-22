@@ -559,7 +559,7 @@ export default function PackOrderDetail() {
                         {canCancel && (
                           <button
                             type="button"
-                            className="link-button danger-text line-cancel-link"
+                            className="link-button pack-line-cancel-link"
                             onClick={() => setCancelTarget({ kind: 'line', line: li })}
                             disabled={submitting || cancelling}
                           >
@@ -578,7 +578,12 @@ export default function PackOrderDetail() {
 
       <div className="sticky-action-bar">
         <p className="muted pack-order-tally">{tallyText}</p>
-        <button type="button" className="btn-primary" onClick={handleMarkPackedClick} disabled={submitting}>
+        <button
+          type="button"
+          className="btn-primary pack-mark-packed-btn"
+          onClick={handleMarkPackedClick}
+          disabled={submitting}
+        >
           {submitting ? 'Marking as packed…' : 'Mark as packed'}
         </button>
         {/* Visually separated from "Mark as packed" and from the per-line links: cancelling the
@@ -587,7 +592,7 @@ export default function PackOrderDetail() {
         {canCancel && (
           <button
             type="button"
-            className="btn-danger order-cancel-button"
+            className="btn-danger order-cancel-button pack-order-cancel-btn"
             onClick={() => setCancelTarget({ kind: 'order' })}
             disabled={submitting || cancelling}
           >

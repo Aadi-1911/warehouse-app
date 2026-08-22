@@ -116,10 +116,14 @@ A component's background/border/text should always share the same role tint toge
 | Role | Border | Background | Text/Icon |
 |---|---|---|---|
 | Success / Receive / Positive | `#A9DDB4` | `#E9F6EC` | `#1E7A34` |
-| Danger / Low stock / Damaged / Remove | `#F0B4B0` | `#FBEAE9` | `#B23A31` |
+| Danger / Low stock / Damaged / Remove / Bill Orders tile *(added 2026-08-22)* | `#F0B4B0` | `#FBEAE9` | `#B23A31` |
 | Warning / Pack / New-pending-price | `#F0CD82` | `#FCF3DE` | `#8A6413` |
-| Accent / Info / Stock / Ship / Billed | `#AFCBF2` | `#E8F0FC` | `#1F5AA6` |
+| Accent / Info / Stock | `#AFCBF2` | `#E8F0FC` | `#1F5AA6` |
 | Party / Order (purple) | `#D2B4F0` | `#F2EAFB` | `#6B2FA8` |
+| Teal / Ship *(added 2026-08-22, both roles)* | `#9ED6D0` | `#E6F6F4` | `#146B63` |
+| Rust / OWNER Article Pricing tile *(added 2026-08-22)* | `#E8B896` | `#FBF0E8` | `#A85A2E` |
+| Lavender / OWNER History tile *(added 2026-08-22)* | `#C7C0D6` | `#F2F0F7` | `#5D5470` |
+| Indigo / STAFF Transfer Stock tile *(added 2026-08-22)* | `#A8B4E8` | `#ECEEFB` | `#3D4A9E` |
 | Neutral card/border | `#E4E2DE` | `#fff` | `#1C1B19` (primary text) |
 | Neutral muted | `#ECEAE6` (dividers) | `#F5F4F1` (section fill) | `#6B6863` (secondary), `#9A968F` (tertiary/meta) |
 | Selected chip (any picker) | `#1C1B19` | `#1C1B19` | `#fff` |
@@ -153,6 +157,20 @@ A component's background/border/text should always share the same role tint toge
 - Only core, frequent, semantically-distinct actions get a colored tile — the grid holds just **Receive Stock (green/Success)** and **Live Stock (blue/Accent)** for now. **New Order (purple)** and **Pack Order (amber)** are confirmed for the same tile treatment once Phase 2 exists — not built until then, captured here for later only.
 - Everything else — **Transfer, Manage Users, Set PIN, Factory Payables** — moves into a plain **"More" list** below the colored tiles: icon + label only, no color tint, simple list rows (same treatment the reference gives Transfer/Low Stock/History).
 - Owner-only items in that list (**Manage Users, Set PIN, Factory Payables**) still only render for the OWNER role — same conditional-render pattern already used on this screen.
+
+### 5.1 Home — OWNER tile reorganisation, 2026-08-22 (updated same day — see below for what changed after this section's first version)
+- OWNER's tile grid is 8 tiles, exact order: **Receive Stock, Article Pricing, New Order, Pack Order, Bill Orders, Ship Order, Live Stock, History.** Article Pricing and History are promoted here from the More list — frequent enough for an owner to earn a tile, per this update. Change PIN, Manage Users and Manage Parties stay in the More list, not tiles.
+- Colour fix for the 3-way clash Live Stock/Bill Orders/Ship Order previously shared on Accent blue: **Live Stock keeps Accent. Bill Orders moves to Danger** (§3.4 — reused rather than inventing a colour, closer semantic fit for money-owed than for Ship). **Ship Order gets a Teal token** (§3.4 `--teal-*`) since the palette had only one tone (Danger) free for two tiles needing distinct new colours.
+- **Article Pricing is Rust, History is Lavender** (§3.4 `--rust-*`/`--lavender-*`) — both real, genuinely new tones. These two launched this same day on a placeholder neutral tile treatment (no colour specified at the time); once specific colours were requested later the same day, that placeholder was replaced and removed from the codebase as dead code.
+- **STAFF's Home screen is no longer fully unaffected by this reorganisation**, a deliberate, confirmed reversal partway through the same day: STAFF's Ship Order tile now uses the same Teal as OWNER's (was Accent, matching Live Stock, at this section's first draft). Everything else about STAFF's screen — Receive Stock, Live Stock, New Order, Pack Order, their order and colours — is still untouched by this reorganisation. (STAFF's tile *set* changes for an unrelated reason — see the Transfer Stock promotion immediately below — but not because of the Bill/Ship/Live-Stock clash this reorganisation exists to fix.)
+
+### 5.1 Home — Transfer Stock promoted to a STAFF-only tile, 2026-08-22 (same day, separate from the OWNER reorganisation above)
+- STAFF's tile grid gains a 6th tile, appended at the end: **Receive Stock, Live Stock, New Order, Pack Order, Ship Order, Transfer Stock.** Removed from STAFF's More list accordingly (Transfer stays in OWNER's More list unconditionally — asymmetric handling, the same shape History got when it was promoted the other direction for OWNER above).
+- Transfer's tile uses a new **Indigo** token (§3.4 `--indigo-*`), not a reuse of an existing tone. By this point every existing tone was already claimed somewhere across the two role screens; Danger was ruled out (a routine action shouldn't borrow the "something's wrong" tone), and Rust/Lavender were ruled out specifically because those colours already mean Article Pricing/History on OWNER's own Home screen — reusing either for Transfer would make the same colour mean two different things to the owner, who sees both screens.
+- OWNER's own tile grid is unaffected by this — still exactly the 8 tiles above, Transfer isn't one of them.
+
+### 5.1 Home — Good Returns row relabelled, 2026-08-22
+- The More-list row's label changed from "Good Returns" to **"GR - Goods Return"**. Route, icon, and visibility (any role) are unchanged for both roles.
 
 ### 5.2 Receive Stock — updated
 - Rename the lookup button from "Check" to **"Add"** (two-step flow unchanged: Add to look up, then Add to receipt to commit).
@@ -279,6 +297,14 @@ Same shared, append-only log the staff app writes to. **Read-only for owner — 
   - **Sales summary** section: four preset chips (This month / Last 6 months / This FY / All time) plus a free-form From/To month picker — both driven by the same underlying calculation (rule 98).
   - **Orders and bills** list below that: date, status pill using the existing order-status color mapping, value. Empty state: "No orders yet." until Order data exists.
 - **Mobile gap, explicitly not solved here**: this master-detail pattern (side panel on click) is desktop-only per rule 15 — mobile needs push-navigation to a full detail screen instead of a side panel. This is a real, known gap that still needs its own design pass when responsive/mobile Owner Dashboard work happens; no mobile version is invented here.
+
+### Article Pricing page *(added 2026-08-21, beyond §8's original 5-item nav — same precedent as Locations)*
+A genuine desktop grid — a real sortable `<table>`, not the mobile screen ported over. Fetches every active article across every Factory in one call (no factory pre-filter the way mobile requires); Factory is a real, sortable column instead, since a desktop owner would rather sort/scan than be forced through a picker first. Reuses `GET /api/products` (role-aware costPrice) and `PATCH /api/products/:id` (OWNER+PIN the moment costPrice/sellingPrice appear in the body) — no parallel price-write path.
+- **Columns, all independently sortable by clicking the header**: Article No, Name, Factory, Cost Price, Selling Price, Margin. Default order (before any header is clicked) is pending-first then Article No — once a column IS clicked, that explicit choice is respected literally, no hidden pending-first tie-break riding along.
+- **Pending articles (rule 8) are included, not filtered out** — this page is specifically an owner pricing-management tool, and a pending article is exactly the kind of row it exists to surface.
+- **Type is noticeably larger than the dashboard's other pages** — an explicit ask (readable at a glance on a big screen), not just "consistent with the existing dashboard type scale."
+- **Inline edit per row, PIN-gated**: Cost/Selling Price cells become real input fields in place; committing swaps to the shared `PinPrompt` component (the same lightweight-PIN-at-commit shape rule 71 already requires everywhere else), not a fourth hand-copied inline PIN form.
+- Archive/reactivate is deliberately **not** part of this page — that's mobile Article Pricing's own separate concern, not duplicated here.
 
 ### Rules carried over unchanged from the staff app (do not deviate)
 - `(no, factory)` is still the true article identity — never assume article number alone is unique, same as everywhere else.
