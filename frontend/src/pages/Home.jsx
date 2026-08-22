@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import ScreenHeader from '../components/ScreenHeader';
@@ -18,6 +19,7 @@ import {
   ReturnIcon,
   GridIcon,
   WarningTriangleIcon,
+  ChevronIcon,
 } from '../components/icons';
 
 // Home screen — 07_UI_DESIGN_BRIEF.md §5.1, updated per §5.1's own "— updated" entry.
@@ -94,18 +96,15 @@ const OWNER_TILES = [
   { to: '/history', label: 'History', tone: 'lavender', Icon: HistoryIcon },
 ];
 
-// Each entry decides its own visibility from `user`. Low Stock, Good Returns and Manage Parties
-// are unconditional (any authenticated role); Transfer is OWNER-only here as of 2026-08-22 (see
-// its own comment below — it's a STAFF-only tile instead now); the rest are owner-only. Set
-// PIN/Change PIN are a deliberately exclusive pair — exact inverse conditions on the same
-// hasPinSet flag, routing to the same
-// SetPin.jsx screen, which now branches on hasPinSet itself to decide which mode to render (no
-// currentPin field for first-time setup, currentPin required once a PIN already exists — see
-// SetPin.jsx). Exactly one of the two is ever visible for a given owner, never both, never
-// neither. Kept alongside the existing prompt-banner-warning below rather than replacing it:
-// that banner is a higher-visibility nudge for a blocking action (no PIN means no price edits,
-// now no Factory Payments either), which is a different job than a plain list row — the banner
-// only ever mirrors Set PIN's condition, never Change PIN's.
+// Each entry decides its own visibility from `user`. Low Stock and Good Returns are
+// unconditional (any authenticated role); Transfer is OWNER-only here as of 2026-08-22 (see its
+// own comment below — it's a STAFF-only tile instead now); Manage Parties is STAFF-only here as
+// of 2026-08-25 (see its own comment below — it moved into the "Others" group for OWNER, see
+// OTHERS_ITEMS further down). Manage Users, Set PIN, Change PIN, and Factory Payables lived here
+// until that same 2026-08-25 change — all four were already OWNER-only, and OWNER is the only
+// role that could ever see them, so their rows were removed outright rather than gated false;
+// STAFF's view of this array was never affected by any of it (STAFF's filtered result never
+// included any of the four in the first place).
 const MORE_ITEMS = [
   // OWNER only, as of 2026-08-22 (same-day follow-up) — Transfer was unconditional until it was
   // promoted to a tile for STAFF specifically (see STAFF_TILES above), so it would otherwise
@@ -129,34 +128,44 @@ const MORE_ITEMS = [
   // Party sending goods back is a real but occasional event, not part of the daily loop.
   // Label reads "GR - Goods Return" as of 2026-08-22 (was "Good Returns") — task-directed rename.
   { to: '/good-returns', label: 'GR - Goods Return', Icon: ReturnIcon, show: () => true },
-  // Any-role as of 2026-08-18. This was owner-only on the grounds that the screen had no
-  // staff-facing purpose "until New Order exists" — it does now, and picks a Party on every
-  // order, so staff genuinely need to browse and add customers. (Note this reverses an earlier
-  // correction that went the other way, for a reason that has since expired rather than because
-  // that correction was wrong at the time — see LEARNING_LOG.md.) Archive/reactivate remains
-  // owner-only inside the screen and at the API.
-  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: () => true },
-  { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: (user) => user.role === 'OWNER' },
-  {
-    to: '/set-pin',
-    label: 'Set PIN',
-    Icon: KeyIcon,
-    show: (user) => user.role === 'OWNER' && !user.hasPinSet,
-  },
-  {
-    to: '/set-pin',
-    label: 'Change PIN',
-    Icon: KeyIcon,
-    show: (user) => user.role === 'OWNER' && user.hasPinSet,
-  },
+  // STAFF only, as of 2026-08-25 — Manage Parties was unconditional (any-role) until it moved
+  // into OWNER's new collapsible "Others" group (OTHERS_ITEMS below), so it would otherwise
+  // render in both places for an owner. STAFF's own view of this row is untouched: same label,
+  // same position, same icon, still an immediately-visible flat row, exactly as it was before —
+  // same asymmetric-handling shape History and Transfer already used above for the same reason.
+  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: (user) => user.role !== 'OWNER' },
   // Owner-only, and the one entry point to the desktop dashboard (§8). Listed here rather than
   // given a tile because it isn't a daily action — and because a tile would invite tapping it on
-  // the phone, which is the one device §8 explicitly does not design this surface for.
+  // the phone, which is the one device §8 explicitly does not design this surface for. Left as a
+  // flat row (not moved into "Others") — the task that introduced that group named four specific
+  // items, and this wasn't one of them.
   { to: '/dashboard', label: 'Owner Dashboard', Icon: GridIcon, show: (user) => user.role === 'OWNER' },
-  { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: (user) => user.role === 'OWNER' },
-  // Article Pricing lived here until 2026-08-22, when it was promoted to a tile for OWNER (see
-  // OWNER_TILES above). It was already owner-only, so removing the row here doesn't change what
-  // STAFF ever saw (STAFF's filtered view never included it).
+];
+
+// The four admin/settings-ish items grouped under OWNER's collapsible "Others" as of
+// 2026-08-25 — pulled out of the flat MORE_ITEMS above into their own collapsed-by-default
+// section, using this app's existing nested-accordion convention (Live Stock's Factory→Article
+// groups; see the render below) rather than a new collapse mechanism. Same array+show(user)
+// idiom as MORE_ITEMS itself, even though every entry here is unconditionally OWNER-only by
+// construction (this array is only ever rendered under `isOwner` in the first place) — kept for
+// consistency, and because Set PIN/Change PIN still need their own real condition. STAFF never
+// sees this array at all; nothing here is STAFF-reachable by any other route either.
+const OTHERS_ITEMS = [
+  // Unconditional as of 2026-08-18 (see MORE_ITEMS' STAFF-only twin above for the full history);
+  // this is OWNER's copy of that same row, just relocated.
+  { to: '/parties', label: 'Manage Parties', Icon: PartyIcon, show: () => true },
+  { to: '/users', label: 'Manage Users', Icon: UsersIcon, show: () => true },
+  // Set PIN/Change PIN are a deliberately exclusive pair — exact inverse conditions on the same
+  // hasPinSet flag, routing to the same SetPin.jsx screen, which itself branches on hasPinSet to
+  // decide which mode to render (no currentPin field for first-time setup, currentPin required
+  // once a PIN already exists — see SetPin.jsx). Exactly one of the two is ever visible, never
+  // both, never neither. Kept alongside the existing prompt-banner-warning below rather than
+  // replacing it: that banner is a higher-visibility nudge for a blocking action (no PIN means
+  // no price edits, no Factory Payments either), a different job than a row tucked inside a
+  // collapsed group — the banner only ever mirrors Set PIN's condition, never Change PIN's.
+  { to: '/set-pin', label: 'Set PIN', Icon: KeyIcon, show: (user) => !user.hasPinSet },
+  { to: '/set-pin', label: 'Change PIN', Icon: KeyIcon, show: (user) => user.hasPinSet },
+  { to: '/factory-payables', label: 'Factory Payables', Icon: WalletIcon, show: () => true },
 ];
 
 export default function Home() {
@@ -166,6 +175,11 @@ export default function Home() {
   // server on every load — never from anything the browser stored (see useAuth.jsx).
   const isStaff = user.role === 'STAFF';
   const isOwner = user.role === 'OWNER';
+
+  // "Others" group open/closed — collapsed by default (2026-08-25). A plain boolean, not the
+  // Set-of-ids shape Live Stock's two-level accordion needs: there's exactly one collapsible
+  // group on this screen, not an arbitrary number of independently-toggled sections.
+  const [othersOpen, setOthersOpen] = useState(false);
 
   return (
     <div className="page">
@@ -218,14 +232,16 @@ export default function Home() {
       )}
 
       {/* §5.1's "More" list — everything that isn't a core, frequent, semantically-distinct
-          action lives here instead of competing for a colored tile: Low Stock/Good Returns/
-          Manage Parties (any role) plus the owner-only admin/finance screens (Transfer included,
-          as of 2026-08-22 — it's a tile for STAFF instead). Each item's own `show(user)` decides
-          inclusion, since the conditions genuinely differ per item (Set PIN's is stricter than
-          the rest — see MORE_ITEMS' own comment for why). The `some(...)` guard means a "More"
-          label never renders above zero rows — not reachable today (Low Stock always shows),
-          but free insurance against that changing later. */}
-      {MORE_ITEMS.some((item) => item.show(user)) && (
+          action lives here instead of competing for a colored tile: Low Stock/Good Returns (any
+          role), Manage Parties (STAFF-only here as of 2026-08-25 — a flat OWNER row too until
+          then, see its own comment above), Transfer and Owner Dashboard (OWNER-only). Each
+          item's own `show(user)` decides inclusion, since the conditions genuinely differ per
+          item. The `some(...)` guard means a "More" label never renders above zero rows — not
+          reachable today (Low Stock always shows), but free insurance against that changing
+          later; extended to also check OTHERS_ITEMS so the guard stays correct even on a
+          hypothetical future where MORE_ITEMS itself is empty for OWNER but Others isn't. */}
+      {(MORE_ITEMS.some((item) => item.show(user)) ||
+        (isOwner && OTHERS_ITEMS.some((item) => item.show(user)))) && (
         <div className="more-list">
           <div className="eyebrow more-list-label">More</div>
           {MORE_ITEMS.filter((item) => item.show(user)).map(({ to, label, Icon }) => (
@@ -234,6 +250,46 @@ export default function Home() {
               <span>{label}</span>
             </Link>
           ))}
+
+          {/* "Others" — OWNER only, collapsed by default (2026-08-25). Groups Manage Users,
+              Change PIN (or Set PIN), Manage Parties, and Factory Payables out of the flat list
+              above. Reuses this app's existing NESTED-accordion classes (Live Stock's
+              Factory→Article groups, accordion-section.nested/accordion-header.nested/
+              accordion-body.nested) rather than the outer/top-level accordion variant — the
+              nested variant is styled for exactly this context (a plain top-divider between
+              already-flat rows, no card shell of its own), even though this isn't literally
+              nested inside another accordion the way Live Stock's Article level is; it's sitting
+              inside the equally-flat, divider-separated .more-list, which is the same visual
+              situation. Positioned last in OWNER's list — deliberate: reads as a
+              settings/admin catch-all group, appended after every other flat row rather than
+              inserted in the middle of the list, matching this app's established "append,
+              don't renumber" precedent. Flag if a different spot reads better. */}
+          {isOwner && (
+            <div className="accordion-section nested">
+              <button
+                type="button"
+                className="accordion-header nested"
+                onClick={() => setOthersOpen((v) => !v)}
+                aria-expanded={othersOpen}
+              >
+                <div className="accordion-header-text">
+                  <div className="accordion-title-sm">Others</div>
+                </div>
+                <ChevronIcon className={othersOpen ? 'chevron chevron-open' : 'chevron'} />
+              </button>
+
+              {othersOpen && (
+                <div className="accordion-body nested">
+                  {OTHERS_ITEMS.filter((item) => item.show(user)).map(({ to, label, Icon }) => (
+                    <Link key={to} to={to} className="secondary-link-row">
+                      <Icon size={18} />
+                      <span>{label}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

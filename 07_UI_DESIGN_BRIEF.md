@@ -172,6 +172,11 @@ A component's background/border/text should always share the same role tint toge
 ### 5.1 Home — Good Returns row relabelled, 2026-08-22
 - The More-list row's label changed from "Good Returns" to **"GR - Goods Return"**. Route, icon, and visibility (any role) are unchanged for both roles.
 
+### 5.1 Home — collapsible "Others" group in OWNER's More list, 2026-08-25 (STAFF unaffected)
+- **Manage Users, Set PIN/Change PIN, Manage Parties, and Factory Payables** are pulled out of OWNER's flat More list into one new collapsible group labeled **"Others"**, collapsed by default. Reuses this app's existing nested-accordion convention (chevron toggle, header/body classes — same as Live Stock's Factory→Article groups) rather than a new collapse mechanism.
+- Positioned **last** in OWNER's flat list, after Transfer Stock/Low Stock/GR - Goods Return/Owner Dashboard — a judgment call (no order was specified), reading as a settings/admin catch-all tucked at the bottom rather than replacing any one of the four moved items' old position.
+- **STAFF's More list is completely unaffected** — Manage Parties (the only one of the four STAFF could see before) still renders as its own flat, immediately-visible row, same position, same behavior. STAFF never sees an "Others" group at all — none of the other three items were ever STAFF-reachable to begin with.
+
 ### 5.2 Receive Stock — updated
 - Rename the lookup button from "Check" to **"Add"** (two-step flow unchanged: Add to look up, then Add to receipt to commit).
 - Article lookup must always offer a **"Change"** action to re-search — never leave a dead-end disabled input after a wrong/failed search.
