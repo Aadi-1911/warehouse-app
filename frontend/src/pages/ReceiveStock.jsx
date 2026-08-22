@@ -3,6 +3,7 @@ import { TruckIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import CreatableSelect from '../components/CreatableSelect';
+import Combobox from '../components/Combobox';
 import { useAuth } from '../hooks/useAuth';
 import { listFactories, createFactory } from '../api/factories';
 import { listLocations, createLocation } from '../api/locations';
@@ -123,7 +124,10 @@ export default function ReceiveStock() {
   const [bundleCreating, setBundleCreating] = useState(false);
   const [bundleCreateError, setBundleCreateError] = useState(null);
 
-  // The one color actively being set up (picked, not yet staged).
+  // The one color actively being set up (picked, not yet staged). Picked via Combobox
+  // (components/Combobox.jsx, added 2026-08-22) — a live-filtering text input replacing the
+  // CreatableSelect + separate search box this screen briefly had; the filtering (and the
+  // "already selected" safety net) now lives entirely inside Combobox itself, not here.
   const [selectedColorId, setSelectedColorId] = useState('');
   const [currentSets, setCurrentSets] = useState(0);
   const [currentDamaged, setCurrentDamaged] = useState(false); // "Damaged on arrival" for the active color, per §5.2/§6
@@ -600,6 +604,9 @@ export default function ReceiveStock() {
     return merged;
   })();
   const availableColors = colorPickerSource.filter((c) => !stagedColors.some((s) => s.colorId === c.id));
+  // Live filtering, keyboard nav, and the "already-selected stays valid" guarantee all live
+  // inside Combobox now (components/Combobox.jsx) — this screen just hands it the same
+  // already-fetched, already-deduplicated list it always computed for the old CreatableSelect.
   // Both lists matter now, always — there's no more mode where only one of them is the picker's
   // real source, so both must have settled before the picker can honestly report anything.
   const colorListsSettled = resolvedColorsStatus === 'loaded' && globalColorsStatus === 'loaded';
@@ -840,7 +847,11 @@ export default function ReceiveStock() {
             </div>
 
             <div className="color-staging">
-              <CreatableSelect
+              {/* Combobox (components/Combobox.jsx, added 2026-08-22) — one live-filtering text
+                  input replacing the CreatableSelect + separate search box this screen briefly
+                  had. Same value shape (selectedColorId), same handlers, same always-reachable
+                  "+ Create new color" — only how it's picked changed. */}
+              <Combobox
                 fieldLabel="Color"
                 value={selectedColorId}
                 onChange={handleColorChange}

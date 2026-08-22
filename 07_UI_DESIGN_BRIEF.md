@@ -182,6 +182,13 @@ A component's background/border/text should always share the same role tint toge
 - The receipt list renders as a **table**, grouped by article, showing Colour / Sets / Pieces per line.
 - **"Save receipt" requires a confirmation step** before committing (a centered dialog: "Save this receipt? This updates live stock immediately." Cancel / Confirm).
 
+### 5.2 Receive Stock — color picker is now a live-filtering Combobox, 2026-08-22 (supersedes this same day's earlier search-box-plus-select version)
+- The Color field is `components/Combobox.jsx` — one text input, no separate search box next to a picker. Focused with nothing typed, its dropdown shows every available color unfiltered; typing narrows the list live on every keystroke (case-insensitive substring on name), no separate search step. Click or Enter on a row selects it, fills the input with its name, closes the dropdown. Arrow up/down moves a highlighted row through the list; Escape closes without changing the selection; clicking outside does the same.
+- "+ Create new color" appears as the LAST row of the same dropdown whenever something's typed (not a separate message block, not gated to only the zero-match case) — one click or Enter creates it using exactly the typed text as the name, selects it, and closes the dropdown. No second name-entry step.
+- There is exactly **one** color-picker location on this screen, not two — the picker's own list is already the union of an article's real colors and every system-wide color (the "REAL GAP fix," dated earlier), shared identically by a matched article and a just-created one (both render the same block).
+- The already-selected color always stays correctly displayed regardless of what's typed afterward — Combobox's own guarantee, functionally equivalent to (but mechanically different from) the native-`<select>` fix this superseded.
+- `Combobox` is a genuinely reusable component, not Receive-Stock-specific — `components/CreatableSelect.jsx` (the native-`<select>` picker Factory/Location still use) is untouched.
+
 ### 5.3 New Order — updated
 - If a searched article number exists under more than one Factory, show **factory-disambiguation chips** before resolving.
 - Show pieces alongside sets in both the per-colour picker and the order summary (pieces-per-set is already known from receiving).

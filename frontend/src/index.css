@@ -331,6 +331,60 @@ body {
   cursor: default;
 }
 
+/* --- Combobox (added 2026-08-22) — live-filtering picker: components/Combobox.jsx --- */
+.combobox {
+  position: relative;
+}
+
+.combobox-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  /* Same shade family as .dash-card's own shadow (rgba(28,27,25,...)), just stronger — this
+     needs to visibly lift off whatever's rendered underneath it, not just hint at a card edge. */
+  box-shadow: 0 4px 16px rgba(28, 27, 25, 0.14);
+}
+
+.combobox-option {
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.combobox-option-highlighted {
+  background: var(--section-fill);
+}
+
+.combobox-option-selected {
+  font-weight: 700;
+}
+
+.combobox-create-row {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.combobox-create-row.combobox-option-highlighted {
+  background: var(--accent-bg);
+}
+
+.combobox-empty-row {
+  padding: 9px 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
 /* Article No. input sits next to the Add/Search button rather than stacked above it. Spacing
    below the row lives HERE, on the row itself, not on a child — align-items: flex-end aligns
    each child's own MARGIN box, which is only the same as aligning their VISIBLE bottom edges
