@@ -14,8 +14,8 @@ import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
 // own PIN lock) — this is a stock-visibility screen, same category as Live Stock itself, not a
 // financial figure. GET /api/stock backs both: routes/stock.js gates it with requireAuth alone,
 // no requireRole, and stockController.js's own select only ever joins bundle.product for
-// {id, articleNo, factoryId, factory.name} plus bundle.color.name and location.name — costPrice/
-// sellingPrice live on Product but are never selected here. Confirmed by reading the controller
+// {id, articleNo, name, factoryId, factory.name} plus bundle.color.name and location.name —
+// costPrice/sellingPrice live on Product but are never selected here. Confirmed by reading the controller
 // directly rather than assuming identical-looking screens share identical data safety: nothing
 // owner-only rides along on this row shape, so reusing listStock() as-is (the same call Live
 // Stock/Transfer/the dashboard's own Low Stock page already make) needs no separate endpoint and
@@ -94,6 +94,7 @@ export default function LowStockList() {
       factoryGroup.articles.set(row.productId, {
         productId: row.productId,
         articleNo: row.productArticleNo,
+        productName: row.productName,
         rows: [],
       });
     }
@@ -159,7 +160,10 @@ export default function LowStockList() {
                       aria-expanded={open}
                     >
                       <div className="accordion-header-text">
-                        <div className="accordion-title-sm">{article.articleNo}</div>
+                        <div className="accordion-title-sm">
+                          {article.articleNo}
+                          <span className="muted"> — {article.productName}</span>
+                        </div>
                         <div className="accordion-subtitle">
                           <span className="badge badge-accent">
                             {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}

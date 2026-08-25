@@ -1,7 +1,7 @@
 import { apiFetch } from './client';
 
 // GET /api/stock?articleNo=&colorId=&locationId= -> [{ bundleId, productId, productArticleNo,
-// factoryId, factoryName, colorName, locationId, locationName, qtySets }]
+// productName, factoryId, factoryName, colorName, locationId, locationName, qtySets }]
 //
 // Live Stock View calls this with no filters and searches client-side (its search matches
 // article OR colour, which doesn't map cleanly onto this endpoint's colorId-by-id param), so

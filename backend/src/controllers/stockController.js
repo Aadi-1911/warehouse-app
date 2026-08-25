@@ -25,7 +25,9 @@ async function listStock(req, res) {
       qtySets: true,
       bundle: {
         select: {
-          product: { select: { id: true, articleNo: true, factoryId: true, factory: { select: { name: true } } } },
+          product: {
+            select: { id: true, articleNo: true, name: true, factoryId: true, factory: { select: { name: true } } },
+          },
           color: { select: { name: true } },
         },
       },
@@ -46,10 +48,16 @@ async function listStock(req, res) {
   // every consumer of this endpoint needs a Location→Factory→Article→Colour hierarchy sooner
   // or later and the join is already sitting right here. Purely additive — existing callers
   // that don't reference these two fields are unaffected.
+  //
+  // productName rides along too — added so the Low Stock screens can show "ArticleNo — Name" the
+  // same way Pack/Bill/Ship Order already do, instead of a bare article number. Product.name has
+  // no role-sensitivity (unlike costPrice/sellingPrice, which live on the same model but are never
+  // selected here), so no gating question to weigh — just another additive field.
   const response = stock.map((s) => ({
     bundleId: s.bundleId,
     productId: s.bundle.product.id,
     productArticleNo: s.bundle.product.articleNo,
+    productName: s.bundle.product.name,
     factoryId: s.bundle.product.factoryId,
     factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,

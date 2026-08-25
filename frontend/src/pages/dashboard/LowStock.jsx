@@ -108,6 +108,7 @@ export default function LowStock() {
       factoryGroup.articles.set(row.productId, {
         productId: row.productId,
         articleNo: row.productArticleNo,
+        productName: row.productName,
         rows: [],
       });
     }
@@ -183,7 +184,10 @@ export default function LowStock() {
                       aria-expanded={open}
                     >
                       <div className="accordion-header-text">
-                        <div className="accordion-title-sm">{article.articleNo}</div>
+                        <div className="accordion-title-sm">
+                          {article.articleNo}
+                          <span className="muted"> — {article.productName}</span>
+                        </div>
                         <div className="accordion-subtitle">
                           <span className="badge badge-accent">
                             {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}
