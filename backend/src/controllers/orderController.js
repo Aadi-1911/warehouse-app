@@ -19,7 +19,7 @@ const LINE_ITEM_SELECT = {
       // isKids + sizes are the piecesPerSetFor shape (utils/piecesPerSet.js) — needed so a
       // client (Bill Order's per-article total) can convert sets to pieces itself, same shape
       // productController's productSelect already exposes elsewhere.
-      product: { select: { id: true, articleNo: true, name: true, isKids: true, sizes: { select: { sizeLabel: true } } } },
+      product: { select: { id: true, articleNo: true, name: true, isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } },
       color: { select: { id: true, name: true } },
     },
   },
@@ -256,7 +256,7 @@ async function listOrders(req, res) {
           priceAtOrder: true,
           // Needed for piecesPerSetFor — costPrice/sizes.costPrice never touched, this is
           // purely the piece-count shape (isKids + sizeLabel), same select revenue.js uses.
-          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
         },
       },
     },
@@ -519,7 +519,7 @@ async function billOrder(req, res) {
           // qtySetsRequested-based (rule 101 — billing commits against what was actually packed,
           // the same basis BillOrderDetail.jsx's frontend total has always used for this screen).
           priceAtOrder: true,
-          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
         },
       },
     },

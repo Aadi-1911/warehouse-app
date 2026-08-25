@@ -184,7 +184,8 @@ Note (Round 12): `category` was a nullable free-text string; it is now a require
 Same visibility rule as above, single record.
 
 ### `POST /api/products` 🔒 (📌 required only if price fields are included — see below)
-Body: `{ articleNo, name, factoryId, categoryId?, costPrice?, sellingPrice?, sizes: [{ sizeLabel, sortOrder }] }`
+Body: `{ articleNo, name, factoryId, categoryId?, costPrice?, sellingPrice?, sizes: [{ sizeLabel, sortOrder, qty? }] }`
+`qty` (added 2026-08-25, rule 102) is how many garments of that size are in one set — omit it and it defaults to `1`, which is exactly what every pre-`qty` caller already meant. When present it must be a **whole number ≥ 1**; `0` or a fraction returns `400 VALIDATION_ERROR`. A size that isn't part of the set is simply absent from the array — never sent as a `qty: 0` row, which is what keeps "has a ProductSize row" meaning exactly "is part of this set".
 **Any authenticated role can create a Product with no price fields** — this lands the article in the pending-price state (rule 8), which is the normal path for staff creating new articles during Receive Stock.
 **If the body includes `costPrice` or `sellingPrice`, the same rule as editing applies: OWNER role AND a PIN match are both required** (`{ pin: "<owner's PIN>" }` in the body), exactly as PATCH requires below. The distinction is never "creating vs. editing" — it's "does this request set a real price," and that's always OWNER+PIN, no exception for it happening at creation time.
 `categoryId` should always be a real value from `GET /api/categories` — Receive Stock's New-article form requires picking one (Kids-toggle smart-defaults it to "Kids", but it stays changeable). It remains technically optional at the API layer only as a defensive fallback: an omitted value is silently assigned the "Others" Category rather than failing the request outright, for any caller other than the current UI (a future integration, a direct API call).
@@ -409,7 +410,7 @@ Server-side logic:
 5. `priceAtOrder` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body**, same principle as `Transaction.costPriceSnapshot`.
 6. `Order.createdById` comes from the authenticated session, never the request body. `status` defaults to `PLACED`.
 
-Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, productIsKids, productSizes, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`. `productIsKids`/`productSizes` (`[{ sizeLabel }]`) are the `piecesPerSetFor` shape (`utils/piecesPerSet.js`) — added 2026-08-20 so a client can convert a line's sets to pieces itself (e.g. Bill Order's per-article total) without a second request.
+Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, productIsKids, productSizes, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`. `productIsKids`/`productSizes` (`[{ sizeLabel, qty }]`) are the `piecesPerSetFor` shape (`utils/piecesPerSet.js`) — added 2026-08-20 so a client can convert a line's sets to pieces itself (e.g. Bill Order's per-article total) without a second request. `qty` joined that shape on 2026-08-25 (rule 102): an adult article's pieces-per-set is `SUM(qty)`, so a client computing its own total needs it or it would under-count any article that repeats a size.
 Errors: `400 VALIDATION_ERROR`, `400 UNPRICED_PRODUCT`, `404 PARTY_NOT_FOUND`, `404 BUNDLE_NOT_FOUND`, `409 PARTY_ARCHIVED`.
 
 ### `GET /api/orders` 🔒

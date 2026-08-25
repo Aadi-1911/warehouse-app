@@ -544,6 +544,61 @@ body {
   margin-bottom: 12px;
 }
 
+/* Adult size chip with its own quantity stepper (2026-08-25) — a size can appear more than once
+   in one set, so each chip carries a count rather than an on/off state. Deliberately NOT built on
+   .chip: a .chip is a single tap target that is itself the button, while this is a labelled
+   container holding two separate buttons, so inheriting .chip's padding/cursor/border would style
+   a thing that is no longer clickable as a whole. */
+.size-stepper-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  border-radius: 9999px;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+}
+
+/* A size that's actually in the set. Same "Selected chip (any picker)" token .chip-selected uses
+   (§3.4) so an included size reads identically to every other selected picker item in the app —
+   but applied to the border/label only, never a full dark fill, because the stepper buttons sit
+   inside this container and would lose their own contrast against it. */
+.size-stepper-chip-included {
+  border-color: var(--text-primary);
+}
+
+.size-stepper-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 28px;
+}
+
+.size-stepper-chip-included .size-stepper-label {
+  color: var(--text-primary);
+}
+
+/* Tighter than the default .stepper (14px), which is sized for the standalone Sets control —
+   several of these sit side by side in a wrapping row, so they need to stay compact. */
+.size-stepper {
+  gap: 8px;
+}
+
+.size-stepper .stepper-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
+}
+
+.size-stepper .stepper-value {
+  min-width: 16px;
+  font-size: 14px;
+}
+
+.size-stepper-row {
+  gap: 10px;
+}
+
 .add-other-size-link {
   display: inline-block;
   margin-bottom: 10px;

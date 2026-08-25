@@ -22,7 +22,9 @@ function productSelect(role) {
     sellingPrice: true,
     ...(role === 'OWNER' ? { costPrice: true } : {}),
     sizes: {
-      select: { id: true, sizeLabel: true, sortOrder: true },
+      // qty rides along so any client calling its own piecesPerSetFor (Receive Stock's live
+      // readout, New Order, Good Returns) sums real quantities rather than counting rows.
+      select: { id: true, sizeLabel: true, sortOrder: true, qty: true },
       orderBy: { sortOrder: 'asc' },
     },
   };
@@ -99,6 +101,16 @@ async function createProduct(req, res) {
     if (!size || typeof size.sizeLabel !== 'string' || !size.sizeLabel.trim()) {
       return sendError(res, 400, 'VALIDATION_ERROR', 'Each size requires a non-empty sizeLabel');
     }
+    // qty is optional (omitted means 1, matching the column default and every pre-qty caller),
+    // but when present it must be a positive whole number. Rejecting 0 rather than quietly
+    // dropping the row is what enforces ProductSize's "only rows with qty > 0 ever exist"
+    // invariant at the API boundary: a zero-qty row would mean "this size is part of the set,
+    // zero times", which is exactly the contradiction the invariant exists to prevent. The UI
+    // already never sends one (a size stepped down to 0 is omitted from the array entirely) —
+    // this is the server-side guarantee for any caller that bypasses it.
+    if (size.qty !== undefined && (!Number.isInteger(size.qty) || size.qty < 1)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'Each size qty must be a whole number of at least 1');
+    }
   }
 
   try {
@@ -112,7 +124,15 @@ async function createProduct(req, res) {
         isKids: !!isKids,
         costPrice,
         sellingPrice,
-        sizes: { create: sizes.map((s) => ({ sizeLabel: s.sizeLabel, sortOrder: s.sortOrder ?? 0 })) },
+        sizes: {
+          create: sizes.map((s) => ({
+            sizeLabel: s.sizeLabel,
+            sortOrder: s.sortOrder ?? 0,
+            // ?? 1 keeps every pre-qty caller (and any client that doesn't know about repeated
+            // sizes) behaving exactly as before — one row, one piece.
+            qty: s.qty ?? 1,
+          })),
+        },
       },
       // Structurally the same "select, don't strip" guarantee as every other Product read —
       // now that STAFF can hit this route too, hardcoding 'OWNER' here would leak costPrice

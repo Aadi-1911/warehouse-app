@@ -208,7 +208,7 @@ async function getPartyPayable(req, res) {
       select: {
         qtySets: true,
         priceAtReturn: true,
-        bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+        bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
       },
     }),
   ]);

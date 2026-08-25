@@ -162,7 +162,7 @@ async function getFactoryPayable(req, res) {
           bundle: {
             select: {
               product: {
-                select: { isKids: true, sizes: { select: { sizeLabel: true } } },
+                select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } },
               },
             },
           },

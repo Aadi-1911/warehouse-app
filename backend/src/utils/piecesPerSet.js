@@ -21,15 +21,27 @@
 // need updating together.
 const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
 
-// Expects a Product with its `sizes` relation selected (at minimum `sizeLabel`). Returns 0 rather
-// than throwing when a Kids article's label isn't recognised — a 0 contributes nothing to a sum,
-// which is the safe direction for a money figure: it under-reports visibly rather than inventing
-// value from a label nobody recognises.
+// Expects a Product with its `sizes` relation selected (at minimum `sizeLabel` and `qty`).
+// Returns 0 rather than throwing when a Kids article's label isn't recognised — a 0 contributes
+// nothing to a sum, which is the safe direction for a money figure: it under-reports visibly
+// rather than inventing value from a label nobody recognises.
+//
+// Adult articles SUM `qty` rather than counting rows (2026-08-25), so a set that genuinely
+// repeats a size — M, L, L, XL — reports 4 pieces, not the 3 a row-count would give.
+//
+// `?? 1` is a deliberate safety net, not defensive noise. Eleven separate Prisma selects across
+// this codebase feed this function, and every one of them has to remember `qty: true`. A bare
+// `s.qty` on a select that forgot it yields NaN, and a single NaN silently poisons an ENTIRE
+// aggregate — one bad product would turn a whole factory payable or dashboard KPI into NaN.
+// Falling back to 1 instead degrades to exactly the pre-qty COUNT behaviour: wrong only for the
+// articles that actually repeat a size, and wrong visibly rather than catastrophically. Same
+// reasoning as the `?? 0` above — for a money figure, prefer the failure mode that under-reports
+// one article over the one that destroys the sum it's part of.
 function piecesPerSetFor(product) {
   if (product.isKids) {
     return KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0;
   }
-  return product.sizes.length;
+  return product.sizes.reduce((sum, s) => sum + (s.qty ?? 1), 0);
 }
 
 module.exports = { KIDS_PIECES_BY_LABEL, piecesPerSetFor };

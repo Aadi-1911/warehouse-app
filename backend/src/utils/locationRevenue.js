@@ -61,7 +61,7 @@ const SALE_TRANSACTION_SELECT = {
     select: {
       locationId: true,
       bundle: {
-        select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true } } } } },
+        select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
       },
     },
   },
@@ -93,7 +93,7 @@ async function computeStockValueByLocation(prisma) {
     select: {
       locationId: true,
       qtySets: true,
-      bundle: { select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true } } } } } },
+      bundle: { select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
     },
   });
 

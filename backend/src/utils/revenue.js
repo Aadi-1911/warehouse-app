@@ -116,7 +116,7 @@ const REVENUE_ORDER_SELECT = {
       qtySetsRequested: true,
       priceAtOrder: true,
       bundle: {
-        select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } },
+        select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
       },
     },
   },

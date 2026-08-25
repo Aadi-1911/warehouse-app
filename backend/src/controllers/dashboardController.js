@@ -36,7 +36,7 @@ async function getOverview(req, res) {
       bundle: {
         select: {
           product: {
-            select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true } } },
+            select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } },
           },
         },
       },
@@ -84,7 +84,7 @@ async function getOverview(req, res) {
           qtySetsRequested: true,
           priceAtOrder: true,
           bundle: {
-            select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } },
+            select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
           },
         },
       },

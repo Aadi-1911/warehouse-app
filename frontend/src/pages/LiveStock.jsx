@@ -5,6 +5,7 @@ import { listStock } from '../api/stock';
 import { listProducts } from '../api/products';
 import { listFactories } from '../api/factories';
 import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
+import { piecesPerSetFor } from '../utils/piecesPerSet';
 
 // Live Stock View — 07_UI_DESIGN_BRIEF.md §5.5 / §6 Round 6-7 refinements / 05_BUSINESS_RULES.md
 // rules 56-57. Read-only: no mutations happen here, only GET requests.
@@ -103,7 +104,11 @@ export default function LiveStock() {
         productId: row.productId,
         articleNo: row.productArticleNo,
         productName: product.name,
-        piecesPerSet: product.sizes.length,
+        // The shared util, not a raw sizes.length. This was the ONE remaining site in the app
+        // still counting rows directly (found by grepping for sizes.length while adding qty) —
+        // it would have ignored a repeated size, and was already reporting every Kids article at
+        // 1 piece per set instead of its real 4/5/6, since a Kids article stores a single row.
+        piecesPerSet: piecesPerSetFor(product),
         rows: [],
       });
     }

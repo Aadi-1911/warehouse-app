@@ -42,6 +42,51 @@ const ADULT_SIZE_ORDER = [EXTRA_ADULT_SIZE, ...COMMON_ADULT_SIZES, ...EXTENDED_A
 // labels shown here can never drift from the actual conversion piecesPerSetFor uses.
 const KIDS_CATEGORIES = Object.entries(KIDS_PIECES_BY_LABEL).map(([label, pieces]) => ({ label, pieces }));
 
+// One adult size and its quantity-in-the-set. Extracted rather than repeated because all three
+// adult size rows (Common, Extended, and the "+ add other size" S row) render exactly this, and
+// the whole point of the interaction is that every chip looks and behaves identically — three
+// hand-copied versions is precisely how that stops being true after the next edit.
+//
+// The stepper is ALWAYS rendered, at qty 0 for a size that isn't in the set yet — never revealed
+// only after a size is "selected". That's deliberate and was validated against a working mockup
+// before this was built: there's no separate select-then-set-quantity mode to discover, the first
+// "+" is what includes the size (0 -> 1), which is the same single tap the previous toggle-chip
+// needed. "−" is disabled at 0 rather than hidden, so the control's shape never shifts as it's
+// used. Reuses the app's existing .stepper/.stepper-btn/.stepper-value classes (§3.4's "circular
+// +/- buttons flanking a centered number", never a raw number input) rather than a new control.
+function SizeStepperChip({ label, qty, onAdjust }) {
+  const included = qty > 0;
+  return (
+    <div className={`size-stepper-chip${included ? ' size-stepper-chip-included' : ''}`}>
+      <span className="size-stepper-label">{label}</span>
+      <div className="stepper size-stepper">
+        <button
+          type="button"
+          className="stepper-btn"
+          onClick={() => onAdjust(label, -1)}
+          disabled={!included}
+          aria-label={`Decrease ${label}`}
+        >
+          −
+        </button>
+        {/* aria-live so a screen reader announces the new count on each tap — the number is the
+            only thing that changes, and it's the entire meaning of the interaction. */}
+        <span className="stepper-value" aria-live="polite">
+          {qty}
+        </span>
+        <button
+          type="button"
+          className="stepper-btn"
+          onClick={() => onAdjust(label, 1)}
+          aria-label={`Increase ${label}`}
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ReceiveStock() {
   // Location creation is OWNER-only on the backend (locationController.js); Factory/Color are
   // open to any role. Only Location's "+ Create new…" option needs to be gated on this.
@@ -85,7 +130,15 @@ export default function ReceiveStock() {
   const [newArticleName, setNewArticleName] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [isKids, setIsKids] = useState(false);
-  const [selectedSizes, setSelectedSizes] = useState([]); // ADULT ONLY — labels, any order, counting-based (unchanged)
+  // ADULT ONLY — { sizeLabel: qty } for sizes actually in the set, e.g. { M: 1, L: 2, XL: 1 }.
+  // Replaced a plain array of selected labels (2026-08-25) when a size became able to appear more
+  // than once in one set. A label is present in this object ONLY while its qty is > 0: stepping a
+  // size back down to 0 deletes its key rather than storing a zero, which keeps "is this label a
+  // key" meaning exactly "is this size part of the set" — the same thing the old array's
+  // membership meant, so every downstream check stays a presence check rather than becoming a
+  // "present but might be zero" check. It also matches ProductSize's own invariant, so the
+  // request body this builds can never contain a zero-qty row.
+  const [sizeQtys, setSizeQtys] = useState({});
   const [selectedKidsCategory, setSelectedKidsCategory] = useState(null); // KIDS ONLY — one label or null, never counted
   const [showExtraSize, setShowExtraSize] = useState(false);
   const [creatingArticle, setCreatingArticle] = useState(false);
@@ -333,7 +386,7 @@ export default function ReceiveStock() {
     setNewArticleName('');
     setCategoryId('');
     setIsKids(false);
-    setSelectedSizes([]);
+    setSizeQtys({});
     setSelectedKidsCategory(null);
     setShowExtraSize(false);
     setCreatingArticle(false);
@@ -382,8 +435,19 @@ export default function ReceiveStock() {
   }
 
   // --- New-article sizing.
-  function toggleSize(label) {
-    setSelectedSizes((prev) => (prev.includes(label) ? prev.filter((s) => s !== label) : [...prev, label]));
+  // One handler for both stepper buttons. Every size chip renders an identical −/qty/+ stepper
+  // from the moment the sizing step loads, with no special-casing for "not yet selected" — the
+  // first "+" takes a size from 0 (excluded) to 1 (included), which is the same single tap the
+  // old toggle-chip needed, so the common no-repeat case costs no extra taps. Stepping down to 0
+  // deletes the key outright rather than storing a zero (see sizeQtys' own comment).
+  function adjustSize(label, delta) {
+    setSizeQtys((prev) => {
+      const next = { ...prev };
+      const updated = (next[label] ?? 0) + delta;
+      if (updated <= 0) delete next[label];
+      else next[label] = updated;
+      return next;
+    });
   }
 
   // Switching sizing systems clears BOTH systems' selections (rule 50) — a "3XL" or a
@@ -403,7 +467,7 @@ export default function ReceiveStock() {
       if (kidsCategory) setCategoryId(kidsCategory.id);
     }
     setIsKids((prev) => !prev);
-    setSelectedSizes([]);
+    setSizeQtys({});
     setSelectedKidsCategory(null);
     setShowExtraSize(false);
   }
@@ -423,19 +487,26 @@ export default function ReceiveStock() {
       setCreateArticleError('Select an age category.');
       return;
     }
-    if (!isKids && selectedSizes.length === 0) {
+    if (!isKids && Object.keys(sizeQtys).length === 0) {
       setCreateArticleError('Select at least one size.');
       return;
     }
 
     // Kids: exactly one ProductSize row, storing WHICH category was chosen — piece count is
     // never derived from this array's length (see piecesPerSet below), just the category label
-    // itself. Adult: unchanged, canonical order rather than click order — see ADULT_SIZE_ORDER.
+    // itself. No qty sent at all: Kids is a fixed per-category lookup, so a qty would be a field
+    // nothing reads, and omitting it lets the column default (1) stand.
+    //
+    // Adult: still canonical order rather than tap order (ADULT_SIZE_ORDER), now carrying each
+    // size's own qty. Filtering on presence in sizeQtys is exactly the old `.includes(label)`
+    // check — a label is only ever a key while its qty is > 0 — so a size stepped back down to 0
+    // is naturally absent here rather than being sent as a zero-qty row.
     const sizes = isKids
       ? [{ sizeLabel: selectedKidsCategory, sortOrder: 0 }]
-      : ADULT_SIZE_ORDER.filter((label) => selectedSizes.includes(label)).map((label, index) => ({
+      : ADULT_SIZE_ORDER.filter((label) => sizeQtys[label] > 0).map((label, index) => ({
           sizeLabel: label,
           sortOrder: index,
+          qty: sizeQtys[label],
         }));
 
     setCreatingArticle(true);
@@ -632,11 +703,13 @@ export default function ReceiveStock() {
       : 'All colors staged'; // every existing color (this article's own + global) already picked
   }
   const canAddToReceipt = stagedColors.length > 0 || (!!selectedColorId && currentSets > 0);
-  // Adult: counting-based, unchanged. Kids: a direct lookup the moment a category is picked —
-  // no counting, 0 until something is actually selected (rule 50, revised).
+  // Adult: the SUM of every chip's qty, not a count of how many chips are non-zero — this is what
+  // makes M,L,L,XL read "4 pieces per set" live as it's built, matching what piecesPerSetFor will
+  // compute from the saved rows afterwards. Kids: a direct lookup the moment a category is picked
+  // — no counting and no summing, 0 until something is actually selected (rule 50, revised).
   const piecesPerSet = isKids
     ? (selectedKidsCategory ? KIDS_PIECES_BY_LABEL[selectedKidsCategory] : 0)
-    : selectedSizes.length;
+    : Object.values(sizeQtys).reduce((sum, q) => sum + q, 0);
 
   // Grouped by productId, not assumed to be one receiptItems entry per article — the same
   // article can be searched and committed more than once in a session, and rule 53 wants those
@@ -1073,42 +1146,36 @@ export default function ReceiveStock() {
 
                 {!isKids ? (
                   <>
-                    <div className="chip-row">
+                    {/* Rule 49's row structure is unchanged — Common always visible, Extended
+                        always visible, S only via "+ add other size". Only what each row's chip
+                        IS changed: a stepper instead of a toggle. */}
+                    <div className="chip-row size-stepper-row">
                       {COMMON_ADULT_SIZES.map((label) => (
-                        <button
+                        <SizeStepperChip
                           key={label}
-                          type="button"
-                          className={`chip ${selectedSizes.includes(label) ? 'chip-selected' : ''}`}
-                          onClick={() => toggleSize(label)}
-                          aria-pressed={selectedSizes.includes(label)}
-                        >
-                          {label}
-                        </button>
+                          label={label}
+                          qty={sizeQtys[label] ?? 0}
+                          onAdjust={adjustSize}
+                        />
                       ))}
                     </div>
-                    <div className="chip-row">
+                    <div className="chip-row size-stepper-row">
                       {EXTENDED_ADULT_SIZES.map((label) => (
-                        <button
+                        <SizeStepperChip
                           key={label}
-                          type="button"
-                          className={`chip ${selectedSizes.includes(label) ? 'chip-selected' : ''}`}
-                          onClick={() => toggleSize(label)}
-                          aria-pressed={selectedSizes.includes(label)}
-                        >
-                          {label}
-                        </button>
+                          label={label}
+                          qty={sizeQtys[label] ?? 0}
+                          onAdjust={adjustSize}
+                        />
                       ))}
                     </div>
                     {showExtraSize ? (
-                      <div className="chip-row">
-                        <button
-                          type="button"
-                          className={`chip ${selectedSizes.includes(EXTRA_ADULT_SIZE) ? 'chip-selected' : ''}`}
-                          onClick={() => toggleSize(EXTRA_ADULT_SIZE)}
-                          aria-pressed={selectedSizes.includes(EXTRA_ADULT_SIZE)}
-                        >
-                          {EXTRA_ADULT_SIZE}
-                        </button>
+                      <div className="chip-row size-stepper-row">
+                        <SizeStepperChip
+                          label={EXTRA_ADULT_SIZE}
+                          qty={sizeQtys[EXTRA_ADULT_SIZE] ?? 0}
+                          onAdjust={adjustSize}
+                        />
                       </div>
                     ) : (
                       <button

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "ProductSize" ADD COLUMN     "qty" INTEGER NOT NULL DEFAULT 1;

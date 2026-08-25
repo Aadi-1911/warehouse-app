@@ -16,13 +16,22 @@
 // per set" for an article that really holds 4, 5 or 6 (rule 50).
 export const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
 
-// Expects a product-shaped object with `isKids` and a `sizes` array of `{ sizeLabel }` (at
+// Expects a product-shaped object with `isKids` and a `sizes` array of `{ sizeLabel, qty }` (at
 // minimum). Returns 0 rather than throwing when a Kids article's label isn't recognised — a 0
 // contributes nothing to a sum, which is the safe direction for a money figure: it under-reports
 // visibly rather than inventing value from a label nobody recognises.
+//
+// Adult articles SUM `qty` rather than counting rows (2026-08-25), so a set that genuinely
+// repeats a size — M, L, L, XL — reports 4 pieces, not the 3 a row-count would give.
+//
+// `?? 1` is a deliberate safety net, not defensive noise: it makes a `sizes` array that arrived
+// without `qty` (an API response or Prisma select that forgot it) degrade to exactly the pre-qty
+// COUNT behaviour, instead of summing to NaN and silently poisoning every total it feeds. Same
+// reasoning as the `?? 0` above — for a money figure, prefer the failure mode that under-reports
+// one article over the one that destroys the sum it's part of.
 export function piecesPerSetFor(product) {
   if (product.isKids) {
     return KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0;
   }
-  return product.sizes.length;
+  return product.sizes.reduce((sum, s) => sum + (s.qty ?? 1), 0);
 }

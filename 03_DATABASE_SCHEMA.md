@@ -130,17 +130,27 @@ model ProductSize {
   sizeLabel String   // adult: "M","L","XL","XXL","3XL"..."6XL","S" (via "+ add other size").
                       // kids (Product.isKids = true): fixed category strings per rule 50 — "1-5yr", "6-16yr", "12-18yr".
   sortOrder Int      @default(0)
+  qty       Int      @default(1) // how many garments of THIS size are in one set (added 2026-08-25,
+  // rule 102). Some articles genuinely repeat a size in their standard composition — M, L, L, XL
+  // is a real recurring set for certain articles, not a one-off delivery quirk. Only rows with
+  // qty > 0 ever exist: a size stepped back to 0 during sizing has its row omitted entirely,
+  // never stored as a zero. Defaults to 1, so every row predating this field is unaffected.
 
-  // Adult articles: pieces-per-set = the COUNT of ProductSize rows (e.g. M/L/XL/XXL = 4 rows = 4 pieces).
+  // Adult articles: pieces-per-set = SUM(qty) across the article's ProductSize rows (e.g.
+  // M/L/L/XL = 3 rows with qtys 1/2/1 = 4 pieces). This replaced a straight COUNT of rows when
+  // qty was added; the two agree exactly whenever every qty is 1, which was verified against all
+  // 20 real articles before and after that migration.
   // Kids articles (rule 50, supersedes an earlier unified-counting design): exactly ONE ProductSize
   // row exists (single-select category), and pieces-per-set is a FIXED lookup on that category's
-  // label, NOT the row count — "1-5yr"=5pc, "6-16yr"=6pc, "12-18yr"=4pc. Counting rows for a Kids
-  // article gives the wrong answer; this caused real bugs before being caught and fixed.
+  // label, NOT the row count and NOT a qty sum — "1-5yr"=5pc, "6-16yr"=6pc, "12-18yr"=4pc.
+  // Counting rows for a Kids article gives the wrong answer; this caused real bugs before being
+  // caught and fixed. qty is structurally irrelevant for Kids and stays at its default of 1.
   // Used later (Phase 3) to convert set-quantities into piece-quantities for billing.
 
-  @@unique([productId, sizeLabel]) // a duplicate label for the same Product would silently
-  // inflate pieces-per-set (a straight COUNT of these rows) — this makes that unrepresentable
-  // at the database level, not just prevented by the chip-toggle UI never offering a duplicate.
+  @@unique([productId, sizeLabel]) // still exactly ONE row per size label — a deliberately
+  // repeated size is expressed as that row's qty, never as duplicate rows. Keeping this
+  // constraint preserves the original guarantee that an ACCIDENTAL duplicate label can't
+  // silently inflate pieces-per-set, while making the intentional case explicit instead.
 }
 
 model Color {
