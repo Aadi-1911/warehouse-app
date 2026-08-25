@@ -1240,6 +1240,34 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* Billing breakdown inside an expanded Owner Dashboard order row (rule 103). Reuses the modal's
+   .bill-pricing-line/.bill-pricing-final type treatment so a billed order reads the same way in
+   both places, but overrides their geometry: those margins are tuned to sit under a percent input
+   mid-modal (negative top margin, 24px indent), which is meaningless here. Scoped under this
+   container so the modal's own usage is untouched. */
+.dash-order-billing {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.dash-order-billing .bill-pricing-line,
+.dash-order-billing .bill-pricing-final {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 6px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.dash-order-billing .bill-pricing-final {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
 /* --- Home: self-service PIN prompt + Manage Users entry point --- */
 .prompt-banner {
   display: flex;

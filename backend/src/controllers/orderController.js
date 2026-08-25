@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
+const { orderValueOf } = require('../utils/orderValue');
 
 const prisma = new PrismaClient();
 
@@ -229,6 +230,11 @@ async function listOrders(req, res) {
       packedAt: true,
       billedAt: true,
       shippedAt: true,
+      // The rule 101 billing snapshot. Selected purely so totalValue below can prefer the real
+      // stored amount owed over the pre-tax line-item sum (rule 103) — without this select it
+      // would be undefined on every row and orderValueOf would silently fall back forever,
+      // which is exactly the quiet-wrong-money failure this fix exists to remove.
+      actualPayable: true,
       // The real cancellation moment — investigated 2026-08-20 for the Owner Dashboard Orders
       // page's month bucketing. A cancelled order can have been cancelled while PLACED (no
       // packedAt/billedAt/shippedAt at all), so those stage timestamps can't reliably date it.
@@ -281,12 +287,23 @@ async function listOrders(req, res) {
     // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
     // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,
+    // The real amount owed when this order has one, else the live line-item sum (rule 103).
+    //
+    // The fallback below is unchanged and still correct for every order without a snapshot:
     // qtySetsRequested × piecesPerSet × priceAtOrder — priceAtOrder is stored PER PIECE
     // (rule 69's 2026-08-19 clarification), so a bare qtySets × price under-counts by the
     // pieces-per-set factor. Same three-factor shape as revenue.js and the factory payable.
-    totalValue: o.lineItems.reduce(
-      (sum, li) => sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
-      0,
+    //
+    // Fixing it HERE rather than in each screen is deliberate: every list-view rupee figure in
+    // the app reads this one field — the Owner Dashboard's Orders page, Party Payables' per-order
+    // list, and the mobile Pack/Bill/Ship Order lists — so one server-side fix corrects all of
+    // them at once and leaves no screen able to drift back onto the pre-tax number.
+    totalValue: orderValueOf(
+      o,
+      o.lineItems.reduce(
+        (sum, li) => sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
+        0,
+      ),
     ),
   }));
 

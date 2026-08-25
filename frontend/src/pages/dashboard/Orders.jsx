@@ -297,6 +297,45 @@ export default function Orders() {
                 </div>
               ))
             )}
+
+            {/* Billing breakdown — shown ONLY for an order carrying a real rule 101 snapshot.
+                This exists because of rule 103: the collapsed header now shows actualPayable
+                (the real amount owed, discount/GST inclusive), while the per-line figures above
+                are pre-tax by nature. Without this the two would silently disagree — the lines
+                wouldn't add up to the header — which is exactly the "two different bases on one
+                screen" problem lineValue's own comment warns about. Rather than dropping back to
+                the pre-tax header (wrong money) or rescaling each line (inventing per-line
+                numbers that were never stored), the arithmetic connecting them is made visible.
+                Orders with no snapshot render nothing here and are completely unchanged: their
+                lines still sum exactly to their header. */}
+            {detail.status === 'loaded' && detail.order.actualPayable != null && (
+              <div className="dash-order-billing">
+                <div className="bill-pricing-line">
+                  <span>Pre-tax total</span>
+                  <span>{formatCurrency(Number(detail.order.preTaxAmount))}</span>
+                </div>
+                {detail.order.discountApplicable && (
+                  <div className="bill-pricing-line">
+                    <span>Discount ({Number(detail.order.discountPercent)}%)</span>
+                    <span>
+                      −{formatCurrency(Number(detail.order.preTaxAmount) - Number(detail.order.finalAmount))}
+                    </span>
+                  </div>
+                )}
+                {detail.order.gstApplicable && (
+                  <div className="bill-pricing-line">
+                    <span>GST ({Number(detail.order.gstPercent)}%)</span>
+                    <span>
+                      +{formatCurrency(Number(detail.order.actualPayable) - Number(detail.order.finalAmount))}
+                    </span>
+                  </div>
+                )}
+                <div className="bill-pricing-final">
+                  <span>Amount billed</span>
+                  <span>{formatCurrency(Number(detail.order.actualPayable))}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 const { piecesPerSetFor } = require('./piecesPerSet');
+const { orderValueOf } = require('./orderValue');
 
 // THE single revenue calculation for this system. 05_BUSINESS_RULES.md rule 98 is explicit that
 // the Owner Dashboard's Revenue KPI and the Parties page's per-party sales summary must share one
@@ -110,6 +111,10 @@ const VALID_PERIODS = ['month', 'six_months', 'fy', 'all', 'custom'];
 const REVENUE_ORDER_SELECT = {
   billedAt: true,
   createdAt: true,
+  // The rule 101 billing snapshot, so each order can contribute the REAL amount owed when it has
+  // one (rule 103). Must be selected here or orderValueOf would see undefined on every order and
+  // fall back forever — the aggregate would stay quietly pre-tax with nothing to indicate it.
+  actualPayable: true,
   lineItems: {
     where: { isCancelled: false },
     select: {
@@ -152,12 +157,19 @@ async function computeRevenue(prisma, { from = null, to = null, partyId = null }
       if (from && at < from) return total;
       if (to && at >= to) return total;
     }
+    // Per ORDER, never per call: one party's all-time total legitimately mixes orders billed
+    // after rule 101 (real actualPayable snapshot, discount/GST inclusive) with orders billed
+    // before it or not yet billed (no snapshot, line-item sum). Both are correct — they just
+    // have different authoritative sources, and the fallback below is untouched.
     return (
       total +
-      order.lineItems.reduce(
-        (sum, li) =>
-          sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
-        0
+      orderValueOf(
+        order,
+        order.lineItems.reduce(
+          (sum, li) =>
+            sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
+          0
+        )
       )
     );
   }, 0);

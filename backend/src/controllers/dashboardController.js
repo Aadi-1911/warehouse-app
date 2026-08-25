@@ -91,6 +91,13 @@ async function getOverview(req, res) {
     },
   });
 
+  // Deliberately NOT routed through orderValueOf (rule 103), and this is structural rather than
+  // an oversight: the query above is scoped to PLACED/PACKED — the two statuses that exist BEFORE
+  // billing — and actualPayable is only ever written at the moment an order is billed. So every
+  // order reachable here has a null snapshot by construction, and the line-item sum below is
+  // already the correct and only available answer. Adding the preference here would select a
+  // column that is guaranteed null and imply billed orders can appear in this KPI, which they
+  // cannot. "Open orders" means unbilled by definition.
   const openOrdersValue = openOrders.reduce(
     (total, o) =>
       total +
