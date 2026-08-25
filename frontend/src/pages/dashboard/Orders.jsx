@@ -3,6 +3,7 @@ import { ChevronIcon } from '../../components/icons';
 import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
+import { preBillingTotal, computeBillingAmounts } from '../../utils/orderBilling';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
@@ -115,6 +116,14 @@ export default function Orders() {
   const [billing, setBilling] = useState(false);
   const [billError, setBillError] = useState(null);
 
+  // Discount/GST questions (added 2026-08-25, rule 101) — same shape and same shared
+  // computeBillingAmounts/preBillingTotal (utils/orderBilling.js) as BillOrderDetail.jsx, so
+  // this screen's live preview can never disagree with mobile's for the identical order.
+  const [discountApplicable, setDiscountApplicable] = useState(false);
+  const [discountPercent, setDiscountPercent] = useState('');
+  const [gstApplicable, setGstApplicable] = useState(false);
+  const [gstPercent, setGstPercent] = useState('');
+
   // Independent of the fetched data — a pure calendar fact, computed once at mount, so it never
   // resets back to "this month" on a refetch (e.g. after billing an order) if the owner had
   // already navigated to a different month.
@@ -133,6 +142,21 @@ export default function Orders() {
     loadOrders();
   }, []);
 
+  // Fetch on first need only — a cached or in-flight entry means there's nothing to do. Shared
+  // by toggleOrder (expanding a row) and the "Mark billed" trigger below (added 2026-08-25) —
+  // the confirm modal's live discount/GST preview needs this same full line-item detail
+  // (qtySetsPacked, priceAtOrder, product size shape), and "Mark billed" is reachable directly
+  // from the collapsed header, so it can't assume a row's detail happens to be loaded already.
+  function ensureDetail(orderId) {
+    setDetails((prev) => {
+      if (prev[orderId]) return prev;
+      getOrder(orderId)
+        .then((order) => setDetails((d) => ({ ...d, [orderId]: { status: 'loaded', order } })))
+        .catch((err) => setDetails((d) => ({ ...d, [orderId]: { status: 'error', error: err.message } })));
+      return { ...prev, [orderId]: { status: 'loading' } };
+    });
+  }
+
   function toggleOrder(orderId) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -143,15 +167,7 @@ export default function Orders() {
       next.add(orderId);
       return next;
     });
-
-    // Fetch on first expand only — a cached or in-flight entry means there's nothing to do.
-    setDetails((prev) => {
-      if (prev[orderId]) return prev;
-      getOrder(orderId)
-        .then((order) => setDetails((d) => ({ ...d, [orderId]: { status: 'loaded', order } })))
-        .catch((err) => setDetails((d) => ({ ...d, [orderId]: { status: 'error', error: err.message } })));
-      return { ...prev, [orderId]: { status: 'loading' } };
-    });
+    ensureDetail(orderId);
   }
 
   async function handleConfirmBill() {
@@ -159,7 +175,15 @@ export default function Orders() {
     setBillError(null);
     setBilling(true);
     try {
-      const updated = await billOrder(target.id);
+      // Only the raw applicable/percent inputs go over the wire — same reasoning as
+      // BillOrderDetail.jsx's identical call: the server independently recomputes and stores
+      // preTaxAmount/finalAmount/actualPayable, never trusting a client-computed figure.
+      const updated = await billOrder(target.id, {
+        discountApplicable,
+        discountPercent: discountApplicable ? Number(discountPercent) : null,
+        gstApplicable,
+        gstPercent: gstApplicable ? Number(gstPercent) : null,
+      });
       setBillTarget(null);
       // Reflect the new status immediately in both the collapsed row (from the list refetch,
       // which also picks up any totalValue drift) and the cached detail, so an already-expanded
@@ -174,6 +198,17 @@ export default function Orders() {
     } finally {
       setBilling(false);
     }
+  }
+
+  // Discount/GST inputs reset when the confirm dialog is dismissed WITHOUT billing — same
+  // reasoning as BillOrderDetail.jsx's identical reset: re-opening always starts clean rather
+  // than silently carrying over a half-filled previous attempt, possibly for a different order.
+  function handleCancelBillConfirm() {
+    setBillTarget(null);
+    setDiscountApplicable(false);
+    setDiscountPercent('');
+    setGstApplicable(false);
+    setGstPercent('');
   }
 
   // One row's markup, shared by both sections — only the order and which date to show for it
@@ -215,7 +250,18 @@ export default function Orders() {
               enough to decide this — billOrder() itself already 409s on a cancelled order
               (ORDER_CANCELLED), but the button shouldn't be offered in the first place. */}
           {order.status === 'PACKED' && !order.isCancelled && (
-            <button type="button" className="btn-primary btn-inline" onClick={() => setBillTarget(order)} disabled={billing}>
+            <button
+              type="button"
+              className="btn-primary btn-inline"
+              onClick={() => {
+                setBillTarget(order);
+                // Ensures the confirm modal's live discount/GST preview has real line-item
+                // detail to compute from — this button is reachable from the collapsed header,
+                // so the row isn't necessarily expanded (and its detail fetched) already.
+                ensureDetail(order.id);
+              }}
+              disabled={billing}
+            >
               Mark billed
             </button>
           )}
@@ -282,6 +328,22 @@ export default function Orders() {
 
   const visibleMonthOrders = monthOrders.filter((o) => monthKeyOf(bucketDateOf(o)) === selectedMonth);
 
+  // Live discount/GST preview for the bill-confirm modal (rule 101) — depends on billTarget's
+  // full line-item detail, which "Mark billed" ensures gets fetched (ensureDetail) but may not
+  // have resolved yet the instant the modal opens; billDetailReady gates the confirm button so
+  // billing can't proceed on an amount that hasn't actually been computed.
+  const billDetail = billTarget ? details[billTarget.id] : null;
+  const billDetailReady = billDetail?.status === 'loaded';
+  const billPreTaxAmount = billDetailReady ? preBillingTotal(billDetail.order.lineItems) : 0;
+  const billAmounts = computeBillingAmounts({
+    preTaxAmount: billPreTaxAmount,
+    discountApplicable,
+    discountPercent,
+    gstApplicable,
+    gstPercent,
+  });
+  const billingInputIncomplete = (discountApplicable && !billAmounts.hasDiscount) || (gstApplicable && !billAmounts.hasGst);
+
   return (
     <>
       {ordersError && (
@@ -331,7 +393,12 @@ export default function Orders() {
 
       {/* Deliberately the SAME weight of copy BillOrderDetail's own confirm uses for this exact
           action — it's the one irreversible step in the order lifecycle regardless of which
-          screen triggers it. */}
+          screen triggers it.
+
+          Discount/GST questions (rule 101) live inside this same confirm flow, same as mobile —
+          computed from the lazily-fetched detail (ensureDetail, triggered by "Mark billed" above)
+          via the SAME shared utils/orderBilling.js functions BillOrderDetail.jsx uses, so the two
+          real billing entry points can never disagree on the same order's numbers. */}
       <ConfirmModal
         open={!!billTarget}
         title="Bill this order? This cannot be undone."
@@ -343,8 +410,70 @@ export default function Orders() {
         confirmLabel={billing ? 'Billing…' : 'Bill and lock order'}
         tone="danger"
         onConfirm={handleConfirmBill}
-        onCancel={() => setBillTarget(null)}
-      />
+        onCancel={handleCancelBillConfirm}
+        confirmDisabled={billing || !billDetailReady || billingInputIncomplete}
+      >
+        <div className="bill-pricing-questions">
+          {!billDetailReady ? (
+            <p className="muted bill-pricing-pretax">Loading order total…</p>
+          ) : (
+            <>
+              <p className="muted bill-pricing-pretax">Order total: {formatCurrency(billPreTaxAmount)}</p>
+
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={discountApplicable}
+                  onChange={(e) => setDiscountApplicable(e.target.checked)}
+                />
+                Apply a discount?
+              </label>
+              {discountApplicable && (
+                <div className="field bill-pricing-percent-field">
+                  <span className="field-label">Discount %</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={discountPercent}
+                    onChange={(e) => setDiscountPercent(e.target.value)}
+                    placeholder="e.g. 5"
+                    autoFocus
+                  />
+                </div>
+              )}
+              {billAmounts.hasDiscount && (
+                <p className="bill-pricing-line">
+                  −{formatCurrency(billAmounts.discountAmount)} discount → {formatCurrency(billAmounts.finalAmount)}
+                </p>
+              )}
+
+              <label className="checkbox-field">
+                <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
+                Apply GST?
+              </label>
+              {gstApplicable && (
+                <div className="field bill-pricing-percent-field">
+                  <span className="field-label">GST %</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={gstPercent}
+                    onChange={(e) => setGstPercent(e.target.value)}
+                    placeholder="e.g. 18"
+                    autoFocus
+                  />
+                </div>
+              )}
+              {billAmounts.hasGst && <p className="bill-pricing-line">+{formatCurrency(billAmounts.gstAmount)} GST</p>}
+
+              <p className="bill-pricing-final">Total to bill: {formatCurrency(billAmounts.actualPayable)}</p>
+            </>
+          )}
+        </div>
+      </ConfirmModal>
     </>
   );
 }

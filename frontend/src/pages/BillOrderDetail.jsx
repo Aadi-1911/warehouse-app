@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
+import { preBillingTotal, computeBillingAmounts } from '../utils/orderBilling';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -67,6 +68,16 @@ export default function BillOrderDetail() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // Discount/GST questions (added 2026-08-25, rule 101) — live-computed inside the same "Bill
+  // this order?" confirm flow, not a separate step. Percent fields are strings (not numbers)
+  // because a controlled number input needs to represent "nothing typed yet" as `''`, distinct
+  // from `0` — the same idle/loaded discipline this project applies to async status elsewhere,
+  // applied here to "not yet a real percent."
+  const [discountApplicable, setDiscountApplicable] = useState(false);
+  const [discountPercent, setDiscountPercent] = useState('');
+  const [gstApplicable, setGstApplicable] = useState(false);
+  const [gstPercent, setGstPercent] = useState('');
 
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -132,7 +143,15 @@ export default function BillOrderDetail() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      await billOrder(id);
+      // Only the raw applicable/percent inputs go over the wire — the server independently
+      // recomputes preTaxAmount/finalAmount/actualPayable from live order data and stores those;
+      // nothing computed for the preview below is ever sent as-is.
+      await billOrder(id, {
+        discountApplicable,
+        discountPercent: discountApplicable ? Number(discountPercent) : null,
+        gstApplicable,
+        gstPercent: gstApplicable ? Number(gstPercent) : null,
+      });
       setConfirmOpen(false);
       navigate('/bill-orders', {
         replace: true,
@@ -141,12 +160,25 @@ export default function BillOrderDetail() {
     } catch (err) {
       // The two realistic failures both carry a real backend message worth showing verbatim:
       // INSUFFICIENT_STOCK (stock moved between packing and billing) and ORDER_NOT_PACKED
-      // (someone else billed it first). Neither loses anything — nothing here is user-entered.
+      // (someone else billed it first). Discount/GST inputs are deliberately NOT cleared on this
+      // path — a real, valid entry the owner already typed shouldn't vanish just because billing
+      // failed for an unrelated stock reason; they can retry without re-entering it.
       setConfirmOpen(false);
       setSubmitError(err.message);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Discount/GST inputs reset when the confirm dialog is dismissed WITHOUT billing — re-opening
+  // it (for this order or, after navigating away, a different one) always starts from a clean
+  // "no discount, no GST" state rather than silently carrying over a half-filled previous attempt.
+  function handleCancelBillConfirm() {
+    setConfirmOpen(false);
+    setDiscountApplicable(false);
+    setDiscountPercent('');
+    setGstApplicable(false);
+    setGstPercent('');
   }
 
   if (orderStatus !== 'loaded') {
@@ -213,6 +245,24 @@ export default function BillOrderDetail() {
   // unblocks the rest of the order, and this is the line of code that makes that true.
   const isBlocked = (li) => !li.isCancelled && li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
   const blockedLines = order.lineItems.filter(isBlocked);
+
+  // Live discount/GST preview (rule 101) — computed from the exact same liveLines/qtySetsPacked
+  // basis as `groups` above (utils/orderBilling.js, shared with dashboard/Orders.jsx so both
+  // real billing entry points can never disagree on the same order). Purely a client-side
+  // preview: billOrder() independently recomputes and stores the authoritative figures.
+  const preTaxAmount = preBillingTotal(liveLines);
+  const { discountAmount, finalAmount, gstAmount, actualPayable, hasDiscount, hasGst } = computeBillingAmounts({
+    preTaxAmount,
+    discountApplicable,
+    discountPercent,
+    gstApplicable,
+    gstPercent,
+  });
+  // Blocks confirming with a half-answered question — the checkbox says "yes, apply a discount"
+  // but no usable percent has been typed yet. Same guard shape as blockedLines.length above:
+  // the trigger button and the modal's own confirm button share this so an owner can't get from
+  // a checked-but-empty state into the modal expecting to just press through it.
+  const billingInputIncomplete = (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst);
 
   return (
     <div className="page">
@@ -372,7 +422,12 @@ export default function BillOrderDetail() {
 
       {/* Deliberately heavier copy than any other confirm in this app — this is the only action
           in the whole lifecycle that can't be undone, and it does two separate irreversible
-          things. Both are named outright rather than summarised as "are you sure?" */}
+          things. Both are named outright rather than summarised as "are you sure?"
+
+          Discount/GST questions (rule 101) live inside this SAME confirm flow via ConfirmModal's
+          `children` — not a second dialog — so the owner answers them right where they're
+          already committing to bill, with the real rupee impact visible before they press
+          confirm, not only afterward. */}
       <ConfirmModal
         open={confirmOpen}
         title="Bill this order? This cannot be undone."
@@ -380,8 +435,64 @@ export default function BillOrderDetail() {
         confirmLabel={submitting ? 'Billing…' : 'Bill and lock order'}
         tone="danger"
         onConfirm={handleConfirmBill}
-        onCancel={() => setConfirmOpen(false)}
-      />
+        onCancel={handleCancelBillConfirm}
+        confirmDisabled={submitting || billingInputIncomplete}
+      >
+        <div className="bill-pricing-questions">
+          <p className="muted bill-pricing-pretax">Order total: {formatCurrency(preTaxAmount)}</p>
+
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={discountApplicable}
+              onChange={(e) => setDiscountApplicable(e.target.checked)}
+            />
+            Apply a discount?
+          </label>
+          {discountApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">Discount %</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={discountPercent}
+                onChange={(e) => setDiscountPercent(e.target.value)}
+                placeholder="e.g. 5"
+                autoFocus
+              />
+            </div>
+          )}
+          {hasDiscount && (
+            <p className="bill-pricing-line">
+              −{formatCurrency(discountAmount)} discount → {formatCurrency(finalAmount)}
+            </p>
+          )}
+
+          <label className="checkbox-field">
+            <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
+            Apply GST?
+          </label>
+          {gstApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">GST %</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={gstPercent}
+                onChange={(e) => setGstPercent(e.target.value)}
+                placeholder="e.g. 18"
+                autoFocus
+              />
+            </div>
+          )}
+          {hasGst && <p className="bill-pricing-line">+{formatCurrency(gstAmount)} GST</p>}
+
+          <p className="bill-pricing-final">Total to bill: {formatCurrency(actualPayable)}</p>
+        </div>
+      </ConfirmModal>
     </div>
   );
 }

@@ -571,12 +571,31 @@ model Order {
   // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
   // one canonical audit trail, not two. See LEARNING_LOG.md.
 
+  // --- Discount/GST snapshot, added 2026-08-25 (rule 101) ---
+  // Real snapshots written once, inside billOrder() itself, at the exact moment an order is
+  // billed — never recomputed later. Same deliberate exception to this project's "always
+  // compute fresh" rule that priceAtOrder/costPriceSnapshot already are (see OrderLineItem
+  // below), safe here for the identical reason: rule 23 guarantees an order's lines can't
+  // change once Billed, so nothing downstream can ever make these go stale. All nullable/false
+  // until billed; PLACED/PACKED orders always have discountApplicable/gstApplicable false and
+  // the rest null.
+  discountApplicable Boolean @default(false)
+  discountPercent    Decimal? // percent (e.g. 5 means 5%) — only meaningful when discountApplicable is true
+  gstApplicable      Boolean @default(false)
+  gstPercent         Decimal? // percent (e.g. 18 means 18%) — only meaningful when gstApplicable is true
+  preTaxAmount       Decimal? // the order's billed total before discount/GST — qtySetsPacked-based (rule 101), not qtySetsRequested
+  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST
+  actualPayable      Decimal? // finalAmount after GST is applied — the real amount owed, never trusted from the client
+
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
 }
 // Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
 // status value (rule 23) — see OrderAdjustment below.
-// Billed requires the (separate, not-yet-designed) formal Bill entity below to exist for this order.
+// A formal Bill document/invoice entity (a printable document matching the business's Excel
+// template) is still separate, not-yet-designed later work — see note at the top of the Bill
+// model. Discount/GST capture (rule 101) is NOT that formal Bill; it's real data attached
+// directly to Order, captured at billing time.
 // A lightweight "outstanding amount" view can be computed directly from OrderLineItem pricing
 // for owner convenience before formal billing exists — see note at the top of the Bill model.
 
@@ -628,7 +647,7 @@ Notes for future implementation:
 
 ### Phase 3 — Billing & Payments
 
-**Note on scope:** the Bill model below is the FORMAL invoice (matching the business's existing Excel template — see rule 28 in `05_BUSINESS_RULES.md`) and is genuinely not yet designed in detail. An informal "outstanding amount owed" view is a separate, lighter feature that can be computed directly from `OrderLineItem.priceAtOrder × qtySetsRequested` per Party — useful for owner visibility before formal billing exists, but it is NOT a substitute for this Bill model and carries none of its guarantees (no immutability, no GST fields, no e-way flag, no correction mechanism).
+**Note on scope:** the Bill model below is the FORMAL invoice (matching the business's existing Excel template — see rule 28 in `05_BUSINESS_RULES.md`) and is genuinely not yet designed in detail. An informal "outstanding amount owed" view is a separate, lighter feature that can be computed directly from `OrderLineItem.priceAtOrder × qtySetsRequested` per Party — useful for owner visibility before formal billing exists, but it is NOT a substitute for this Bill model and carries none of its guarantees (no immutability, no printable document, no e-way flag, no correction mechanism). **Order's own `discountApplicable`/`discountPercent`/`gstApplicable`/`gstPercent`/`preTaxAmount`/`finalAmount`/`actualPayable` (rule 101, added 2026-08-25) are a third, narrower thing again** — real discount/GST *capture* at the moment of billing, deliberately lightweight (no e-way flag, no separate correction mechanism, no printable document), not an early version of the formal Bill and not a substitute for it either.
 
 ```prisma
 enum PaymentAllocationType {

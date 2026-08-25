@@ -35,9 +35,12 @@ export function packOrder(id, lineItems) {
 
 // PATCH /api/orders/:id/bill -> the updated order, same shape as getOrder. OWNER ONLY (rule 63)
 // and the single irreversible step in the lifecycle: it deducts real stock FIFO across locations
-// and applies rule 23's hard lock. No body — there's no formal Bill document entity yet.
-export function billOrder(id) {
-  return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH' });
+// and applies rule 23's hard lock. Body (added 2026-08-25, rule 101): { discountApplicable?,
+// discountPercent?, gstApplicable?, gstPercent? } — all optional, defaulting to no discount/no
+// GST. The server independently recomputes and stores preTaxAmount/finalAmount/actualPayable;
+// nothing computed client-side is ever trusted as the value that gets written.
+export function billOrder(id, billing = {}) {
+  return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH', body: billing });
 }
 
 // PATCH /api/orders/:id/ship -> the updated order, same shape as getOrder. Any authenticated

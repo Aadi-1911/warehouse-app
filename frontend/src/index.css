@@ -1146,6 +1146,45 @@ body {
   cursor: default;
 }
 
+/* --- Bill Order's discount/GST questions (added 2026-08-25, rule 101) — rendered as
+   ConfirmModal's `children`, inside the same "Bill this order?" dialog. Both real billing
+   entry points (BillOrderDetail.jsx, dashboard/Orders.jsx) share these classes. --- */
+.bill-pricing-questions {
+  margin: 4px 0 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.bill-pricing-pretax {
+  font-size: 12.5px;
+  margin: 0 0 12px;
+}
+
+/* Indented under its own checkbox, and capped narrow — a 2-3 digit percent doesn't need a
+   full-width input even inside a already-narrow 300px modal card. */
+.bill-pricing-percent-field {
+  margin-left: 24px;
+  max-width: 120px;
+}
+
+/* Negative top margin pulls this up against the percent field's own 14px .field margin-bottom,
+   so the live amount reads as a direct consequence of what was just typed, not a floating line. */
+.bill-pricing-line {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin: -6px 0 12px 24px;
+}
+
+.bill-pricing-final {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
 /* --- Home: self-service PIN prompt + Manage Users entry point --- */
 .prompt-banner {
   display: flex;

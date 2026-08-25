@@ -37,6 +37,16 @@ const ORDER_DETAIL_SELECT = {
   billedAt: true,
   shippedAt: true,
   isCancelled: true,
+  // Billing snapshot (rule 101) — null/false for any order not yet BILLED. Selected here so
+  // GET /api/orders/:id and billOrder()'s own response both surface the real stored figures,
+  // not just the client's own live preview from before confirming.
+  discountApplicable: true,
+  discountPercent: true,
+  gstApplicable: true,
+  gstPercent: true,
+  preTaxAmount: true,
+  finalAmount: true,
+  actualPayable: true,
   lineItems: { select: LINE_ITEM_SELECT },
 };
 
@@ -73,6 +83,13 @@ function orderDetailToResponse(o) {
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
     isCancelled: o.isCancelled,
+    discountApplicable: o.discountApplicable,
+    discountPercent: o.discountPercent,
+    gstApplicable: o.gstApplicable,
+    gstPercent: o.gstPercent,
+    preTaxAmount: o.preTaxAmount,
+    finalAmount: o.finalAmount,
+    actualPayable: o.actualPayable,
     lineItems: o.lineItems.map(lineItemToResponse),
   };
 }
@@ -453,11 +470,30 @@ async function packOrder(req, res) {
 // sorts by locationName.localeCompare(...) — i.e. alphabetical. This is the same convention that
 // logic used when it lived in pack, carried over unchanged rather than re-decided.
 //
-// No body. No formal Bill document/invoice entity exists yet (amounts, GST, a printable doc are
-// an explicitly separate later task) — this is a pure status-transition-plus-deduction endpoint,
-// structurally the same shape as shipOrder below.
+// Body (added 2026-08-25, rule 101): { discountApplicable?, discountPercent?, gstApplicable?,
+// gstPercent? } — all optional, defaulting to no discount/no GST. Still no formal Bill document/
+// invoice entity (a printable doc is still separate later work) — this remains a pure
+// status-transition-plus-deduction endpoint structurally, just one that also snapshots the
+// billed amount now that discount/GST are real, owner-entered facts at billing time.
 async function billOrder(req, res) {
   const { id } = req.params;
+
+  const {
+    discountApplicable = false,
+    discountPercent = null,
+    gstApplicable = false,
+    gstPercent = null,
+  } = req.body || {};
+
+  if (typeof discountApplicable !== 'boolean' || typeof gstApplicable !== 'boolean') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountApplicable and gstApplicable must be booleans');
+  }
+  if (discountApplicable && (typeof discountPercent !== 'number' || discountPercent < 0 || discountPercent > 100)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountPercent must be a number between 0 and 100 when discountApplicable is true');
+  }
+  if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a non-negative number when gstApplicable is true');
+  }
 
   const order = await prisma.order.findUnique({
     where: { id },
@@ -472,7 +508,20 @@ async function billOrder(req, res) {
       // ORDER_CANCELLED) — it only avoided deducting real stock because that specific order
       // happens to have a bundle with zero stock, not because this guard did its job.
       isCancelled: true,
-      lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true, isCancelled: true } },
+      lineItems: {
+        select: {
+          id: true,
+          bundleId: true,
+          qtySetsPacked: true,
+          isCancelled: true,
+          // priceAtOrder + the piecesPerSetFor shape are needed to snapshot preTaxAmount below —
+          // same fields listOrders' own totalValue reads, just qtySetsPacked-based instead of
+          // qtySetsRequested-based (rule 101 — billing commits against what was actually packed,
+          // the same basis BillOrderDetail.jsx's frontend total has always used for this screen).
+          priceAtOrder: true,
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true } } } } } },
+        },
+      },
     },
   });
   if (!order) {
@@ -486,6 +535,20 @@ async function billOrder(req, res) {
   if (order.isCancelled) {
     return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
   }
+
+  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × priceAtOrder, summed
+  // across non-cancelled lines only. Computed from THIS SAME already-fetched order.lineItems,
+  // not a second query — a cancelled line's qtySetsPacked is irrelevant either way since it's
+  // filtered out here, same as it's excluded from linesToDeduct below.
+  const preTaxAmount = order.lineItems
+    .filter((li) => !li.isCancelled)
+    .reduce((sum, li) => sum + li.qtySetsPacked * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder), 0);
+
+  // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
+  // never the original preTaxAmount. Never trusts a client-computed final number; these are the
+  // only figures actually written below.
+  const finalAmount = discountApplicable ? preTaxAmount - (preTaxAmount * discountPercent) / 100 : preTaxAmount;
+  const actualPayable = gstApplicable ? finalAmount + (finalAmount * gstPercent) / 100 : finalAmount;
 
   // Deduct against qtySetsPacked, NOT qtySetsRequested — packing is the physical count of what
   // actually went in the box, so that's the number billing commits against. A short-packed line
@@ -600,7 +663,22 @@ async function billOrder(req, res) {
 
       await tx.order.update({
         where: { id },
-        data: { status: 'BILLED', billedAt: new Date() },
+        data: {
+          status: 'BILLED',
+          billedAt: new Date(),
+          // Written exactly once, here, the moment billing actually happens — never touched by
+          // any other endpoint. discountPercent/gstPercent are stored null when their own
+          // applicable flag is false, regardless of what the client sent, so a stray percent
+          // value can never look "applied" later just because it happened to be present in the
+          // request body.
+          discountApplicable,
+          discountPercent: discountApplicable ? discountPercent : null,
+          gstApplicable,
+          gstPercent: gstApplicable ? gstPercent : null,
+          preTaxAmount,
+          finalAmount,
+          actualPayable,
+        },
       });
       // Routine forward progress, not a correction — reason stays null, same as every other
       // status transition (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").

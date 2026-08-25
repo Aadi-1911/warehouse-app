@@ -446,26 +446,28 @@ Response: full order, same shape as `GET /api/orders/:id`.
 Errors: `400 VALIDATION_ERROR`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PLACED`.
 
 ### `PATCH /api/orders/:id/bill` 👑
-No body.
+Body *(added 2026-08-25, rule 101)*: `{ discountApplicable?, discountPercent?, gstApplicable?, gstPercent? }` — all optional, defaulting to no discount/no GST. `discountPercent`/`gstPercent` are plain numbers (percent, e.g. `18` for 18%), required and validated only when their own `*Applicable` flag is `true`. **No PIN** — gating matches billing's own existing weight exactly (OWNER-only, the existing heavy confirm modal, nothing new); this is not a cost/selling-price edit, so rule 71's PIN gate doesn't apply.
 
 **OWNER only** — the one order transition that is not any-role. Rule 63 states plainly that `... → Billed` is owner-only and must never be offered to STAFF, and this is also where real inventory moves. Enforced by `requireRole('OWNER')` middleware, returning `403 FORBIDDEN_ROLE` for a STAFF caller.
 
 **This is the stock-deduction point** *(moved here from pack, 2026-08-17)*. Billing is the commitment: it is already rule 23's hard lock (nothing about an order is editable once Billed), so a deduction placed here can only ever run once, by construction. Packing, by contrast, is a recountable step — deducting there meant a re-pack could deduct the same stock twice.
 
-There is **no formal Bill document/invoice entity yet** — amounts, GST, and a printable document are an explicitly separate later task. This is a pure status-transition-plus-deduction endpoint, structurally the same shape as `ship`.
+There is still **no formal Bill document/invoice entity** — a printable document remains explicitly separate later work. What changed 2026-08-25 is that discount/GST are now real, owner-entered facts captured at the moment of billing (rule 101) — `preTaxAmount`/`finalAmount`/`actualPayable` are computed and stored here, server-side, never trusting a client-computed final number.
 
 Server-side logic:
 1. Order must currently be `PACKED` (`409 ORDER_NOT_PACKED` otherwise — can't bill an order that was never packed, or one already billed/shipped).
-2. Stock is deducted per line by pulling from `Location` rows holding that Bundle, **in alphabetical order by Location name** (FIFO across locations, rule 64), until the quantity is satisfied. One `STOCK_OUT` `Transaction` is written per location actually drawn from, each linked via `orderLineItemId`.
-3. Deduction is driven by each line's **`qtySetsPacked`** — what was actually counted during packing — **not** `qtySetsRequested`. A short-packed line moves only what was really packed; the shortfall was already recorded as its own `SHORT_PACKED` adjustment at pack time and gets no second entry here. Lines with `qtySetsPacked: 0` are skipped entirely.
-4. If total available stock across all locations can't cover a line's `qtySetsPacked`, the whole request is rejected (`409 INSUFFICIENT_STOCK`) — no partial deduction, same everything-or-nothing atomicity as order creation. Unlike at pack time this can genuinely fire in normal use: stock may have moved between packing and billing (another order billed first, a transfer, a correction).
+2. `discountApplicable`/`gstApplicable` must be booleans if present (`400 VALIDATION_ERROR`). If `discountApplicable` is `true`, `discountPercent` must be a number between 0 and 100. If `gstApplicable` is `true`, `gstPercent` must be a non-negative number. Either `*Percent` field is ignored (stored `null`) when its own `*Applicable` flag is `false`, regardless of what the client sent.
+3. Stock is deducted per line by pulling from `Location` rows holding that Bundle, **in alphabetical order by Location name** (FIFO across locations, rule 64), until the quantity is satisfied. One `STOCK_OUT` `Transaction` is written per location actually drawn from, each linked via `orderLineItemId`.
+4. Deduction is driven by each line's **`qtySetsPacked`** — what was actually counted during packing — **not** `qtySetsRequested`. A short-packed line moves only what was really packed; the shortfall was already recorded as its own `SHORT_PACKED` adjustment at pack time and gets no second entry here. Lines with `qtySetsPacked: 0` are skipped entirely.
+5. If total available stock across all locations can't cover a line's `qtySetsPacked`, the whole request is rejected (`409 INSUFFICIENT_STOCK`) — no partial deduction, same everything-or-nothing atomicity as order creation. Unlike at pack time this can genuinely fire in normal use: stock may have moved between packing and billing (another order billed first, a transfer, a correction).
 
    **Every line is checked before returning, not just up to the first failure.** The response carries an `insufficientLines` array alongside `error` — `[{ lineItemId, bundleId, needed, available }]` — so a caller can show the full scope of the shortage at once rather than discovering it one line per retry. `error.message` names the single line when there's exactly one, or summarises the count when there are several.
-5. `Order.status` → `BILLED`, `billedAt` set to now. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "PACKED"`, `newValue: "BILLED"`, `reason: null` — routine progress).
-6. All of the above happens atomically in one transaction.
+6. `preTaxAmount` is computed as `Σ (qtySetsPacked × piecesPerSet × priceAtOrder)` across the order's non-cancelled lines — the same qtySetsPacked-based basis the deduction above already uses, not `qtySetsRequested` (rule 101). `finalAmount = discountApplicable ? preTaxAmount − (preTaxAmount × discountPercent / 100) : preTaxAmount`. `actualPayable = gstApplicable ? finalAmount + (finalAmount × gstPercent / 100) : finalAmount` — **GST is computed on `finalAmount` (post-discount), never on the original `preTaxAmount`.**
+7. `Order.status` → `BILLED`, `billedAt` set to now. `discountApplicable`, `discountPercent`, `gstApplicable`, `gstPercent`, `preTaxAmount`, `finalAmount`, `actualPayable` are all written in this same update. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "PACKED"`, `newValue: "BILLED"`, `reason: null` — routine progress).
+8. All of the above happens atomically in one transaction.
 
-Response: full order, same shape as `GET /api/orders/:id`.
-Errors: `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PACKED`, `409 INSUFFICIENT_STOCK`.
+Response: full order, same shape as `GET /api/orders/:id` — now including `discountApplicable`/`discountPercent`/`gstApplicable`/`gstPercent`/`preTaxAmount`/`finalAmount`/`actualPayable` (all `null`/`false` for any order not yet `BILLED`).
+Errors: `400 VALIDATION_ERROR`, `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PACKED`, `409 INSUFFICIENT_STOCK`.
 
 ### `PATCH /api/orders/:id/lines` 👑 — added 2026-08-21
 Body: `{ lineChanges?: [{ lineItemId, qtySetsRequested }], newLines?: [{ bundleId, qtySetsRequested }] }` — at least one of the two arrays must be present and non-empty. Supports changing an existing line's quantity and adding a brand-new line in the same request, since a real order edit is usually one event, not two API calls.

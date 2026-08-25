@@ -548,6 +548,21 @@ model Order {
   // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
   // one canonical audit trail, not two.
 
+  // --- Discount/GST snapshot, added 2026-08-25 (rule 101) ---
+  // Real snapshots written once, inside billOrder() itself, at the exact moment an order is
+  // billed — never recomputed later. Same deliberate exception to this project's "always
+  // compute fresh" rule that priceAtOrder/costPriceSnapshot already are, safe here for the
+  // identical reason: rule 23 guarantees an order's lines can't change once Billed, so nothing
+  // downstream can ever make these go stale. All nullable/false until billed; PLACED/PACKED
+  // orders always have discountApplicable/gstApplicable false and the rest null.
+  discountApplicable Boolean @default(false)
+  discountPercent    Decimal? // percent (e.g. 5 means 5%) — only meaningful when discountApplicable is true
+  gstApplicable      Boolean @default(false)
+  gstPercent         Decimal? // percent (e.g. 18 means 18%) — only meaningful when gstApplicable is true
+  preTaxAmount       Decimal? // the order's billed total before discount/GST — qtySetsPacked-based (rule 101), not qtySetsRequested
+  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST
+  actualPayable      Decimal? // finalAmount after GST is applied — the real amount owed, never trusted from the client
+
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
 }
