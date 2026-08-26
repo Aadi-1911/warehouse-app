@@ -3190,37 +3190,6 @@ body {
   border-bottom: none;
 }
 
-/* The header label IS a real <button> (real keyboard/click sortability, not a div with an
-   onClick) reset to look like plain header text at rest — the pointer cursor and hover colour
-   are the only affordances, same restraint this app now applies broadly rather than dressing up
-   every clickable thing as an obvious button shape. */
-.dash-pricing-th-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  font-weight: inherit;
-  text-transform: inherit;
-  letter-spacing: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-
-.dash-pricing-th-btn:hover {
-  color: var(--text-primary);
-}
-
-.dash-pricing-th-btn:focus-visible {
-  outline: 2px solid var(--text-primary);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-.dash-pricing-sort-indicator {
-  font-size: 10px;
-}
-
 .dash-pricing-num {
   text-align: right;
 }

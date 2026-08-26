@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { KeyIcon } from '../../components/icons';
+import { KeyIcon, ChevronIcon } from '../../components/icons';
 import { listFactories } from '../../api/factories';
 import { listProducts, updateProduct } from '../../api/products';
 import PinPrompt from '../../components/PinPrompt';
@@ -12,10 +12,23 @@ import PinPrompt from '../../components/PinPrompt';
 //
 // A genuine desktop grid, not the mobile screen ported over: mobile (pages/ArticlePricing.jsx)
 // is factory-scoped (pick a Factory first, then see its articles) because on a phone that's the
-// only way to keep the list short enough to be usable. A desktop owner wants the opposite — every
-// article, every factory, in one sortable table, filtering by eye rather than by a forced picker.
-// So this fetches unfiltered (GET /api/products with no factoryId) and adds Factory as a real,
-// sortable COLUMN instead of a pre-filter.
+// only way to keep the list short enough to be usable. This fetches unfiltered (GET /api/products
+// with no factoryId) rather than forcing a picker — a desktop owner can see every factory at once.
+//
+// Restructured 2026-08-26 into Factory-grouped accordion sections, matching Low Stock/Live
+// Stock/Transfer's shared Factory→Article convention. Before this, Factory was a plain sortable
+// COLUMN in one flat table, and clicking any column header (Article No/Name/Factory/Cost/
+// Selling/Margin, either direction) could resort the whole list. That free-column-sort is gone
+// now, on purpose: no other Factory-grouped screen in this app combines grouping with per-column
+// sort, and "group by Factory, ascending article number within each group" (with pending
+// articles first within their own group) is a complete, fixed ordering on its own — the same
+// fixed-order convention Low Stock/Live Stock/Transfer already use with no sort controls at all.
+//
+// Mobile needed NO equivalent restructuring — its own Factory <select> already scopes every
+// fetch to exactly one factory, so there's no cross-factory list to group in the first place.
+// Wrapping an already-single-factory list in its own accordion would cost a click for nothing,
+// the same "no wrapper for a single item" call already made for Transfer's single-colour
+// articles and Live Stock's single-location articles.
 //
 // Reuses the exact same backend surface mobile does, on purpose — no parallel price-write path:
 // GET /api/products (role-aware; costPrice is only ever selected server-side for OWNER, see
@@ -57,35 +70,12 @@ function isPending(product) {
   return product.costPrice == null || product.sellingPrice == null;
 }
 
-function getSortValue(product, key, factoryNameById) {
-  switch (key) {
-    case 'articleNo':
-      return product.articleNo;
-    case 'name':
-      return product.name;
-    case 'factory':
-      return factoryNameById.get(product.factoryId) ?? '';
-    case 'costPrice':
-      return product.costPrice != null ? Number(product.costPrice) : null;
-    case 'sellingPrice':
-      return product.sellingPrice != null ? Number(product.sellingPrice) : null;
-    case 'margin':
-      return product.costPrice != null && product.sellingPrice != null
-        ? Number(product.sellingPrice) - Number(product.costPrice)
-        : null;
-    default:
-      return null;
-  }
-}
-
-const COLUMNS = [
-  { key: 'articleNo', label: 'Article No' },
-  { key: 'name', label: 'Name' },
-  { key: 'factory', label: 'Factory' },
-  { key: 'costPrice', label: 'Cost Price', numeric: true },
-  { key: 'sellingPrice', label: 'Selling Price', numeric: true },
-  { key: 'margin', label: 'Margin', numeric: true },
-];
+// Fixed table shape for every factory group's own table — Factory itself is deliberately absent
+// from this list now: it's stated once in the enclosing accordion header, the same "state it once
+// in the group header, drop it from every row inside" convention Live Stock's own locationGroups
+// already established. 5 data columns + 1 action column, referenced below wherever an extra row
+// (the inline error banner, the PIN-confirm step) needs to span the full table width.
+const TABLE_COLUMN_COUNT = 6;
 
 export default function DashboardArticlePricing() {
   const { user } = useAuth();
@@ -97,7 +87,9 @@ export default function DashboardArticlePricing() {
   const [status, setStatus] = useState('idle');
   const [loadError, setLoadError] = useState(null);
 
-  const [sort, setSort] = useState({ key: null, direction: 'asc' });
+  // Factory-level accordion state — a Set of factoryIds, same shape and same "collapsed by
+  // default" convention Live Stock/Low Stock/Transfer already use for their own Factory layer.
+  const [expandedFactories, setExpandedFactories] = useState(() => new Set());
 
   // Which row (if any) is mid-edit — a single id, not a Set, since only one edit is ever open.
   const [editingId, setEditingId] = useState(null);
@@ -131,12 +123,12 @@ export default function DashboardArticlePricing() {
     };
   }, []);
 
-  function handleSort(key) {
-    setSort((prev) => {
-      if (prev.key === key) {
-        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
-      }
-      return { key, direction: 'asc' };
+  function toggleFactory(factoryId) {
+    setExpandedFactories((prev) => {
+      const next = new Set(prev);
+      if (next.has(factoryId)) next.delete(factoryId);
+      else next.add(factoryId);
+      return next;
     });
   }
 
@@ -203,28 +195,50 @@ export default function DashboardArticlePricing() {
   // (mobile's own archive toggle isn't part of what was asked for here).
   const visibleProducts = products.filter((p) => p.isActive);
 
-  const sortedProducts = [...visibleProducts].sort((a, b) => {
-    // No column clicked yet: pending-first, then articleNo — matches mobile's own default
-    // priority (this screen exists partly to fix stuck-pending articles, so surfacing them
-    // first is the point, not a cosmetic tie-break). Once a real column IS clicked, that
-    // explicit choice is respected literally — see below.
-    if (!sort.key) {
-      const aPending = isPending(a);
-      const bPending = isPending(b);
-      if (aPending !== bPending) return aPending ? -1 : 1;
-      return a.articleNo.localeCompare(b.articleNo);
+  // Factory -> Article groups (rule matching Low Stock/Live Stock/Transfer's shared convention).
+  // productId isn't the grouping concern here the way it is on those screens (each Article IS
+  // the row, not a further-nested group), so this only needs one level: bucket by factoryId,
+  // then sort the bucket's own articles.
+  const factoryGroups = new Map();
+  visibleProducts.forEach((product) => {
+    const factoryId = product.factoryId;
+    if (!factoryGroups.has(factoryId)) {
+      factoryGroups.set(factoryId, {
+        factoryId,
+        factoryName: factoryNameById.get(factoryId) ?? 'Unknown Factory',
+        products: [],
+      });
     }
-    const aVal = getSortValue(a, sort.key, factoryNameById);
-    const bVal = getSortValue(b, sort.key, factoryNameById);
-    // Pending (null) prices always sort LAST regardless of direction — "unknown" isn't a low
-    // or high number, so treating null as 0 would misplace it relative to real prices.
-    const aNull = aVal == null;
-    const bNull = bVal == null;
-    if (aNull !== bNull) return aNull ? 1 : -1;
-    if (aNull && bNull) return 0;
-    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal) : aVal - bVal;
-    return sort.direction === 'asc' ? cmp : -cmp;
+    factoryGroups.get(factoryId).products.push(product);
   });
+
+  const groupedFactories = [...factoryGroups.values()]
+    .map((group) => {
+      // Pending-first, then ascending articleNo — WITHIN this one factory's own group, not the
+      // top of the whole table. A global pending-first sort would scatter attention away from
+      // each factory's own coherent article list, which directly fights the reason grouping
+      // exists in the first place; this keeps pending articles exactly as discoverable as
+      // before; just scoped to where an owner is already looking. Same tie-break mobile's own
+      // sortedProducts already uses, so the two screens can never disagree on ordering.
+      const sortedProducts = [...group.products].sort((a, b) => {
+        const aPending = isPending(a);
+        const bPending = isPending(b);
+        if (aPending !== bPending) return aPending ? -1 : 1;
+        return a.articleNo.localeCompare(b.articleNo);
+      });
+      return {
+        ...group,
+        products: sortedProducts,
+        // Feeds the collapsed header's summary badge — surfaces pending articles WITHOUT
+        // forcing every factory open, the same "useful info on the collapsed header" convention
+        // Live Stock's own low-count badge already establishes for its factory layer. Without
+        // this, collapsing factories by default (§3.2's own convention) would quietly regress
+        // this screen's whole reason for existing (rule 8/71 — surfacing stuck-pending articles)
+        // behind an extra click per factory.
+        pendingCount: sortedProducts.filter(isPending).length,
+      };
+    })
+    .sort((a, b) => a.factoryName.localeCompare(b.factoryName));
 
   if (status !== 'loaded') {
     return (
@@ -263,172 +277,188 @@ export default function DashboardArticlePricing() {
         </Link>
       )}
 
-      <div className="dash-card">
-        {sortedProducts.length === 0 ? (
-          <p className="muted dash-empty">No active articles yet.</p>
-        ) : (
-          <div className="table-scroll">
-            <table className="dash-pricing-table">
-              <thead>
-                <tr>
-                  {COLUMNS.map((col) => (
-                    <th key={col.key} className={col.numeric ? 'dash-pricing-num' : ''}>
-                      <button
-                        type="button"
-                        className="dash-pricing-th-btn"
-                        onClick={() => handleSort(col.key)}
-                      >
-                        {col.label}
-                        {sort.key === col.key && (
-                          <span className="dash-pricing-sort-indicator">
-                            {sort.direction === 'asc' ? ' ▲' : ' ▼'}
-                          </span>
-                        )}
-                      </button>
-                    </th>
-                  ))}
-                  <th className="dash-pricing-action">
-                    <span className="visually-hidden">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedProducts.map((product) => {
-                  const pending = isPending(product);
-                  const isEditing = editingId === product.id;
-                  const isStaged = isEditing && !!priceDraft;
-                  const factoryName = factoryNameById.get(product.factoryId) ?? '—';
+      {groupedFactories.length === 0 ? (
+        <p className="muted dash-empty">No active articles yet.</p>
+      ) : (
+        groupedFactories.map((group) => {
+          const factoryOpen = expandedFactories.has(group.factoryId);
+          return (
+            <div key={group.factoryId} className="card accordion-section">
+              <button
+                type="button"
+                className="accordion-header"
+                onClick={() => toggleFactory(group.factoryId)}
+                aria-expanded={factoryOpen}
+              >
+                <div className="accordion-header-text">
+                  <div className="accordion-title">{group.factoryName}</div>
+                  <div className="muted accordion-subtitle">
+                    {group.products.length} article{group.products.length === 1 ? '' : 's'}
+                    {group.pendingCount > 0 && (
+                      <span className="badge badge-warning accordion-low-badge">
+                        {group.pendingCount} pending
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <ChevronIcon className={factoryOpen ? 'chevron chevron-open' : 'chevron'} />
+              </button>
 
-                  return (
-                    <Fragment key={product.id}>
-                      <tr className={isEditing ? 'dash-pricing-row-editing' : ''}>
-                        <td>{product.articleNo}</td>
-                        <td>{product.name}</td>
-                        <td>{factoryName}</td>
-                        {isEditing && !isStaged ? (
-                          <>
-                            <td className="dash-pricing-num">
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                min="0.01"
-                                step="0.01"
-                                className="dash-pricing-inline-input"
-                                value={costPrice}
-                                onChange={(e) => setCostPrice(e.target.value)}
-                                onKeyDown={handleEnterKeyContinue}
-                                autoFocus
-                              />
-                            </td>
-                            <td className="dash-pricing-num">
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                min="0.01"
-                                step="0.01"
-                                className="dash-pricing-inline-input"
-                                value={sellingPrice}
-                                onChange={(e) => setSellingPrice(e.target.value)}
-                                onKeyDown={handleEnterKeyContinue}
-                              />
-                            </td>
-                            <td className="dash-pricing-num muted">—</td>
-                          </>
-                        ) : isStaged ? (
-                          <>
-                            <td className="dash-pricing-num">{formatCurrency(priceDraft.costPrice)}</td>
-                            <td className="dash-pricing-num">{formatCurrency(priceDraft.sellingPrice)}</td>
-                            <td className="dash-pricing-num">
-                              {formatCurrency(priceDraft.sellingPrice - priceDraft.costPrice)}
-                            </td>
-                          </>
-                        ) : pending ? (
-                          <>
-                            <td className="dash-pricing-num">
-                              <span className="badge badge-warning">Pending</span>
-                            </td>
-                            <td className="dash-pricing-num">
-                              <span className="badge badge-warning">Pending</span>
-                            </td>
-                            <td className="dash-pricing-num">
-                              <span className="badge badge-warning">Pending</span>
-                            </td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="dash-pricing-num">{formatCurrency(product.costPrice)}</td>
-                            <td className="dash-pricing-num">{formatCurrency(product.sellingPrice)}</td>
-                            {/* Raw Prisma Decimals arrive as STRINGS ("250.5") — Number() both
-                                before subtracting, never string-concatenate them. */}
-                            <td className="dash-pricing-num">
-                              {formatCurrency(Number(product.sellingPrice) - Number(product.costPrice))}
-                            </td>
-                          </>
-                        )}
-                        <td className="dash-pricing-action">
-                          {isEditing ? (
-                            isStaged ? null : (
-                              <>
-                                <button type="button" className="link-button" onClick={handleContinueToPin}>
-                                  Continue
-                                </button>
-                                <button type="button" className="link-button" onClick={handleCancelEdit}>
-                                  Cancel
-                                </button>
-                              </>
-                            )
-                          ) : (
-                            <button
-                              type="button"
-                              className="link-button"
-                              onClick={() => handleStartEdit(product)}
-                              disabled={!user.hasPinSet || (editingId !== null && editingId !== product.id)}
-                            >
-                              Edit
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                      {isEditing && !isStaged && formError && (
-                        <tr className="dash-pricing-error-row">
-                          <td colSpan={COLUMNS.length + 1}>
-                            <p className="error-banner" role="alert">
-                              {formError}
-                            </p>
-                          </td>
+              {factoryOpen && (
+                <div className="accordion-body">
+                  <div className="table-scroll">
+                    <table className="dash-pricing-table">
+                      <thead>
+                        <tr>
+                          <th>Article No</th>
+                          <th>Name</th>
+                          <th className="dash-pricing-num">Cost Price</th>
+                          <th className="dash-pricing-num">Selling Price</th>
+                          <th className="dash-pricing-num">Margin</th>
+                          <th className="dash-pricing-action">
+                            <span className="visually-hidden">Actions</span>
+                          </th>
                         </tr>
-                      )}
-                      {isStaged && (
-                        <tr className="dash-pricing-pin-row">
-                          <td colSpan={COLUMNS.length + 1}>
-                            <p className="muted">
-                              Setting cost {formatCurrency(priceDraft.costPrice)} and selling{' '}
-                              {formatCurrency(priceDraft.sellingPrice)} for {product.articleNo} — {product.name}.
-                              Enter your PIN to confirm.
-                            </p>
-                            <PinPrompt
-                              submitLabel="Save price"
-                              submittingLabel="Saving…"
-                              autoFocus
-                              onSubmit={handleConfirmEdit}
-                            />
-                            <button type="button" className="link-button" onClick={() => setPriceDraft(null)}>
-                              Change details
-                            </button>
-                            <button type="button" className="link-button" onClick={handleCancelEdit}>
-                              Cancel
-                            </button>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      </thead>
+                      <tbody>
+                        {group.products.map((product) => {
+                          const pending = isPending(product);
+                          const isEditing = editingId === product.id;
+                          const isStaged = isEditing && !!priceDraft;
+
+                          return (
+                            <Fragment key={product.id}>
+                              <tr className={isEditing ? 'dash-pricing-row-editing' : ''}>
+                                <td>{product.articleNo}</td>
+                                <td>{product.name}</td>
+                                {isEditing && !isStaged ? (
+                                  <>
+                                    <td className="dash-pricing-num">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0.01"
+                                        step="0.01"
+                                        className="dash-pricing-inline-input"
+                                        value={costPrice}
+                                        onChange={(e) => setCostPrice(e.target.value)}
+                                        onKeyDown={handleEnterKeyContinue}
+                                        autoFocus
+                                      />
+                                    </td>
+                                    <td className="dash-pricing-num">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0.01"
+                                        step="0.01"
+                                        className="dash-pricing-inline-input"
+                                        value={sellingPrice}
+                                        onChange={(e) => setSellingPrice(e.target.value)}
+                                        onKeyDown={handleEnterKeyContinue}
+                                      />
+                                    </td>
+                                    <td className="dash-pricing-num muted">—</td>
+                                  </>
+                                ) : isStaged ? (
+                                  <>
+                                    <td className="dash-pricing-num">{formatCurrency(priceDraft.costPrice)}</td>
+                                    <td className="dash-pricing-num">{formatCurrency(priceDraft.sellingPrice)}</td>
+                                    <td className="dash-pricing-num">
+                                      {formatCurrency(priceDraft.sellingPrice - priceDraft.costPrice)}
+                                    </td>
+                                  </>
+                                ) : pending ? (
+                                  <>
+                                    <td className="dash-pricing-num">
+                                      <span className="badge badge-warning">Pending</span>
+                                    </td>
+                                    <td className="dash-pricing-num">
+                                      <span className="badge badge-warning">Pending</span>
+                                    </td>
+                                    <td className="dash-pricing-num">
+                                      <span className="badge badge-warning">Pending</span>
+                                    </td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td className="dash-pricing-num">{formatCurrency(product.costPrice)}</td>
+                                    <td className="dash-pricing-num">{formatCurrency(product.sellingPrice)}</td>
+                                    {/* Raw Prisma Decimals arrive as STRINGS ("250.5") — Number() both
+                                        before subtracting, never string-concatenate them. */}
+                                    <td className="dash-pricing-num">
+                                      {formatCurrency(Number(product.sellingPrice) - Number(product.costPrice))}
+                                    </td>
+                                  </>
+                                )}
+                                <td className="dash-pricing-action">
+                                  {isEditing ? (
+                                    isStaged ? null : (
+                                      <>
+                                        <button type="button" className="link-button" onClick={handleContinueToPin}>
+                                          Continue
+                                        </button>
+                                        <button type="button" className="link-button" onClick={handleCancelEdit}>
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => handleStartEdit(product)}
+                                      disabled={!user.hasPinSet || (editingId !== null && editingId !== product.id)}
+                                    >
+                                      Edit
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                              {isEditing && !isStaged && formError && (
+                                <tr className="dash-pricing-error-row">
+                                  <td colSpan={TABLE_COLUMN_COUNT}>
+                                    <p className="error-banner" role="alert">
+                                      {formError}
+                                    </p>
+                                  </td>
+                                </tr>
+                              )}
+                              {isStaged && (
+                                <tr className="dash-pricing-pin-row">
+                                  <td colSpan={TABLE_COLUMN_COUNT}>
+                                    <p className="muted">
+                                      Setting cost {formatCurrency(priceDraft.costPrice)} and selling{' '}
+                                      {formatCurrency(priceDraft.sellingPrice)} for {product.articleNo} — {product.name}.
+                                      Enter your PIN to confirm.
+                                    </p>
+                                    <PinPrompt
+                                      submitLabel="Save price"
+                                      submittingLabel="Saving…"
+                                      autoFocus
+                                      onSubmit={handleConfirmEdit}
+                                    />
+                                    <button type="button" className="link-button" onClick={() => setPriceDraft(null)}>
+                                      Change details
+                                    </button>
+                                    <button type="button" className="link-button" onClick={handleCancelEdit}>
+                                      Cancel
+                                    </button>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })
+      )}
     </>
   );
 }
