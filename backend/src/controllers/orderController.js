@@ -508,8 +508,8 @@ async function billOrder(req, res) {
   if (discountApplicable && (typeof discountPercent !== 'number' || discountPercent < 0 || discountPercent > 100)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'discountPercent must be a number between 0 and 100 when discountApplicable is true');
   }
-  if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a non-negative number when gstApplicable is true');
+  if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0 || gstPercent > 5)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a number between 0 and 5 when gstApplicable is true');
   }
 
   const order = await prisma.order.findUnique({

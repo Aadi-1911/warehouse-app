@@ -480,10 +480,11 @@ export default function BillOrderDetail() {
               <input
                 type="number"
                 min="0"
+                max="5"
                 step="0.01"
                 value={gstPercent}
                 onChange={(e) => setGstPercent(e.target.value)}
-                placeholder="e.g. 18"
+                placeholder="e.g. 5"
                 autoFocus
               />
             </div>
