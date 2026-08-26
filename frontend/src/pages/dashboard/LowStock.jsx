@@ -26,9 +26,10 @@ import { LOW_STOCK_THRESHOLD } from '../../utils/lowStock';
 // Restructured 2026-08-21: factory -> article accordion, matching Live Stock/Pack Order/Bill
 // Order's shared nested-accordion convention (.accordion-section.nested etc, see index.css) —
 // the flat per-factory row list got hard to scan as low-stock rows accumulated. Factory heading
-// stays a plain, non-collapsible heading (unchanged) since this list is already filtered down to
-// just the low rows and a factory rarely has more than a handful of low articles; ARTICLE is the
-// level that now collapses, since one article can carry several colour/location rows. The same
+// was initially left as a plain, non-collapsible heading, on the reasoning that this list is
+// already filtered down to just the low rows and a factory rarely has more than a handful of low
+// articles — see the 2026-08-26 update below for why that call was reversed. ARTICLE is the
+// level that collapses within a factory, since one article can carry several colour/location rows. The same
 // article+colour pair can be low at more than one Location independently (e.g. article 6023's
 // colour Mouse is low at both Gurgaon and Delhi in the real dev data) — each such row is already
 // keyed by bundleId+locationId below, so it naturally gets its own row within the article group
@@ -40,6 +41,15 @@ import { LOW_STOCK_THRESHOLD } from '../../utils/lowStock';
 // instead surfaces the real figures: how many colours are low, and the combined low-set total
 // across them — the same "show the actual number, not a redundant flag" call the per-row badge
 // already makes, and the same shape as Bill Order's own per-article running total.
+//
+// Factory level restructured 2026-08-26 from a plain always-expanded heading (see the removed
+// comment this replaces, just above the old render) to the same collapsible
+// .accordion-section/.accordion-header pattern Live Stock's own factory layer already uses (§3.2's
+// "collapsed by default" convention) — this page and the staff-facing Low Stock List page had both
+// drifted from Live Stock at this one layer, and are now consistent with it everywhere. The
+// collapsed summary mirrors Live Stock's own factory header shape (count + a red low-count badge),
+// just using "combined low-set total" in place of Live Stock's "sets/pieces", since every row here
+// is already low — matching the same call already made one level down at the article header.
 
 function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
@@ -56,6 +66,11 @@ export default function LowStock() {
   // number of factories) can be open independently at once, same convention as Live Stock/Pack
   // Order/Bill Order's own expandedArticles state.
   const [expandedArticles, setExpandedArticles] = useState(() => new Set());
+
+  // Factory-level accordion state — same shape as expandedArticles, one level up. Added so this
+  // page's factory layer collapses exactly like Live Stock's does, instead of the plain
+  // always-expanded heading this page started with.
+  const [expandedFactories, setExpandedFactories] = useState(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +96,15 @@ export default function LowStock() {
       const next = new Set(prev);
       if (next.has(productId)) next.delete(productId);
       else next.add(productId);
+      return next;
+    });
+  }
+
+  function toggleFactory(factoryId) {
+    setExpandedFactories((prev) => {
+      const next = new Set(prev);
+      if (next.has(factoryId)) next.delete(factoryId);
+      else next.add(factoryId);
       return next;
     });
   }
@@ -139,7 +163,14 @@ export default function LowStock() {
         })
         .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
 
-      return { ...factory, articles };
+      return {
+        ...factory,
+        articles,
+        // Feeds the collapsed factory header's summary line — same "count + combined low-set
+        // total" idea the article header already uses one level down, just one level up.
+        articleCount: articles.length,
+        totalLowSets: articles.reduce((sum, a) => sum + a.totalSets, 0),
+      };
     })
     .sort((a, b) => a.factoryName.localeCompare(b.factoryName));
 
@@ -169,61 +200,86 @@ export default function LowStock() {
       {groups.length === 0 ? (
         <p className="muted dash-empty">Nothing is low on stock right now.</p>
       ) : (
-        groups.map((group) => (
-          <div key={group.factoryId} className="dash-lowstock-group">
-            <div className="eyebrow dash-lowstock-group-heading">{group.factoryName}</div>
-            <div className="dash-card dash-lowstock-card">
-              {group.articles.map((article) => {
-                const open = expandedArticles.has(article.productId);
-                return (
-                  <div key={article.productId} className="accordion-section nested">
-                    <button
-                      type="button"
-                      className="accordion-header nested"
-                      onClick={() => toggleArticle(article.productId)}
-                      aria-expanded={open}
-                    >
-                      <div className="accordion-header-text">
-                        <div className="accordion-title-sm">
-                          {article.articleNo}
-                          <span className="muted"> — {article.productName}</span>
-                        </div>
-                        <div className="accordion-subtitle">
-                          <span className="badge badge-accent">
-                            {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}
-                          </span>
-                          <span className="badge badge-danger accordion-low-badge">
-                            {pluralSets(article.totalSets)} low
-                          </span>
-                        </div>
-                      </div>
-                      <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
-                    </button>
-
-                    {open && (
-                      <div className="accordion-body nested">
-                        {article.rows.map((row) => (
-                          <div key={row.key} className="dash-lowstock-row">
-                            <div className="dash-lowstock-row-main">
-                              <span className="dash-lowstock-article">{row.colorName}</span>
-                              <span className="muted dash-lowstock-meta">{row.locationName}</span>
-                            </div>
-                            {/* A single red badge carrying the actual figure, not just a "Low" flag —
-                                rule 56's "small flag, never a fully-tinted row" still holds (the row
-                                itself stays neutral), but every row here is already low by definition
-                                (pre-filtered above), so the flag's job is better done by showing the
-                                real count than by repeating a redundant "Low" label on every row. */}
-                            <span className="badge badge-danger">{pluralSets(row.qtySets)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+        groups.map((group) => {
+          const factoryOpen = expandedFactories.has(group.factoryId);
+          return (
+            <div key={group.factoryId} className="card accordion-section">
+              <button
+                type="button"
+                className="accordion-header"
+                onClick={() => toggleFactory(group.factoryId)}
+                aria-expanded={factoryOpen}
+              >
+                <div className="accordion-header-text">
+                  <div className="accordion-title">{group.factoryName}</div>
+                  <div className="muted accordion-subtitle">
+                    {group.articleCount} article{group.articleCount === 1 ? '' : 's'}
+                    <span className="badge badge-danger accordion-low-badge">
+                      {pluralSets(group.totalLowSets)} low
+                    </span>
                   </div>
-                );
-              })}
+                </div>
+                <ChevronIcon className={factoryOpen ? 'chevron chevron-open' : 'chevron'} />
+              </button>
+
+              {factoryOpen && (
+                <div className="accordion-body">
+                  <div className="dash-card dash-lowstock-card">
+                    {group.articles.map((article) => {
+                      const open = expandedArticles.has(article.productId);
+                      return (
+                        <div key={article.productId} className="accordion-section nested">
+                          <button
+                            type="button"
+                            className="accordion-header nested"
+                            onClick={() => toggleArticle(article.productId)}
+                            aria-expanded={open}
+                          >
+                            <div className="accordion-header-text">
+                              <div className="accordion-title-sm">
+                                {article.articleNo}
+                                <span className="muted"> — {article.productName}</span>
+                              </div>
+                              <div className="accordion-subtitle">
+                                <span className="badge badge-accent">
+                                  {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}
+                                </span>
+                                <span className="badge badge-danger accordion-low-badge">
+                                  {pluralSets(article.totalSets)} low
+                                </span>
+                              </div>
+                            </div>
+                            <ChevronIcon className={open ? 'chevron chevron-open' : 'chevron'} />
+                          </button>
+
+                          {open && (
+                            <div className="accordion-body nested">
+                              {article.rows.map((row) => (
+                                <div key={row.key} className="dash-lowstock-row">
+                                  <div className="dash-lowstock-row-main">
+                                    <span className="dash-lowstock-article">{row.colorName}</span>
+                                    <span className="muted dash-lowstock-meta">{row.locationName}</span>
+                                  </div>
+                                  {/* A single red badge carrying the actual figure, not just a "Low"
+                                      flag — rule 56's "small flag, never a fully-tinted row" still
+                                      holds (the row itself stays neutral), but every row here is
+                                      already low by definition (pre-filtered above), so the flag's
+                                      job is better done by showing the real count than by repeating
+                                      a redundant "Low" label on every row. */}
+                                  <span className="badge badge-danger">{pluralSets(row.qtySets)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))
+          );
+        })
       )}
     </>
   );

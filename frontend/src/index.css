@@ -2764,20 +2764,15 @@ body {
   color: var(--text-tertiary);
 }
 
-/* --- Owner Dashboard: Low Stock page (§8, §5.7, rule 56) --- */
-/* Factory heading: same "plain heading, not a collapsible accordion" idiom as History's
-   day-grouping — a factory rarely has more than a handful of low articles, so it doesn't need the
-   extra interaction cost of a toggle. Article level (restructured 2026-08-21) DOES collapse now,
-   reusing the shared .accordion-section.nested/.accordion-header.nested pattern (Live Stock/Pack
-   Order/Bill Order) inside this card, since one article can carry several colour/location rows. */
-.dash-lowstock-group + .dash-lowstock-group {
-  margin-top: 16px;
-}
-
-.dash-lowstock-group-heading {
-  margin-bottom: 6px;
-}
-
+/* --- Owner Dashboard: Low Stock page (§8, §5.7, rule 56) --- + shared with the staff-facing Low
+   Stock List page (LowStockList.jsx) --- */
+/* Both the factory and article layers now collapse, reusing the shared
+   .accordion-section/.accordion-header pattern (Live Stock/Pack Order/Bill Order) — the factory
+   layer used to be a plain always-expanded heading, but that drifted from Live Stock's own
+   factory-collapses-too convention, so it was brought in line with it (2026-08-26). The factory
+   wrapper itself uses the plain (non-`.nested`) accordion classes since it's the outer layer here,
+   same as Live Stock's own factory card; .dash-lowstock-card is just the inner content card that
+   now sits inside each factory's .accordion-body. */
 .dash-lowstock-card {
   padding: 4px 16px;
 }
