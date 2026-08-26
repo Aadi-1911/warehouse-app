@@ -100,6 +100,28 @@ function lineValue(li) {
   return li.qtySetsRequested * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(li.priceAtOrder);
 }
 
+// Groups an order's lines by Article, Colour lines nested inside — same shape BillOrderDetail.jsx
+// already builds for the identical order data (grouped-by-productId, sorted by article number),
+// just keyed on qtySetsRequested/lineValue instead of that screen's pre-billing qtySetsPacked
+// basis (see lineValue's own comment above for why this screen uses the requested-quantity
+// basis). Pure grouping — every number here is lineValue() summed, so the order's real
+// preTaxAmount/actualPayable footer (computed server-side, read from detail.order directly) is
+// completely unaffected by how these lines are arranged on screen.
+function buildArticleGroups(lineItems) {
+  return lineItems
+    .reduce((acc, li) => {
+      let group = acc.find((g) => g.productId === li.productId);
+      if (!group) {
+        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [], total: 0 };
+        acc.push(group);
+      }
+      group.lines.push(li);
+      group.total += lineValue(li);
+      return acc;
+    }, [])
+    .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
+}
+
 export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [ordersStatus, setOrdersStatus] = useState('idle');
@@ -108,6 +130,13 @@ export default function Orders() {
   // Multiple rows can be open at once — same convention PackOrderDetail/BillOrderDetail use for
   // their own article accordions (a Set of expanded ids, not one active id).
   const [expanded, setExpanded] = useState(() => new Set());
+
+  // Article-level accordion state for an EXPANDED order's own line-item grouping (added
+  // 2026-08-26). Keyed by `${orderId}:${productId}` rather than a per-order nested Set, because
+  // this is still just one flat collection of independently-toggleable sections — the same shape
+  // every other Set-of-ids accordion state in this app already uses, just with a composite key
+  // since two different orders can each have an article sharing the same productId.
+  const [expandedArticles, setExpandedArticles] = useState(() => new Set());
 
   // Per-order cache of the lazily-fetched detail: { [orderId]: { status: 'loading'|'loaded'|'error', order, error } }.
   const [details, setDetails] = useState({});
@@ -168,6 +197,16 @@ export default function Orders() {
       return next;
     });
     ensureDetail(orderId);
+  }
+
+  function toggleArticle(orderId, productId) {
+    const key = `${orderId}:${productId}`;
+    setExpandedArticles((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   async function handleConfirmBill() {
@@ -276,26 +315,77 @@ export default function Orders() {
                 Could not load this order's lines: {detail.error}
               </p>
             ) : (
-              detail.order.lineItems.map((li) => (
-                // Cancelled lines stay visible, struck through — same "never hide, never
-                // hard-delete" convention Bill/Pack Order detail already use, not filtered
-                // out here either.
-                <div key={li.id} className={`dash-order-line ${li.isCancelled ? 'dash-order-line-cancelled' : ''}`}>
-                  <div className="dash-order-line-main">
-                    <span className="dash-order-line-label">
-                      {li.productArticleNo} — {li.productName} · {li.colorName}
-                    </span>
-                    {li.isCancelled && <span className="badge badge-danger">Cancelled</span>}
-                  </div>
-                  {!li.isCancelled && (
-                    <span className="muted dash-order-line-meta">
-                      Ordered: {pluralSets(li.qtySetsRequested)} · Packed:{' '}
-                      {detail.order.status === 'PLACED' ? 'Not yet packed' : pluralSets(li.qtySetsPacked)} ·{' '}
-                      {formatCurrency(lineValue(li))}
-                    </span>
-                  )}
-                </div>
-              ))
+              (() => {
+                // renderLine's `showArticle` mirrors Live Stock's own "state it once in the
+                // group header, drop it from every row inside" convention (§5.5's locationGroups)
+                // — used below only in the multi-article branch, where an accordion header
+                // already names the article. The single-article branch keeps showArticle: true,
+                // so that case's rows are BYTE-IDENTICAL to what this screen rendered before this
+                // change (same label, same meta line) — nothing regresses for today's real
+                // single-article orders like SAI's.
+                function renderLine(li, { showArticle }) {
+                  return (
+                    // Cancelled lines stay visible, struck through — same "never hide, never
+                    // hard-delete" convention Bill/Pack Order detail already use, not filtered
+                    // out here either.
+                    <div key={li.id} className={`dash-order-line ${li.isCancelled ? 'dash-order-line-cancelled' : ''}`}>
+                      <div className="dash-order-line-main">
+                        <span className="dash-order-line-label">
+                          {showArticle ? `${li.productArticleNo} — ${li.productName} · ${li.colorName}` : li.colorName}
+                        </span>
+                        {li.isCancelled && <span className="badge badge-danger">Cancelled</span>}
+                      </div>
+                      {!li.isCancelled && (
+                        <span className="muted dash-order-line-meta">
+                          Ordered: {pluralSets(li.qtySetsRequested)} · Packed:{' '}
+                          {detail.order.status === 'PLACED' ? 'Not yet packed' : pluralSets(li.qtySetsPacked)} ·{' '}
+                          {formatCurrency(lineValue(li))}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
+                const groups = buildArticleGroups(detail.order.lineItems);
+
+                // Established "no accordion wrapper for a single item" convention (Transfer's
+                // single-colour articles, Live Stock's single-location articles) applied one
+                // level up: a single distinct article has nothing to disambiguate, so it costs a
+                // click for nothing — render its colour rows flat, exactly as this screen always
+                // has. Only a genuinely multi-article order gets real per-article accordions.
+                if (groups.length <= 1) {
+                  return (groups[0]?.lines ?? []).map((li) => renderLine(li, { showArticle: true }));
+                }
+
+                return groups.map((group) => {
+                  const articleKey = `${order.id}:${group.productId}`;
+                  const articleOpen = expandedArticles.has(articleKey);
+                  return (
+                    <div key={group.productId} className="accordion-section nested">
+                      <button
+                        type="button"
+                        className="accordion-header nested"
+                        onClick={() => toggleArticle(order.id, group.productId)}
+                        aria-expanded={articleOpen}
+                      >
+                        <div className="accordion-header-text">
+                          <div className="accordion-title-sm">
+                            {group.articleNo}
+                            <span className="muted"> — {group.productName} · {formatCurrency(group.total)}</span>
+                          </div>
+                        </div>
+                        <ChevronIcon className={articleOpen ? 'chevron chevron-open' : 'chevron'} />
+                      </button>
+
+                      {articleOpen && (
+                        <div className="accordion-body nested">
+                          {group.lines.map((li) => renderLine(li, { showArticle: false }))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()
             )}
 
             {/* Billing breakdown — shown ONLY for an order carrying a real rule 101 snapshot.
