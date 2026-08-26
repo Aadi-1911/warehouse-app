@@ -12,6 +12,7 @@ import {
   HistoryIcon,
   LocationPinIcon,
   TagIcon,
+  WalletIcon,
   LockIcon,
 } from '../../components/icons';
 
@@ -71,6 +72,15 @@ const NAV_ITEMS = [
   // Added 2026-08-21, same "append beyond §8's original list, don't renumber it" precedent as
   // Locations right above. Same TagIcon the mobile Article Pricing screen already uses.
   { to: '/dashboard/article-pricing', label: 'Article Pricing', Icon: TagIcon },
+  // Added 2026-08-26. Until now Factory Payables was reachable ONLY from the mobile Home screen,
+  // so an owner working in the dashboard had no route to it at all without leaving the dashboard
+  // first. Appended at the end for the third time running, following the same precedent Locations
+  // and Article Pricing above both state explicitly: never renumber a nav someone already has
+  // muscle memory for. Position is also right on its own terms — it sits next to Article Pricing,
+  // the other money-side page, and after the day-to-day operational items (Orders, Low stock,
+  // Parties, History) an owner opens far more often. Same WalletIcon the mobile Factory Payables
+  // screen already uses, matching how Article Pricing reuses its own mobile TagIcon.
+  { to: '/dashboard/factory-payables', label: 'Factory Payables', Icon: WalletIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -83,6 +93,7 @@ const PAGE_META = {
   '/dashboard/history': ['Everything that happened', 'History'],
   '/dashboard/locations': ['Revenue and profit by location', 'Locations'],
   '/dashboard/article-pricing': ['Cost and selling price by article', 'Article Pricing'],
+  '/dashboard/factory-payables': ['What we owe each factory', 'Factory Payables'],
 };
 
 function initialsOf(name) {

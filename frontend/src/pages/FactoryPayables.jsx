@@ -33,7 +33,13 @@ function todayInputValue() {
 // GET /api/factories/:id/payable, POST /api/factory-payments, and POST /api/factory-debits
 // (all owner-only and PIN-gated — see LEARNING_LOG.md for why the payment POST's gate changed
 // mid-task, and 05_BUSINESS_RULES.md rule 96 for why the debit endpoint exists at all).
-export default function FactoryPayables() {
+// `inDashboard` selects which shell wraps the content — see the return at the bottom of this
+// function. One component serves both the mobile screen (/factory-payables) and the Owner
+// Dashboard page (/dashboard/factory-payables) rather than a separate dashboard copy, because
+// every line of behaviour here (the payable calculation, the per-request PIN on every write, the
+// edit/delete flows) is identical on both and a second copy would be two places to fix each bug.
+// Defaults to false so the existing mobile route keeps working untouched.
+export default function FactoryPayables({ inDashboard = false }) {
   const { user } = useAuth();
 
   // 'idle' | 'loading' | 'loaded' — never a bare boolean (CLAUDE.md's standing rule): this
@@ -344,10 +350,10 @@ export default function FactoryPayables() {
       })
     : [];
 
-  return (
-    <div className="page">
-      <ScreenHeader icon={<WalletIcon size={20} />} title="Factory Payables" />
-
+  // The screen's actual content, identical in both shells — deliberately built once as a fragment
+  // rather than duplicated, so the mobile screen and the dashboard page can never drift apart.
+  const content = (
+    <>
       {factoriesError && (
         <p className="error-banner" role="alert">
           Could not load factories: {factoriesError}
@@ -686,6 +692,26 @@ export default function FactoryPayables() {
           )}
         </>
       )}
+    </>
+  );
+
+  // Inside the Owner Dashboard the shell (DashboardLayout) already supplies the page chrome this
+  // screen would otherwise draw for itself: the title, the breadcrumb, and the surrounding
+  // padding. Rendering `.page` + ScreenHeader in there too would produce a second, competing
+  // header, and — worse — ScreenHeader's back arrow points at "/", which would silently eject the
+  // owner out of the dashboard entirely. So the dashboard gets the bare content and lets the
+  // shell frame it, exactly as every other dashboard page does.
+  //
+  // Only the OUTER WRAPPER differs. Nothing inside `content` is branched on shell, because
+  // everything in it (.stat-row, .stat-hero, .card, .payment-history-row, .sticky-action-bar) is
+  // shared app-wide vocabulary that already sizes off its container rather than a fixed width —
+  // the deliberately narrow 480px column is `.page`'s doing, not the content's.
+  if (inDashboard) return content;
+
+  return (
+    <div className="page">
+      <ScreenHeader icon={<WalletIcon size={20} />} title="Factory Payables" />
+      {content}
     </div>
   );
 }

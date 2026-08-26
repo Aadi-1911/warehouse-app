@@ -234,6 +234,13 @@ export default function App() {
             <Route path="history" element={<DashboardHistory />} />
             <Route path="locations" element={<DashboardLocations />} />
             <Route path="article-pricing" element={<DashboardArticlePricing />} />
+            {/* Same FactoryPayables component the mobile /factory-payables route renders, with
+                `inDashboard` swapping its mobile .page/ScreenHeader wrapper for the dashboard
+                shell's own chrome — not a separate dashboard copy (see that file's header
+                comment for why). Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and the endpoints it calls are independently
+                OWNER+PIN gated server-side. */}
+            <Route path="factory-payables" element={<FactoryPayables inDashboard />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
