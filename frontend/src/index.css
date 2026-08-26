@@ -194,6 +194,42 @@ body {
   max-width: 360px;
 }
 
+/* Password show/hide toggle — same `position: relative` wrapper + absolutely-positioned control
+   pattern Combobox.jsx already uses for its own input-adjacent UI (.combobox/.combobox-dropdown),
+   reused here rather than inventing a second way to overlay a control on an input. */
+.password-field {
+  position: relative;
+}
+
+/* Right padding clears the toggle button so typed text never runs underneath it. Selector is
+   deliberately `.field .password-field input:not(...)`, matching (and beating, by one extra
+   ancestor class) the specificity of the base `.field input:not([type='checkbox'])` rule above —
+   avoids `!important` for what's really just one property override on top of that rule. */
+.field .password-field input:not([type='checkbox']) {
+  padding-right: 40px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.password-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
 /* Card title/article name size, per the typography scale — a card's own section header,
    distinct from the page-level .screen-title above it. */
 .card-title {

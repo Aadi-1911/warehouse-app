@@ -320,3 +320,26 @@ export function CopyIcon({ size = 15 }) {
     </svg>
   );
 }
+
+// Show/hide password toggle (Login's password field). The standard open-eye / eye-with-a-slash
+// pair rather than a shape invented for this app — recognisable at a glance from countless other
+// login forms, which matters more here than visual consistency with this app's other icons.
+export function EyeIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+// Same eye shape plus a diagonal slash — never a different pictogram (e.g. a crossed-out circle)
+// for the "hidden" state, so the toggle reads as one control with two states, not two controls.
+export function EyeOffIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
