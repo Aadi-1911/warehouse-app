@@ -5,12 +5,21 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { listParties, createParty, deactivateParty, reactivateParty } from '../api/parties';
 
-// Party List — browse, search and create, with Archive/Reactivate per row.
+// Party List — list-first: form collapsed by default, "Add new party" opens it, Delete/
+// Reactivate per row.
 //
 // Reachable by BOTH roles as of 2026-08-18 (App.jsx). Viewing and creating are open: New Order
 // picks a Party on every order, so staff need to find customers and add new ones on the spot.
-// Archive/Reactivate stays OWNER-only — creating is additive, archiving pulls an existing
+// Delete/Reactivate stays OWNER-only — creating is additive, deleting pulls an existing
 // customer out of everyone's pickers.
+//
+// "Delete" (added 2026-08-26, confirmed by Aadi) is a UI-only relabel of the pre-existing
+// deactivate action, NOT a real hard delete — Orders/PartyStockReturns reference partyId
+// permanently, so a party can never actually be removed. There's still only one button per
+// active row, not a separate "Archive" alongside it: both would call the identical endpoint
+// with no way to tell them apart, so a second button would only add confusion. "Show archived"
+// and the "Archived" badge keep their existing wording — they describe the party's *state*
+// (same trash/restore shape as Gmail), while "Delete" describes the *action* that gets it there.
 //
 // The per-role split inside an otherwise shared screen follows the pattern already established
 // by ReceiveStock.jsx (`isOwner` -> `canCreate={isOwner}` on its category picker) and by
@@ -172,7 +181,7 @@ export default function Parties() {
           aria-expanded={createOpen}
         >
           <div className="accordion-header-text">
-            <div className="accordion-title">Create party</div>
+            <div className="accordion-title">Add new party</div>
           </div>
           <ChevronIcon className={createOpen ? 'chevron chevron-open' : 'chevron'} />
         </button>
@@ -338,13 +347,20 @@ export default function Parties() {
                       {isOwner && (
                         <div className="party-detail-actions">
                           {p.isActive ? (
+                            // Labeled "Delete" per Aadi's confirmed framing, but this is still
+                            // the same deactivate endpoint as every other archive action in this
+                            // app (see the file header comment) — a real hard delete is never
+                            // built, since Orders/PartyStockReturns reference partyId permanently.
+                            // A second, separately-labeled "Archive" button next to this one would
+                            // do the literal identical thing with no way to tell them apart, so
+                            // there's deliberately only one button here, not two.
                             <button
                               type="button"
                               className="link-button danger-text"
                               onClick={() => handleStartArchiveAction(p, 'archive')}
                               disabled={actionInFlight}
                             >
-                              Archive
+                              Delete
                             </button>
                           ) : (
                             <button
@@ -369,14 +385,14 @@ export default function Parties() {
 
       <ConfirmModal
         open={!!confirmTarget}
-        title={confirmTarget?.action === 'archive' ? 'Archive this party?' : 'Reactivate this party?'}
+        title={confirmTarget?.action === 'archive' ? 'Delete this party?' : 'Reactivate this party?'}
         body={
           confirmTarget?.action === 'archive'
-            ? `${confirmTarget?.party.name} will be hidden from the default list. It can be reactivated anytime.`
+            ? `${confirmTarget?.party.name} will be hidden from the default list. It can be restored anytime via "Show archived".`
             : `${confirmTarget?.party.name} will be visible again in the default list immediately.`
         }
         confirmLabel={
-          actionInFlight ? 'Working…' : confirmTarget?.action === 'archive' ? 'Archive' : 'Reactivate'
+          actionInFlight ? 'Working…' : confirmTarget?.action === 'archive' ? 'Delete' : 'Reactivate'
         }
         tone={confirmTarget?.action === 'archive' ? 'danger' : 'success'}
         onConfirm={handleConfirmArchiveAction}
