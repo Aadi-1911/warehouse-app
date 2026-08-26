@@ -203,7 +203,7 @@ A component's background/border/text should always share the same role tint toge
 
 ### 5.4 Pack Order — updated
 - ~~Two views, toggled from the header: **Tally** (flat checklist of all open order lines, for physical counting only — does not change order status) and **Pack List** (the existing grouped-by-order view).~~ **DROPPED 2026-08-21, not deferred** — see §5.4 (Pack List)'s 2026-08-19 checklist-first redesign below: its tap-to-confirm, strike-it-off flow plus the per-article/order tally counts on the collapsed accordion header already give the same physical-counting visibility Tally was meant to provide, so the second view was never built.
-- Low stock after packing: a small red flag/badge only when remaining stock would be **≤2 sets** — never fully tint the card. Don't overstate ordinary shortfalls.
+- Low stock after packing: a small red flag/badge only when remaining stock would be **≤1 set** — never fully tint the card. Don't overstate ordinary shortfalls.
 - After Billed, add a **"Mark shipped"** action (order lifecycle is Placed → Packed → Billed → Shipped).
 
 ### 5.4 Pack Order (Pack List) — redesigned checklist-first, 2026-08-19
@@ -219,8 +219,8 @@ A component's background/border/text should always share the same role tint toge
 - Default view is **factory-grouped**: collapsible sections with Factory as the outer layer, Articles nested inside (not simple dropdown filters).
 - Top summary shows total sets AND total pieces; each factory section repeats article count / sets / pieces / low-stock count, scoped to that factory.
 - Article-level detail collapses behind a dropdown-style row (tap to expand/resize open, chevron rotates) rather than always-visible colour rows.
-- Low stock threshold: **≤2 sets = red flag**, consistent with Pack Order and New Order.
-- **Within an expanded Article, if its stock spans more than one Location, sub-group by Location first, then Colour within each Location** — not a flat colour-sorted list with location as a per-row column. Each Location becomes its own visible sub-header inside the article. If an article's stock is only at a single Location, this collapses back to the existing flat colour list — no sub-header when there's nothing to disambiguate. Real reported readability problem this fixes: two rows for the same colour name sitting visually adjacent with location as the only distinguishing fact is easy to misread, especially for the near-empty ≤2-set articles common at this project's scale (e.g. article 6023 — 3 colours × 2 locations — was rendering interleaved).
+- Low stock threshold: **≤1 set = red flag**, consistent with Pack Order and New Order.
+- **Within an expanded Article, if its stock spans more than one Location, sub-group by Location first, then Colour within each Location** — not a flat colour-sorted list with location as a per-row column. Each Location becomes its own visible sub-header inside the article. If an article's stock is only at a single Location, this collapses back to the existing flat colour list — no sub-header when there's nothing to disambiguate. Real reported readability problem this fixes: two rows for the same colour name sitting visually adjacent with location as the only distinguishing fact is easy to misread, especially for the near-empty low-stock articles common at this project's scale (e.g. article 6023 — 3 colours × 2 locations — was rendering interleaved).
 
 ### 5.6 New Screen — History
 - Reverse-chronological activity log, grouped by date.
@@ -273,7 +273,7 @@ A component's background/border/text should always share the same role tint toge
 - **Factory disambiguation copy**: when a searched article number matches more than one Factory, show one chip per match labeled with both factory and article name (e.g. "Round Neck Tee — Jyoti Creations" vs "Kurta Set — Comeco"), not just the bare factory name — the article name itself is often the fastest way for staff to recognize which one they mean.
 - **Staged batching, precisely**: both Receive Stock (colors under one article) and New Order (colors under one resolved article) follow the same pattern — pick/check multiple colors, set a quantity for each, then one commit action pushes the whole group at once. After committing, the panel resets so the next article can be searched immediately, without extra navigation.
 - **Pack Order card states**: three distinct visual states per line — a check icon (fully packed, neutral card), a warning triangle (short-packed, card gets a warning tint), and a dashed circle (not started, neutral card). Once an order moves past "Placed," packing quantities become read-only/frozen — don't allow edits to a line after packing is locked in.
-- **Low Stock screen has no severity tiers** — a row at 0 sets looks the same as a row at 2 sets, both simply flagged. Don't invent extra visual urgency levels beyond the single ≤2 threshold; it adds complexity without real decision value at this scale. Empty state: a single centered muted line ("Nothing is low on stock right now"), no factory headers shown.
+- **Low Stock screen has no severity tiers** — a row at 0 sets looks the same as a row at 1 set, both simply flagged. Don't invent extra visual urgency levels beyond the single ≤1 threshold; it adds complexity without real decision value at this scale. Empty state: a single centered muted line ("Nothing is low on stock right now"), no factory headers shown.
 - **Correction reason chips**: when editing a History entry, require picking a reason from a fixed set (Miscount, Wrong colour, Wrong customer, Other) before the correction can be confirmed — a single-select chip row, not free text as the primary input (though "Other" can allow a short free-text note).
 
 ## 8. Owner Desktop Dashboard (Phase 2 — documented now, NOT built yet)
@@ -284,19 +284,19 @@ A component's background/border/text should always share the same role tint toge
 Fixed 240px dark sidebar (logo tile, "Garment Manager"/"Owner" label, nav: Overview/Orders/Low Stock/History/Parties, active-row highlight, owner avatar+name pinned to bottom) + main content area, 100vh, only the content pane scrolls. 64px top bar (page title left, today's date right). Same design tokens as the rest of the app (§3.4) — same canvas color, same semantic role colors, no new palette.
 
 ### Overview (default landing)
-- **KPI row**, 6 cards: Stock value (blue, computed from `costPrice` — inventory cost basis), Sets in stock (neutral), Pieces in stock (neutral), Open orders — Placed+Packed count (purple), Low stock lines — count of stock rows ≤2 sets (red), Revenue from Billed+Shipped orders (green, computed from `sellingPrice` — deliberately a different field than Stock Value, since one is cost and one is what the business actually collects).
+- **KPI row**, 6 cards: Stock value (blue, computed from `costPrice` — inventory cost basis), Sets in stock (neutral), Pieces in stock (neutral), Open orders — Placed+Packed count (purple), Low stock lines — count of stock rows ≤1 set (red), Revenue from Billed+Shipped orders (green, computed from `sellingPrice` — deliberately a different field than Stock Value, since one is cost and one is what the business actually collects).
 - **Widget grid**, independently resizable cards (`resize: both`, each with a sane min-width/height so nothing collapses unusably small):
-  - **Stock & Pricing** (largest) — searchable, grouped by article. **Corrected from the original spec: exposes both `costPrice` and `sellingPrice`, not a single price field**, consistent with the two-field pricing model used everywhere else. Each is a click-to-edit control — "Set price" in amber if pending. **Corrected: committing an edit requires a lightweight inline PIN prompt right at the point of edit — not the heavy Cancel/Confirm modal used elsewhere, but not skippable either.** Rows below each article header show (color, location, sets), tinted red at ≤2 sets.
+  - **Stock & Pricing** (largest) — searchable, grouped by article. **Corrected from the original spec: exposes both `costPrice` and `sellingPrice`, not a single price field**, consistent with the two-field pricing model used everywhere else. Each is a click-to-edit control — "Set price" in amber if pending. **Corrected: committing an edit requires a lightweight inline PIN prompt right at the point of edit — not the heavy Cancel/Confirm modal used elsewhere, but not skippable either.** Rows below each article header show (color, location, sets), tinted red at ≤1 set.
   - **Orders** — one card per order: party, status badge (Placed/Packed/Billed/Shipped, same color coding as everywhere else), line count, value. "Mark billed" button appears only on `packed` orders.
   - **Order value by article** — horizontal bar chart, descending by total order value; unpriced articles show "— price not set" instead of a bar.
-  - **Low stock** — compact ≤2-sets list, capped short, full detail lives on the Low Stock page.
+  - **Low stock** — compact ≤1-set list, capped short, full detail lives on the Low Stock page.
   - **Recent activity** — latest 5 History entries, "View all" links to History.
 
 ### Orders page
 Accordion, one row per order (party, status, line/value summary). Expanded: one line per article/color (ordered vs. packed once applicable) + line value. "Mark billed" only on `packed` orders, **through the standard confirm modal** (this one — unlike price edits — is a real inventory/business-state change, so it keeps the heavy confirm pattern). Writes a History entry authored as the owner.
 
 ### Low Stock page
-Full, untruncated version of the Overview widget — same red theme, same ≤2 threshold, same "Nothing is low on stock right now" empty state as the staff-facing Low Stock screen (§5.7) — one shared rule, two surfaces.
+Full, untruncated version of the Overview widget — same red theme, same ≤1 threshold, same "Nothing is low on stock right now" empty state as the staff-facing Low Stock screen (§5.7) — one shared rule, two surfaces.
 
 ### History page
 Same shared, append-only log the staff app writes to. **Read-only for owner — no correction/edit affordance on this surface**, even though staff's History screen has one. Owner actions (marking billed) write into this same log, authored as the owner.

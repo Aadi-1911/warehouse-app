@@ -73,7 +73,7 @@ export default function LowStockList() {
     });
   }
 
-  // Rule 56's ≤2 threshold, the same shared constant Live Stock/New Order/Pack Order/the
+  // Rule 56's ≤1 threshold, the same shared constant Live Stock/New Order/Pack Order/the
   // dashboard's own Low Stock page all import — never redefined here.
   const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD);
 

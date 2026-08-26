@@ -19,7 +19,13 @@ const prisma = new PrismaClient();
 // Rule 56's threshold, unified across Live Stock, Pack Order and New Order. Defined once here and
 // applied as a database-level filter so this endpoint and Live Stock can't drift apart on what
 // "low" means.
-const LOW_STOCK_THRESHOLD = 2;
+//
+// Lowered from 2 to 1 on 2026-08-26 (a deliberate rule change). This is the BACKEND copy; the
+// frontend keeps its own in utils/lowStock.js because the two codebases share no constants
+// package (same reason piecesPerSet is duplicated). They must always be changed together — this
+// one decides the Overview KPI's count and the `lowStockThreshold` the API reports, while the
+// frontend one decides every badge; a mismatch shows up as the KPI disagreeing with the screens.
+const LOW_STOCK_THRESHOLD = 1;
 
 // GET /api/dashboard/overview?revenuePeriod=month|fy|all — OWNER only (👑).
 async function getOverview(req, res) {

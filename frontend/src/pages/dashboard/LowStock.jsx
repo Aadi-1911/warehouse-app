@@ -12,7 +12,7 @@ import { LOW_STOCK_THRESHOLD } from '../../utils/lowStock';
 // LiveStock.jsx's own comment (near its grand-total calc) says as much — "a dedicated Low Stock
 // List screen, §5.7, is the place for a global low-stock view; this screen's structure is
 // factory-first by design." So this is a fresh build, not a reuse of an existing screen, using:
-// the exact empty-state copy from §7's Round 7 Refinements, the "no severity tiers, single ≤2
+// the exact empty-state copy from §7's Round 7 Refinements, the "no severity tiers, single ≤1
 // flag, never a fully-tinted row" rule (rule 56, same wording LiveStock.jsx's own header comment
 // uses), and LiveStock's factory-first grouping convention, which LiveStock's own comment already
 // names as this exact screen's job.
@@ -85,7 +85,7 @@ export default function LowStock() {
     });
   }
 
-  // Rule 56's ≤2 threshold, same shared constant LiveStock/New Order/Pack Order already import —
+  // Rule 56's ≤1 threshold, same shared constant LiveStock/New Order/Pack Order already import —
   // never redefined here.
   const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD);
 

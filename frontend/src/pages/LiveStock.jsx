@@ -10,7 +10,7 @@ import { piecesPerSetFor } from '../utils/piecesPerSet';
 // Live Stock View — 07_UI_DESIGN_BRIEF.md §5.5 / §6 Round 6-7 refinements / 05_BUSINESS_RULES.md
 // rules 56-57. Read-only: no mutations happen here, only GET requests.
 //
-// Rule 56: ≤2 sets = a small red flag/badge, never a fully-tinted row (kept subtle throughout).
+// Rule 56: ≤1 set = a small red flag/badge, never a fully-tinted row (kept subtle throughout).
 
 export default function LiveStock() {
   const [stock, setStock] = useState([]);

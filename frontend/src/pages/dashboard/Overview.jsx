@@ -171,14 +171,17 @@ export default function Overview() {
           </div>
         </div>
 
-        {/* 5. Low stock — red, and a real link. Rule 56's ≤2 threshold, counted server-side so this
+        {/* 5. Low stock — red, and a real link. Rule 56's ≤1 threshold, counted server-side so this
             card and Live Stock can't drift apart on what "low" means. The destination is still a
             placeholder for now, which is fine: the card's job is to point somewhere true. */}
         <Link to="/dashboard/low-stock" className="dash-kpi dash-kpi-danger dash-kpi-link">
           <div className="dash-kpi-label">Low stock</div>
           <div className="dash-kpi-value">{formatCount(data.lowStockCount)}</div>
           <div className="dash-kpi-sub">
-            lines at or below {data.lowStockThreshold} sets →
+            {/* Plural-aware since the threshold is no longer hardcoded at a plural value (it was
+                always "2 sets" before 2026-08-26; now it's genuinely 1) — found by actually
+                reading the rendered KPI after lowering the threshold, not assumed safe. */}
+            lines at or below {data.lowStockThreshold} set{data.lowStockThreshold === 1 ? '' : 's'} →
           </div>
         </Link>
 
