@@ -1709,6 +1709,21 @@ body {
   white-space: nowrap;
 }
 
+/* One Article's chip+stepper+"Add selected" block (2026-08-26) — same divider rhythm
+   .transfer-stock-row's own border-bottom already gave each colour row, now applied once per
+   Article block instead of once per individual row (a block can hold several colours' steppers
+   at once). Used both directly inside .transfer-stock-list (a single-colour Article, no
+   accordion wrapper) and inside a multi-colour Article's own .accordion-body.nested, where
+   :last-child trivially applies since it's the only child there. */
+.transfer-article-chips {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.transfer-article-chips:last-child {
+  border-bottom: none;
+}
+
 /* --- New Order: Party picker --- */
 .party-picker-summary {
   display: flex;

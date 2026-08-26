@@ -76,10 +76,24 @@ export default function Transfer() {
 
   // The row currently being configured — kept whole rather than as a bare bundleId, same
   // reasoning as before. Not yet staged; "+ Add to transfer" (or picking a different row) is
-  // what folds it into stagedLines.
+  // what folds it into stagedLines. Used ONLY by the flat search-results list now (see
+  // renderStockRow) — the Factory→Article browsing view below uses checkedColors instead
+  // (2026-08-26, matching New Order's chip+stepper+"Add selected" pattern). Search keeps this
+  // older one-at-a-time mechanism unchanged: a search result is a flat list spanning any number
+  // of different Articles at once, so there's no single Article to scope a shared "Add selected"
+  // button to, the same reason New Order's own chip mechanism is scoped to one resolved product
+  // rather than a cross-article flat list.
   const [selectedRow, setSelectedRow] = useState(null);
   const [qtySets, setQtySets] = useState(0);
   const [note, setNote] = useState('');
+
+  // { [bundleId]: { sets: number } } — present only for CHECKED colours within the Factory→
+  // Article browsing view, same shape as New Order's own checkedColors. Checking a chip reveals
+  // that colour's inline stepper; unchecking drops the entry and its in-progress quantity.
+  // bundleId (not colorId) is the key because that's this screen's own unique-selection-unit
+  // (see this file's own top-of-file note on why a Stock row, not an article+colour cascade, is
+  // what's selected here) — two different Articles can never collide on the same bundleId.
+  const [checkedColors, setCheckedColors] = useState({});
 
   // Every queued line, across any number of different articles/colours — mirrors Receive
   // Stock's stagedColors, but flat rather than two-tiered: a Transfer line is already
@@ -169,6 +183,12 @@ export default function Transfer() {
     // carry over meaningfully.
     setFactoryId('');
     setExpandedArticles(new Set());
+    // checkedColors is exactly "any in-progress row selection" in the new chip mechanism's own
+    // terms — every checked colour's remaining-quantity cap is computed against THIS location's
+    // stock, so a location switch invalidates it the same way it invalidates selectedRow/qtySets
+    // above. stagedLines is still deliberately left alone (cleared just above, for its own
+    // separate reason: every staged line so far genuinely was built from the OLD location).
+    setCheckedColors({});
     // Clearing a to-location that now equals the new from-location is what keeps the two
     // dropdowns from ever agreeing (the backend rejects it, but the UI shouldn't offer it).
     if (newId === toLocationId) setToLocationId('');
@@ -186,6 +206,11 @@ export default function Transfer() {
     setSelectedRow(null);
     setQtySets(0);
     setNote('');
+    // Same "in-progress browsing selection, not staging" reasoning as handleFromLocationChange's
+    // own reset — a new Factory means an entirely different set of Articles and colour chips on
+    // screen, so whatever was checked under the previous Factory no longer corresponds to
+    // anything visible. stagedLines is untouched, per this task's own explicit requirement.
+    setCheckedColors({});
   }
 
   function toggleArticle(productId) {
@@ -241,6 +266,70 @@ export default function Transfer() {
 
   function handleRemoveStaged(lineId) {
     setStagedLines((prev) => prev.filter((l) => l.id !== lineId));
+  }
+
+  // Same shape as New Order's own toggleColorChip — a checked chip starts its stepper at 0
+  // (never pre-filled with the max), so an owner always makes a deliberate choice of quantity
+  // rather than accidentally batch-moving a colour's entire remaining stock by just tapping it.
+  function toggleColorChip(bundleId) {
+    setCheckedColors((prev) => {
+      const next = { ...prev };
+      if (next[bundleId]) {
+        delete next[bundleId];
+      } else {
+        next[bundleId] = { sets: 0 };
+      }
+      return next;
+    });
+  }
+
+  // Capped at `max` (that colour's real remaining quantity — see remainingForRow) on both ends,
+  // unlike New Order's own setColorSets, which only floors at 0 and has no ceiling at all (rule
+  // 64: ordering more than what's in stock is allowed there; a Transfer moves real physical
+  // stock, so it cannot be allowed to request more than genuinely exists at the source).
+  function setColorChipSets(bundleId, sets, max) {
+    setCheckedColors((prev) => ({ ...prev, [bundleId]: { sets: Math.max(0, Math.min(max, sets)) } }));
+  }
+
+  // Stages every currently-checked colour belonging to THIS ONE article as one batch — matching
+  // New Order's handleAddSelected exactly, adapted for Transfer's flat (not per-article-grouped)
+  // stagedLines shape: one line per colour, same as every other staged line on this screen.
+  // Clears only THIS article's own bundleIds out of checkedColors afterward, not the whole map —
+  // unlike New Order (which only ever has one resolved article active at a time), this screen
+  // can have several different articles expanded and mid-selection simultaneously, and adding
+  // one of them must never discard progress checked under a different, still-open article.
+  function handleAddSelectedForArticle(article) {
+    const toAdd = article.rows.filter((row) => (checkedColors[row.bundleId]?.sets ?? 0) > 0);
+    if (toAdd.length === 0 || !toLocationId) return;
+
+    const fromLocationName = locations.find((l) => l.id === fromLocationId)?.name ?? '';
+    const toLocationName = locations.find((l) => l.id === toLocationId)?.name ?? '';
+
+    setStagedLines((prev) => [
+      ...prev,
+      ...toAdd.map((row) => ({
+        id: nextLineIdRef.current++,
+        bundleId: row.bundleId,
+        articleNo: row.productArticleNo,
+        colorName: row.colorName,
+        qtySets: checkedColors[row.bundleId].sets,
+        fromLocationId,
+        fromLocationName,
+        toLocationId,
+        toLocationName,
+        // No note field on this path — matching New Order's own chip mechanism, which has no
+        // note concept at all. A batch of several colours staged in one click has no single row
+        // to attach a free-text note to; the older search-based single-select flow still offers
+        // one, unchanged, for the case where that matters.
+        note: undefined,
+      })),
+    ]);
+
+    setCheckedColors((prev) => {
+      const next = { ...prev };
+      toAdd.forEach((row) => delete next[row.bundleId]);
+      return next;
+    });
   }
 
   // "Real available qtySets" (requirement 6) has to account for quantity this same row already
@@ -331,9 +420,13 @@ export default function Transfer() {
   // The base set behind everything below: real, currently-transferable rows at this Location —
   // same "remaining > 0, or currently being configured" filter the flat list has always applied
   // (requirement 6's staged-quantity cap), computed once so search results, Factory options, and
-  // the Article groups are all derived from an identical, consistent set of rows.
+  // the Article groups are all derived from an identical, consistent set of rows. "currently
+  // being configured" now covers BOTH selection mechanisms on this screen: the search list's
+  // own selectedRow, and the browsing view's checkedColors (a colour checked down to its last
+  // available set must stay visible with its chip still checked, not vanish out from under an
+  // owner mid-selection).
   const availableRows = sourceStock.filter(
-    (r) => remainingForRow(r) > 0 || r.bundleId === selectedRow?.bundleId
+    (r) => remainingForRow(r) > 0 || r.bundleId === selectedRow?.bundleId || checkedColors[r.bundleId] !== undefined
   );
 
   // A search term bypasses Factory/Article grouping entirely and searches across the WHOLE
@@ -401,13 +494,12 @@ export default function Transfer() {
     return null;
   }
 
-  // Shared by the search-results list, a single-colour article (no pointless accordion for one
-  // item — requirement), and colour rows nested inside an expanded Article. showArticle is false
-  // only in that last case, where the Article No is already shown once in the accordion header
-  // and repeating it on every colour row underneath would be redundant. Selection/staging
-  // behavior is identical in all three places — this is still exactly the same row-picking
-  // mechanism the flat list always used, just reached through a different path on screen.
-  function renderStockRow(row, { showArticle }) {
+  // Used ONLY by the flat search-results list now (2026-08-26) — the Factory→Article browsing
+  // view below (both a single-colour article and a multi-colour one) uses renderArticleChips
+  // instead. Always shows the article number: search results span any number of different
+  // Articles at once, so there's no shared header to state it once the way the browsing view's
+  // accordion (or its single-colour flat render) does.
+  function renderStockRow(row) {
     const selected = selectedRow?.bundleId === row.bundleId;
     return (
       <button
@@ -420,12 +512,100 @@ export default function Transfer() {
         // stagedLines array handleConfirmedSubmit is mid-flight on.
         disabled={submitting}
       >
-        {showArticle && <span className="transfer-row-article">{row.productArticleNo}</span>}
+        <span className="transfer-row-article">{row.productArticleNo}</span>
         <span className="transfer-row-color">{row.colorName}</span>
         <span className="transfer-row-qty">
           {remainingForRow(row)} set{remainingForRow(row) === 1 ? '' : 's'}
         </span>
       </button>
+    );
+  }
+
+  // The Factory→Article browsing view's own row mechanism (2026-08-26) — checkable colour chips
+  // within one Article, each checked chip revealing its own inline stepper, one "Add selected"
+  // button staging every currently-checked colour in THIS article as one batch. Matches New
+  // Order's chip+stepper+"Add selected" shape exactly (see NewOrder.jsx's own toggleColorChip/
+  // setColorSets/handleAddSelected), with the one deliberate difference investigation confirmed
+  // was necessary: each chip's stepper is capped at remainingForRow(row) — this moves real
+  // physical stock, unlike New Order's uncapped stepper (rule 64 allows over-ordering there; a
+  // Transfer cannot move more than a location actually holds). The atomic server-side guard in
+  // createTransfer (transferController.js) remains the real enforcement regardless — this cap is
+  // a UX improvement on the happy path, not a replacement for it.
+  function renderArticleChips(article) {
+    const anyChecked = article.rows.some((row) => (checkedColors[row.bundleId]?.sets ?? 0) > 0);
+    return (
+      <div className="transfer-article-chips">
+        <div className="chip-row">
+          {article.rows.map((row) => {
+            const checked = checkedColors[row.bundleId] !== undefined;
+            const remaining = remainingForRow(row);
+            return (
+              <button
+                key={row.bundleId}
+                type="button"
+                className={`chip ${checked ? 'chip-selected' : ''}`}
+                onClick={() => toggleColorChip(row.bundleId)}
+                aria-pressed={checked}
+                disabled={submitting}
+              >
+                {row.colorName}
+                <span className="muted"> · {remaining} set{remaining === 1 ? '' : 's'}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {article.rows
+          .filter((row) => checkedColors[row.bundleId] !== undefined)
+          .map((row) => {
+            const sets = checkedColors[row.bundleId].sets;
+            const max = remainingForRow(row);
+            return (
+              <div key={row.bundleId} className="color-chip-block">
+                <span className="field-label">{row.colorName}</span>
+                <div className="color-chip-block-stepper-row">
+                  <div className="stepper">
+                    <button
+                      type="button"
+                      className="stepper-btn"
+                      onClick={() => setColorChipSets(row.bundleId, sets - 1, max)}
+                      disabled={sets === 0}
+                      aria-label={`Decrease ${row.colorName} sets`}
+                    >
+                      −
+                    </button>
+                    <span className="stepper-value">{sets}</span>
+                    {/* Capped at `max` on both sides — see this function's own header comment
+                        for why this differs from New Order's uncapped equivalent. */}
+                    <button
+                      type="button"
+                      className="stepper-btn"
+                      onClick={() => setColorChipSets(row.bundleId, sets + 1, max)}
+                      disabled={sets >= max}
+                      aria-label={`Increase ${row.colorName} sets`}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <span className="muted">
+                    {max} set{max === 1 ? '' : 's'} available
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+        {anyChecked && (
+          <button
+            type="button"
+            className="btn-primary btn-inline"
+            onClick={() => handleAddSelectedForArticle(article)}
+            disabled={!toLocationId || submitting}
+          >
+            Add selected
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -562,22 +742,30 @@ export default function Transfer() {
           <p className="muted centered-empty-state">{stockListMessage()}</p>
         ) : searchText ? (
           // Flat search-result list — unchanged behavior, works across every Factory at once.
+          // Still the older one-at-a-time selection mechanism (see renderStockRow's own comment
+          // for why the new chip mechanism doesn't extend here).
           <div className="transfer-stock-list">
-            {searchResults.map((row) => renderStockRow(row, { showArticle: true }))}
+            {searchResults.map((row) => renderStockRow(row))}
           </div>
         ) : (
           // Factory → Article (collapsible) → Colour hierarchy (07_UI_DESIGN_BRIEF.md §5.9
           // amendment), scoped to the chosen Factory. Reuses Live Stock's shared accordion
           // classes as-is (LiveStock.jsx/index.css) — this is a single level of accordion, not
           // Live Stock's two (Factory here is a dropdown, not its own accordion layer, since
-          // only one Factory's articles are ever visible at a time).
+          // only one Factory's articles are ever visible at a time). Colour selection within
+          // (both here and the single-colour case below) is the new chip+stepper+"Add selected"
+          // mechanism (2026-08-26, matching New Order) — see renderArticleChips.
           <div className="transfer-stock-list">
             {articleGroups.map((article) => {
               // An article with exactly one colour has nothing to disambiguate — collapsing it
               // behind a header + chevron would be a click for no reason, so it renders as a
-              // plain row directly, same as Live Stock's single-Location collapse (§5.5).
+              // plain row directly, same as Live Stock's single-Location collapse (§5.5). Still
+              // gets the chip+stepper+"Add selected" treatment, just with no accordion wrapper
+              // around it — renderArticleChips itself renders no accordion markup at all, so
+              // calling it directly here already satisfies "no wrapper for one item" by
+              // construction, with no separate branch needed.
               if (article.rows.length === 1) {
-                return renderStockRow(article.rows[0], { showArticle: true });
+                return <div key={article.productId}>{renderArticleChips(article)}</div>;
               }
 
               const expanded = expandedArticles.has(article.productId);
@@ -600,11 +788,7 @@ export default function Transfer() {
                     <ChevronIcon className={expanded ? 'chevron chevron-open' : 'chevron'} />
                   </button>
 
-                  {expanded && (
-                    <div className="accordion-body nested">
-                      {article.rows.map((row) => renderStockRow(row, { showArticle: false }))}
-                    </div>
-                  )}
+                  {expanded && <div className="accordion-body nested">{renderArticleChips(article)}</div>}
                 </div>
               );
             })}
