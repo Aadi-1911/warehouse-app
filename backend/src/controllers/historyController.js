@@ -12,8 +12,10 @@ const prisma = new PrismaClient();
 // others already here, and it's the only place an OWNER can find a specific receipt to correct
 // (the correction action lives on dashboard/History.jsx, so what it corrects has to be visible
 // there too). The correction ACTION itself is OWNER-gated (POST /api/transaction-corrections,
-// plus PIN when it touches price) — the ENTRIES describing a receipt or a correction are not;
-// both roles see them, same as every other entry type here.
+// plus PIN when it touches price). Its ENTRY is not gated by entry TYPE — but as of rule 104
+// below, it is gated by ACTOR, and since only an OWNER can perform a correction, a correction
+// entry now reaches OWNER viewers only. That's a consequence of the actor rule, not a separate
+// per-type rule: a receipt entry for stock a STAFF member received stays visible to staff.
 //
 // Transfer Corrections added the same day, as the deferred follow-up. The ordinary Transfer query
 // below now excludes REVERSAL transfers (`correctionAsReversal: null`) — a reversal is pure
@@ -30,10 +32,38 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across eight
+// The trade-off, stated honestly: because the sort happens in application memory across seven
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
 // real volume that's a non-issue. If it ever genuinely became one, the fix is per-source
 // pagination with a merge cursor — still not a shared table.
+//
+// ROLE-BASED VISIBILITY (added 2026-08-26, rule 104). OWNER sees every entry, exactly as before.
+// STAFF sees only entries whose ACTOR was a STAFF user — shared across all staff, never narrowed
+// to just the logged-in one, so two staff members see the same feed as each other. An entry for an
+// action an OWNER performed (billing an order, correcting a receipt, a price-touching correction)
+// is never sent to a STAFF request at all — filtered in the database queries below, not hidden in
+// the UI, same principle as costPrice never being SELECTed for a STAFF request elsewhere.
+//
+// A LIVE JOIN TO User.role IS CORRECT HERE, and this is the one place that claim needs defending,
+// because this project's standing convention is the opposite: priceAtOrder, costPriceSnapshot and
+// rule 101's billing amounts all snapshot a value at action time precisely because a live lookup
+// would let a later edit rewrite history. The difference is that those fields are all editable
+// after the fact, and User.role is not. Verified rather than assumed, by reading every write to an
+// existing User row in this codebase (there are exactly eight): userController's deactivate
+// (isActive), reactivate (isActive), updateOwnPin (priceEditPinHash/failedPinAttempts/
+// pinLockedUntil), resetUserPassword (passwordHash) and updateUser (name/username only — it
+// destructures just those two from the body, so a `role` key in a request is silently ignored, not
+// applied); requirePin's two lockout-counter writes; and seed.js's backfill (priceEditPinHash/
+// isPrimaryOwner). `role` appears in a `data` payload only inside prisma.user.CREATE. There is no
+// change-role endpoint, and no route accepts a role for an existing account. So a user's role is
+// fixed for life at creation, which makes "their role now" and "their role when they acted"
+// necessarily the same value — a snapshot column would be a second copy of an immutable fact, and
+// could only ever drift from it by being wrong. Users are also never hard-deleted (isActive
+// soft-deactivation only, see User.isActive's own schema comment: "Transaction rows reference
+// userId and must stay resolvable forever"), so the join can never fail to resolve an actor.
+//
+// This is also why no backfill is needed for pre-existing entries: the join answers correctly for
+// every historical row already in the database, not just rows created from now on.
 //
 // costPrice never appears here, at any role: no price field of any kind is selected below.
 // priceAtOrder isn't selected either — a history feed has no need for it. The Transaction
@@ -114,15 +144,33 @@ function articleLabel(lineItem) {
   return `${lineItem.bundle.product.articleNo} ${lineItem.bundle.color.name}`;
 }
 
+// Builds the actor-role condition for one source query (rule 104). Every source below links to its
+// actor through a differently-NAMED relation — createdBy, changedBy, user, correctedBy — while
+// asking the identical question of all of them, so the relation name is the parameter and the
+// question is the shared part. Returns an empty object for an OWNER, which spreads into a `where`
+// as nothing at all, leaving the owner's queries byte-for-byte what they were before this feature.
+function actorScope(relationName, viewerRole) {
+  if (viewerRole === 'OWNER') return {};
+  return { [relationName]: { role: 'STAFF' } };
+}
+
 async function listHistory(req, res) {
-  // Eight independent reads, run concurrently — they share no data, so there's no reason to
+  // The viewer's own role, re-derived from the database by requireAuth on every request (never
+  // read from the JWT payload) — so a deactivated or changed account can't keep an old role alive
+  // through a still-valid token.
+  const viewerRole = req.user.role;
+
+  // Seven independent reads, run concurrently — they share no data, so there's no reason to
   // serialise them.
   const [orders, adjustments, transfers, returns, receipts, corrections, transferCorrections] = await Promise.all([
     prisma.order.findMany({
+      where: { ...actorScope('createdBy', viewerRole) },
       select: {
         id: true,
         createdAt: true,
-        createdBy: { select: { name: true } },
+        // role rides along with name on every actor select below — it's what the fail-closed
+        // backstop filter at the end of this function checks each built entry against.
+        createdBy: { select: { name: true, role: true } },
         party: { select: { name: true } },
         // _count rather than pulling every line item just to length them — the feed only ever
         // shows the count for a creation entry.
@@ -131,6 +179,7 @@ async function listHistory(req, res) {
     }),
 
     prisma.orderAdjustment.findMany({
+      where: { ...actorScope('changedBy', viewerRole) },
       select: {
         id: true,
         changedAt: true,
@@ -138,7 +187,7 @@ async function listHistory(req, res) {
         oldValue: true,
         newValue: true,
         reason: true,
-        changedBy: { select: { name: true } },
+        changedBy: { select: { name: true, role: true } },
         order: { select: { party: { select: { name: true } } } },
         // Null for order-level changes (a status transition); populated for line-level ones,
         // which is what lets the description name the specific article/colour.
@@ -163,7 +212,7 @@ async function listHistory(req, res) {
     prisma.transfer.findMany({
       // Excludes reversal transfers created by a Transfer Correction — pure bookkeeping, never a
       // real business event a person asked for (see this file's own header comment).
-      where: { correctionAsReversal: null },
+      where: { correctionAsReversal: null, ...actorScope('user', viewerRole) },
       select: {
         id: true,
         bundleId: true,
@@ -171,7 +220,7 @@ async function listHistory(req, res) {
         toLocationId: true,
         createdAt: true,
         qtySets: true,
-        user: { select: { name: true } },
+        user: { select: { name: true, role: true } },
         bundle: {
           select: {
             product: { select: { articleNo: true } },
@@ -190,12 +239,13 @@ async function listHistory(req, res) {
     // itself. priceAtReturn is deliberately NOT selected: it's a selling price, so nothing forbids
     // it, but a history feed has no use for it — same call already made for priceAtOrder.
     prisma.partyStockReturn.findMany({
+      where: { ...actorScope('user', viewerRole) },
       select: {
         id: true,
         createdAt: true,
         qtySets: true,
         reason: true,
-        user: { select: { name: true } },
+        user: { select: { name: true, role: true } },
         party: { select: { name: true } },
         bundle: {
           select: {
@@ -217,12 +267,12 @@ async function listHistory(req, res) {
     // along (not exposed directly) purely so the entry can flag whether it's already been
     // corrected, without a second round trip.
     prisma.transaction.findMany({
-      where: { type: 'STOCK_IN' },
+      where: { type: 'STOCK_IN', ...actorScope('user', viewerRole) },
       select: {
         id: true,
         qtySets: true,
         createdAt: true,
-        user: { select: { name: true } },
+        user: { select: { name: true, role: true } },
         stock: {
           select: {
             bundleId: true,
@@ -245,12 +295,18 @@ async function listHistory(req, res) {
     // the response. This feed excludes cost price for every role, always (see this file's own
     // header comment); a correction is no exception just because it's owner-triggered, since
     // GET /api/history itself has no role branching at all.
+    // In practice this whole source resolves to zero rows for a STAFF viewer, since POST
+    // /api/transaction-corrections is OWNER-gated so every row here necessarily has an OWNER
+    // actor. The scope is still applied rather than special-cased: it costs nothing, and it means
+    // this query states its own visibility rule instead of depending on a gate in a different file
+    // staying OWNER-only forever.
     prisma.transactionCorrection.findMany({
+      where: { ...actorScope('correctedBy', viewerRole) },
       select: {
         id: true,
         reason: true,
         createdAt: true,
-        correctedBy: { select: { name: true } },
+        correctedBy: { select: { name: true, role: true } },
         original: {
           select: {
             qtySets: true,
@@ -284,12 +340,15 @@ async function listHistory(req, res) {
 
     // Transfer Corrections — one entry per correction event. No price concern here at all: a
     // Transfer never carries one.
+    // Same as transactionCorrection above: OWNER-gated at the route, so empty for STAFF in
+    // practice, but scoped here on its own terms rather than relying on that.
     prisma.transferCorrection.findMany({
+      where: { ...actorScope('correctedBy', viewerRole) },
       select: {
         id: true,
         reason: true,
         createdAt: true,
-        correctedBy: { select: { name: true } },
+        correctedBy: { select: { name: true, role: true } },
         originalTransfer: {
           select: {
             qtySets: true,
@@ -324,6 +383,7 @@ async function listHistory(req, res) {
       label: 'Placed',
       timestamp: o.createdAt,
       actorName: o.createdBy.name,
+      actorRole: o.createdBy.role,
       partyName: o.party.name,
       description: `${o.party.name} order placed — ${lines} line${lines === 1 ? '' : 's'}`,
     });
@@ -344,6 +404,7 @@ async function listHistory(req, res) {
         label: statusLabel(a.newValue),
         timestamp: a.changedAt,
         actorName: a.changedBy.name,
+        actorRole: a.changedBy.role,
         partyName,
         description: `${partyName}: order ${statusWord(a.newValue)}`,
       });
@@ -358,6 +419,7 @@ async function listHistory(req, res) {
         label: 'Cancelled',
         timestamp: a.changedAt,
         actorName: a.changedBy.name,
+        actorRole: a.changedBy.role,
         partyName,
         description: a.lineItem
           ? `${partyName} — ${articleLabel(a.lineItem)}: line cancelled`
@@ -374,6 +436,7 @@ async function listHistory(req, res) {
         label: 'Change',
         timestamp: a.changedAt,
         actorName: a.changedBy.name,
+        actorRole: a.changedBy.role,
         partyName,
         description: `${partyName} — ${what}${a.oldValue} → ${a.newValue} sets${suffix}`,
       });
@@ -389,6 +452,7 @@ async function listHistory(req, res) {
       label: 'Transfer',
       timestamp: t.createdAt,
       actorName: t.user.name,
+      actorRole: t.user.role,
       partyName: null,
       description: `${t.qtySets} set${t.qtySets === 1 ? '' : 's'} of ${article} transferred ${t.fromLocation.name} → ${t.toLocation.name}`,
       // Not purely display fields — read by dashboard/History.jsx's OWNER-only Correct action to
@@ -426,6 +490,7 @@ async function listHistory(req, res) {
       label: 'Corrected',
       timestamp: c.createdAt,
       actorName: c.correctedBy.name,
+      actorRole: c.correctedBy.role,
       partyName: null,
       description: `Transfer corrected — ${changes.join(', ')} (${TRANSFER_CORRECTION_REASON_LABELS[c.reason] ?? c.reason})`,
     });
@@ -441,6 +506,7 @@ async function listHistory(req, res) {
       label: 'Return',
       timestamp: r.createdAt,
       actorName: r.user.name,
+      actorRole: r.user.role,
       partyName: r.party.name,
       // The reason is the whole point of a return entry — what came back matters less than why,
       // so it's in the sentence itself rather than a parenthetical afterthought.
@@ -457,6 +523,7 @@ async function listHistory(req, res) {
       label: 'Received',
       timestamp: t.createdAt,
       actorName: t.user.name,
+      actorRole: t.user.role,
       partyName: null,
       description: `${t.qtySets} set${t.qtySets === 1 ? '' : 's'} of ${article} received at ${t.stock.location.name}`,
       // Not purely display fields — read by dashboard/History.jsx's OWNER-only Correct action to
@@ -506,21 +573,36 @@ async function listHistory(req, res) {
       label: 'Corrected',
       timestamp: c.createdAt,
       actorName: c.correctedBy.name,
+      actorRole: c.correctedBy.role,
       partyName: null,
       description: `Receipt corrected — ${changes.join(', ')} (${CORRECTION_REASON_LABELS[c.reason] ?? c.reason})`,
     });
   }
 
+  // Rule 104 backstop. The seven `where` clauses above are the real enforcement — an OWNER's rows
+  // are never fetched for a STAFF request in the first place — so for correct code this filter
+  // removes nothing. It exists because the enforcement is spread across seven separate queries,
+  // and the failure mode of adding an eighth source later is forgetting one of them. This is the
+  // single place every entry must pass through regardless of which source built it.
+  //
+  // Deliberately an ALLOWLIST (`=== 'STAFF'`) rather than a denylist (`!== 'OWNER'`), because the
+  // two differ exactly in the case that matters: a new source whose actor select forgot `role`
+  // yields `actorRole: undefined`, which a denylist would treat as safe and SHOW to staff — the
+  // precise leak this is here to prevent. An allowlist hides anything it cannot positively confirm
+  // is staff-performed, so a mistake becomes a missing entry rather than a disclosure.
+  const visibleEntries =
+    viewerRole === 'OWNER' ? entries : entries.filter((e) => e.actorRole === 'STAFF');
+
   // Newest first, with id as a deterministic tiebreak: several events can legitimately share a
   // timestamp (billing writes its stock transactions and its status adjustment inside one database
   // transaction), and without a tiebreak their relative order could differ between two identical
   // requests — which would make the list appear to shuffle on refresh.
-  entries.sort((a, b) => {
+  visibleEntries.sort((a, b) => {
     const diff = new Date(b.timestamp) - new Date(a.timestamp);
     return diff !== 0 ? diff : a.id.localeCompare(b.id);
   });
 
-  res.json(entries);
+  res.json(visibleEntries);
 }
 
 module.exports = { listHistory };
