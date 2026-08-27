@@ -1,7 +1,16 @@
 import { apiFetch } from './client';
 
 // GET /api/stock?articleNo=&colorId=&locationId= -> [{ bundleId, productId, productArticleNo,
-// productName, factoryId, factoryName, colorName, locationId, locationName, qtySets }]
+// productName, productIsActive, factoryId, factoryName, colorName, locationId, locationName,
+// qtySets }]
+//
+// This endpoint has never filtered out archived articles, and still doesn't — an archived
+// article holding real unsold stock is still real stock, and every quantity/value figure built
+// on it must keep counting it (rule 85's "never hard-deleted" extended to reporting, 2026-08-28).
+// `productIsActive` is what lets a caller SEPARATE those rows rather than lose them: Live Stock
+// uses it to keep archived articles out of the main list while giving them their own opt-in
+// section. Note that callers which say nothing about it (Transfer, both Low Stock screens)
+// behave exactly as they did before — adding a field changes nothing for code that ignores it.
 //
 // Live Stock View calls this with no filters and searches client-side (its search matches
 // article OR colour, which doesn't map cleanly onto this endpoint's colorId-by-id param), so

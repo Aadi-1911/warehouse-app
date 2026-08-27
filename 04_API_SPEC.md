@@ -277,10 +277,11 @@ Lists Bundles for a given Product (i.e. its valid colors) — can also be served
 
 ### `GET /api/stock` 🔒
 Query params: `?articleNo=`, `?colorId=`, `?locationId=` — supports the Live Stock View's search/filter requirement.
-Response: `[{ bundleId, productId, productArticleNo, productName, factoryId, factoryName, colorName, locationId, locationName, qtySets }]`
+Response: `[{ bundleId, productId, productArticleNo, productName, productIsActive, factoryId, factoryName, colorName, locationId, locationName, qtySets }]`
 **No direct write endpoint exists for Stock** — quantities only change via `POST /api/transactions` (see below). This is intentional; do not add a `PATCH /api/stock/:id`.
 `factoryId`/`factoryName` added for §5.9's Factory-grouped Transfer picker — every row already traces back through a Product to exactly one Factory, so this is a same-query addition, not a new join. Existing callers unaffected.
 `productName` added so both Low Stock screens can show "ArticleNo — Name" the same way Pack/Bill/Ship Order already do — another same-query addition, existing callers unaffected.
+`productIsActive` added 2026-08-28 for Live Stock's archived section and Article Pricing's stock-aware archive warning. **This endpoint does not filter on it and must not start** — archiving is non-destructive for reporting (rule 85), so an archived article's real stock still has to reach every caller; the flag exists so callers can *separate* those rows, never so they can be dropped. Same-query addition, existing callers unaffected.
 
 ---
 

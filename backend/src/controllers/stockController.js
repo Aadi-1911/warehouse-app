@@ -26,7 +26,14 @@ async function listStock(req, res) {
       bundle: {
         select: {
           product: {
-            select: { id: true, articleNo: true, name: true, factoryId: true, factory: { select: { name: true } } },
+            select: {
+              id: true,
+              articleNo: true,
+              name: true,
+              factoryId: true,
+              isActive: true,
+              factory: { select: { name: true } },
+            },
           },
           color: { select: { name: true } },
         },
@@ -53,11 +60,28 @@ async function listStock(req, res) {
   // same way Pack/Bill/Ship Order already do, instead of a bare article number. Product.name has
   // no role-sensitivity (unlike costPrice/sellingPrice, which live on the same model but are never
   // selected here), so no gating question to weigh — just another additive field.
+  //
+  // productIsActive rides along too (2026-08-28), for Live Stock's archived section and for the
+  // stock-aware archive warning in Article Pricing. Note what did NOT change: this endpoint has
+  // never filtered on Product.isActive and still doesn't. An archived article sitting on real,
+  // unsold inventory is still real stock and must keep reaching every caller — the Owner
+  // Dashboard's stock-value/sets/pieces KPIs read the Stock table directly and likewise never
+  // filtered it, so archiving has always been non-destructive for reporting. What was actually
+  // missing was not a filter but a FLAG: callers received archived stock rows already and had no
+  // way to tell them apart from active ones, so they could neither separate them (Live Stock)
+  // nor warn about them (Article Pricing). Exposing the flag is what makes that possible without
+  // hiding anything from anyone.
+  //
+  // Deliberately named productIsActive, not isActive: every other product field on this flattened
+  // row already carries the `product` prefix (productId, productArticleNo, productName), and a
+  // bare `isActive` here would read as a property of the Stock row itself, which has no such
+  // concept.
   const response = stock.map((s) => ({
     bundleId: s.bundleId,
     productId: s.bundle.product.id,
     productArticleNo: s.bundle.product.articleNo,
     productName: s.bundle.product.name,
+    productIsActive: s.bundle.product.isActive,
     factoryId: s.bundle.product.factoryId,
     factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,

@@ -25,6 +25,10 @@ export default function LiveStock() {
   // start collapsed, matching the established accordion convention elsewhere in this app.
   const [expandedFactories, setExpandedFactories] = useState(new Set());
   const [expandedArticles, setExpandedArticles] = useState(new Set());
+  // The archived-articles section, closed by default like every other grouping here — archived
+  // stock is something to look up deliberately, not something that should compete for attention
+  // with the stock actually being worked with day to day.
+  const [archivedOpen, setArchivedOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,11 +85,30 @@ export default function LiveStock() {
       )
     : stock;
 
+  // Archived articles are split out rather than filtered away (2026-08-28, rule 85 extended to
+  // reporting). GET /api/stock has never hidden them and still doesn't — an archived article
+  // holding real unsold inventory is real stock, and the Owner Dashboard's value/sets/pieces KPIs
+  // count it. But mixing it into the main list is its own problem: it puts stock you can't
+  // receive against or order from directly alongside stock you can, with nothing marking the
+  // difference. So the same rows are grouped twice, into two separate views.
+  //
+  // Only rows with qtySets > 0 reach the archived view. "Archived AND still stocked" is the whole
+  // point of that section — an archived article drained to zero is genuinely finished, and listing
+  // it would bury the ones that still need attention. The active view keeps every row it always
+  // had, zero-quantity ones included, so nothing about it changes.
+  const activeStock = filteredStock.filter((row) => row.productIsActive);
+  const archivedStock = filteredStock.filter((row) => !row.productIsActive && row.qtySets > 0);
+
   // Factory (outer) -> Article (nested) -> rows (rule 57), built fresh each render from
   // already-fetched data — cheap at this app's real scale, and keeps the grouping always
   // consistent with whatever the search box currently filters to.
+  //
+  // Extracted into a function (2026-08-28) so the archived section is grouped by exactly the same
+  // logic as the active one rather than a hand-copied variant of it — including the
+  // multi-location sub-grouping below, which is the part most likely to drift if duplicated.
+  function buildFactoryGroups(rows) {
   const factoryGroups = new Map();
-  filteredStock.forEach((row) => {
+  rows.forEach((row) => {
     const product = productsById.get(row.productId);
     if (!product) return; // defensive: a stock row whose product wasn't in the fetched list
 
@@ -122,7 +145,7 @@ export default function LiveStock() {
     });
   });
 
-  const groupedFactories = [...factoryGroups.values()]
+  return [...factoryGroups.values()]
     .map((factory) => {
       const articles = [...factory.articles.values()]
         .map((article) => {
@@ -172,13 +195,134 @@ export default function LiveStock() {
       };
     })
     .sort((a, b) => a.factoryName.localeCompare(b.factoryName));
+  }
+
+  const groupedFactories = buildFactoryGroups(activeStock);
+  const archivedFactories = buildFactoryGroups(archivedStock);
 
   // Top-level summary is deliberately just sets + pieces, per rule 57's literal wording — the
   // fuller article-count/low-stock breakdown belongs to each factory section, not repeated
   // again at the page level (a dedicated Low Stock List screen, §5.7, is the place for a
   // global low-stock view; this screen's structure is factory-first by design).
+  //
+  // These count the ACTIVE list only, so they always reconcile with the sections directly beneath
+  // them — someone adding up what's on screen must land on the number shown above it. Archived
+  // stock isn't dropped from the page, it's totalled separately in its own section header below.
+  // (The Owner Dashboard's stock KPIs are a different question and deliberately answer it
+  // differently: they report the whole business, archived included, with no split.)
   const grandTotalSets = groupedFactories.reduce((sum, f) => sum + f.totalSets, 0);
   const grandTotalPieces = groupedFactories.reduce((sum, f) => sum + f.totalPieces, 0);
+
+  const archivedTotalSets = archivedFactories.reduce((sum, f) => sum + f.totalSets, 0);
+  const archivedTotalPieces = archivedFactories.reduce((sum, f) => sum + f.totalPieces, 0);
+  const archivedArticleCount = archivedFactories.reduce((sum, f) => sum + f.articleCount, 0);
+
+  // One factory accordion, rendered identically wherever it appears. Extracted (2026-08-28) when
+  // the archived section was added, so the two lists can't drift into rendering the same data
+  // two slightly different ways — the nested article/location/colour markup below is exactly the
+  // kind of thing that gets fixed in one copy and not the other.
+  //
+  // keyPrefix namespaces the FACTORY accordion's open/closed state only. A factory genuinely can
+  // appear in both lists at once (some articles active, some archived), and both entries would
+  // otherwise share one id in `expandedFactories` and open together. Article ids need no prefix:
+  // a product is either active or archived, never both, so it can only ever appear in one list.
+  function renderFactorySection(factory, keyPrefix) {
+    const factoryKey = `${keyPrefix}${factory.factoryId}`;
+    const factoryOpen = expandedFactories.has(factoryKey);
+    return (
+      <div key={factoryKey} className="card accordion-section">
+        <button
+          type="button"
+          className="accordion-header"
+          onClick={() => toggleFactory(factoryKey)}
+          aria-expanded={factoryOpen}
+        >
+          <div className="accordion-header-text">
+            <div className="accordion-title">{factory.factoryName}</div>
+            <div className="muted accordion-subtitle">
+              {factory.articleCount} article{factory.articleCount === 1 ? '' : 's'} ·{' '}
+              {factory.totalSets} sets · {factory.totalPieces} pieces
+              {factory.lowCount > 0 && (
+                <span className="badge badge-danger accordion-low-badge">
+                  {factory.lowCount} low
+                </span>
+              )}
+            </div>
+          </div>
+          <ChevronIcon className={factoryOpen ? 'chevron chevron-open' : 'chevron'} />
+        </button>
+
+        {factoryOpen && (
+          <div className="accordion-body">
+            {factory.articles.map((article) => {
+              const articleOpen = expandedArticles.has(article.productId);
+              return (
+                <div key={article.productId} className="accordion-section nested">
+                  <button
+                    type="button"
+                    className="accordion-header nested"
+                    onClick={() => toggleArticle(article.productId)}
+                    aria-expanded={articleOpen}
+                  >
+                    <div className="accordion-header-text">
+                      <div className="accordion-title-sm">
+                        {article.articleNo}
+                        <span className="muted"> — {article.productName}</span>
+                      </div>
+                      <div className="accordion-subtitle">
+                        <span className="badge badge-accent">
+                          {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}
+                        </span>
+                        {article.lowRowCount > 0 && (
+                          <span className="badge badge-danger accordion-low-badge">Low</span>
+                        )}
+                      </div>
+                    </div>
+                    <ChevronIcon className={articleOpen ? 'chevron chevron-open' : 'chevron'} />
+                  </button>
+
+                  {articleOpen && (
+                    <div className="accordion-body nested">
+                      {/* §5.5 — updated: sub-group by Location first when an article's stock
+                          spans more than one, so two same-colour rows distinguished only by
+                          location never sit visually adjacent. Location is now the sub-header
+                          itself, so per-row location text would just repeat it — dropped in
+                          this branch only. A single-location article has nothing to
+                          disambiguate, so locationGroups is null and it renders exactly as
+                          before: a flat list with location spelled out on each row. */}
+                      {article.locationGroups ? (
+                        article.locationGroups.map((group) => (
+                          <div key={group.locationId} className="location-subgroup">
+                            <div className="location-subgroup-header">{group.locationName}</div>
+                            {group.rows.map((row) => (
+                              <div key={row.key} className="stock-row">
+                                <span className="stock-row-color">{row.colorName}</span>
+                                <span className="stock-row-qty">{row.qtySets} sets</span>
+                                {row.low && <span className="badge badge-danger">Low</span>}
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      ) : (
+                        article.rows.map((row) => (
+                          <div key={row.key} className="stock-row">
+                            <span className="stock-row-color">{row.colorName}</span>
+                            <span className="muted">{row.locationName}</span>
+                            <span className="stock-row-qty">{row.qtySets} sets</span>
+                            {row.low && <span className="badge badge-danger">Low</span>}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -219,107 +363,59 @@ export default function LiveStock() {
             />
           </label>
 
-          {groupedFactories.length === 0 ? (
+          {/* The archived section is a real result, so an empty ACTIVE list isn't an empty page.
+              Without the archivedFactories check this would claim "No stock recorded yet" while
+              a populated archived section sat directly underneath it — the same
+              says-something-false-about-data-it-can-see problem the loading states on this
+              screen were already written to avoid. */}
+          {groupedFactories.length === 0 && archivedFactories.length === 0 ? (
             <p className="muted centered-empty-state">
               {stock.length === 0 ? 'No stock recorded yet.' : 'No results match your search.'}
             </p>
           ) : (
-            groupedFactories.map((factory) => {
-              const factoryOpen = expandedFactories.has(factory.factoryId);
-              return (
-                <div key={factory.factoryId} className="card accordion-section">
-                  <button
-                    type="button"
-                    className="accordion-header"
-                    onClick={() => toggleFactory(factory.factoryId)}
-                    aria-expanded={factoryOpen}
-                  >
-                    <div className="accordion-header-text">
-                      <div className="accordion-title">{factory.factoryName}</div>
-                      <div className="muted accordion-subtitle">
-                        {factory.articleCount} article{factory.articleCount === 1 ? '' : 's'} ·{' '}
-                        {factory.totalSets} sets · {factory.totalPieces} pieces
-                        {factory.lowCount > 0 && (
-                          <span className="badge badge-danger accordion-low-badge">
-                            {factory.lowCount} low
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <ChevronIcon className={factoryOpen ? 'chevron chevron-open' : 'chevron'} />
-                  </button>
+            groupedFactories.map((factory) => renderFactorySection(factory, ''))
+          )}
 
-                  {factoryOpen && (
-                    <div className="accordion-body">
-                      {factory.articles.map((article) => {
-                        const articleOpen = expandedArticles.has(article.productId);
-                        return (
-                          <div key={article.productId} className="accordion-section nested">
-                            <button
-                              type="button"
-                              className="accordion-header nested"
-                              onClick={() => toggleArticle(article.productId)}
-                              aria-expanded={articleOpen}
-                            >
-                              <div className="accordion-header-text">
-                                <div className="accordion-title-sm">
-                                  {article.articleNo}
-                                  <span className="muted"> — {article.productName}</span>
-                                </div>
-                                <div className="accordion-subtitle">
-                                  <span className="badge badge-accent">
-                                    {article.distinctColors} colour{article.distinctColors === 1 ? '' : 's'}
-                                  </span>
-                                  {article.lowRowCount > 0 && (
-                                    <span className="badge badge-danger accordion-low-badge">Low</span>
-                                  )}
-                                </div>
-                              </div>
-                              <ChevronIcon className={articleOpen ? 'chevron chevron-open' : 'chevron'} />
-                            </button>
-
-                            {articleOpen && (
-                              <div className="accordion-body nested">
-                                {/* §5.5 — updated: sub-group by Location first when an article's stock
-                                    spans more than one, so two same-colour rows distinguished only by
-                                    location never sit visually adjacent. Location is now the sub-header
-                                    itself, so per-row location text would just repeat it — dropped in
-                                    this branch only. A single-location article has nothing to
-                                    disambiguate, so locationGroups is null and it renders exactly as
-                                    before: a flat list with location spelled out on each row. */}
-                                {article.locationGroups ? (
-                                  article.locationGroups.map((group) => (
-                                    <div key={group.locationId} className="location-subgroup">
-                                      <div className="location-subgroup-header">{group.locationName}</div>
-                                      {group.rows.map((row) => (
-                                        <div key={row.key} className="stock-row">
-                                          <span className="stock-row-color">{row.colorName}</span>
-                                          <span className="stock-row-qty">{row.qtySets} sets</span>
-                                          {row.low && <span className="badge badge-danger">Low</span>}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ))
-                                ) : (
-                                  article.rows.map((row) => (
-                                    <div key={row.key} className="stock-row">
-                                      <span className="stock-row-color">{row.colorName}</span>
-                                      <span className="muted">{row.locationName}</span>
-                                      <span className="stock-row-qty">{row.qtySets} sets</span>
-                                      {row.low && <span className="badge badge-danger">Low</span>}
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+          {/* Archived-but-still-stocked articles (2026-08-28). Collapsed by default and opt-in to
+              open, the same convention every other grouping on this screen already follows, and
+              rendered only when there's genuinely something in it — an app with no archived stock
+              shows exactly what it showed before, with no empty section to explain. */}
+          {archivedFactories.length > 0 && (
+            <div className="card accordion-section">
+              <button
+                type="button"
+                className="accordion-header"
+                onClick={() => setArchivedOpen((prev) => !prev)}
+                aria-expanded={archivedOpen}
+              >
+                <div className="accordion-header-text">
+                  <div className="accordion-title">
+                    Archived articles
+                    <span className="badge badge-danger accordion-low-badge">Archived</span>
+                  </div>
+                  <div className="muted accordion-subtitle">
+                    {archivedArticleCount} article{archivedArticleCount === 1 ? '' : 's'} still
+                    holding stock · {archivedTotalSets} sets · {archivedTotalPieces} pieces
+                  </div>
                 </div>
-              );
-            })
+                <ChevronIcon className={archivedOpen ? 'chevron chevron-open' : 'chevron'} />
+              </button>
+
+              {archivedOpen && (
+                <div className="accordion-body">
+                  <p className="muted hint-text">
+                    These articles are archived, so they no longer appear in the list above. Their
+                    stock is still real and still counts towards stock value — reactivate an
+                    article from Article Pricing to use it again.
+                  </p>
+                  {/* Prefixed keys: a factory can legitimately appear in BOTH lists (some of its
+                      articles active, others archived), and the open/closed Sets are keyed by id
+                      — without the prefix, opening a factory here would silently open the same
+                      factory above too. */}
+                  {archivedFactories.map((factory) => renderFactorySection(factory, 'archived:'))}
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

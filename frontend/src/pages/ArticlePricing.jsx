@@ -6,6 +6,7 @@ import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listFactories } from '../api/factories';
 import { listProducts, updateProduct, deactivateProduct, reactivateProduct } from '../api/products';
+import { listStock } from '../api/stock';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -203,9 +204,77 @@ export default function ArticlePricing() {
   // Opens the archive/reactivate confirm (requirement 4: a plain ConfirmModal, no PIN — this
   // isn't a price action). Kept as its own handler pair, deliberately not touching
   // handleStartEdit/handleSubmitEdit above.
+  //
+  // Archiving now checks the article's REAL stock first (2026-08-28) so the dialog can name the
+  // actual quantity about to be hidden from the daily pickers. Checked live, at the moment the
+  // button is pressed, rather than read from anything already in state: this screen is a pricing
+  // screen that can sit open for a long time while stock moves underneath it, and a warning that
+  // names a stale quantity is worse than one that names none — it reads as authoritative while
+  // being wrong. Reactivating needs no check; it hides nothing.
   function handleStartArchiveAction(product, action) {
-    setConfirmTarget({ product, action });
     setActionError(null);
+
+    if (action !== 'archive') {
+      setConfirmTarget({ product, action, stockStatus: 'loaded', stockSets: 0, stockRows: [] });
+      return;
+    }
+
+    // 'loading' is its own state, and the confirm button stays disabled while it holds — the
+    // whole point is that nobody can archive a stocked article before the warning has had a
+    // chance to appear. A bare boolean would make "not checked yet" and "checked, found zero"
+    // the same value, which is exactly the window where the simple no-stock wording would show
+    // for an article that actually has stock.
+    setConfirmTarget({ product, action, stockStatus: 'loading', stockSets: null, stockRows: [] });
+
+    // Scoped by articleNo to keep the request small, then narrowed by productId: the backend's
+    // articleNo filter is a case-insensitive CONTAINS match, and article numbers are only unique
+    // per Factory anyway (CLAUDE.md), so the returned rows can legitimately include other
+    // articles and other factories. Matching on productId is the only safe narrowing.
+    listStock({ articleNo: product.articleNo })
+      .then((rows) => {
+        const mine = rows.filter((r) => r.productId === product.id);
+        const totalSets = mine.reduce((sum, r) => sum + r.qtySets, 0);
+        setConfirmTarget((prev) =>
+          // Guard against a resolved fetch landing after the dialog was cancelled or swapped to
+          // a different article — without it, a slow response could repopulate a closed dialog.
+          prev && prev.product.id === product.id && prev.action === 'archive'
+            ? { ...prev, stockStatus: 'loaded', stockSets: totalSets, stockRows: mine }
+            : prev
+        );
+      })
+      .catch(() => {
+        setConfirmTarget((prev) =>
+          prev && prev.product.id === product.id && prev.action === 'archive'
+            ? { ...prev, stockStatus: 'error', stockSets: null, stockRows: [] }
+            : prev
+        );
+      });
+  }
+
+  // The dialog body for an archive, built from whatever the stock check currently knows. Split
+  // out because there are four genuinely different things to say and inlining that much branching
+  // into JSX makes it hard to see that the zero-stock case is still the original wording,
+  // unchanged, exactly as required.
+  function archiveConfirmBody(target) {
+    const { product, stockStatus, stockSets, stockRows } = target;
+    const label = `${product.articleNo} — ${product.name}`;
+
+    if (stockStatus === 'loading') return `Checking current stock for ${label}…`;
+
+    if (stockStatus === 'error') {
+      return `Could not check current stock for ${label}. It may still be holding stock — archiving hides it from Article Pricing and New Order, but never deletes anything, and its stock would still count towards stock value and stay visible under Live Stock's archived section.`;
+    }
+
+    if (stockSets > 0) {
+      // Name the real quantity, and say where it is. "8 sets" alone invites the reply "where?",
+      // and this is the one moment the answer is genuinely needed.
+      const locations = [...new Set(stockRows.map((r) => r.locationName))].sort();
+      const where = locations.length === 1 ? locations[0] : locations.join(' and ');
+      return `${label} still has ${stockSets} set${stockSets === 1 ? '' : 's'} in stock at ${where}. Archiving does NOT remove that stock — it stays real, still counts towards stock value, and stays visible under Live Stock's archived section. It only hides the article from Article Pricing and New Order, along with ALL of its colours together. It can be reactivated anytime.`;
+    }
+
+    // Genuinely zero stock — the original wording, unchanged.
+    return `${label} will be hidden from Article Pricing and New Order, along with ALL of its colours together — archiving isn't done per colour. Every past receipt and transaction stays fully intact, and it can be reactivated anytime.`;
   }
 
   async function handleConfirmArchiveAction() {
@@ -501,13 +570,23 @@ export default function ArticlePricing() {
         title={confirmTarget?.action === 'archive' ? 'Archive this article?' : 'Reactivate this article?'}
         body={
           confirmTarget?.action === 'archive'
-            ? `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} will be hidden from Article Pricing and Receive Stock, along with ALL of its colours together — archiving isn't done per colour. Every past receipt and transaction stays fully intact, and it can be reactivated anytime.`
-            : `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} (and all of its colours) will be visible again in Article Pricing and available to pick during Receive Stock.`
+            ? archiveConfirmBody(confirmTarget)
+            : `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} (and all of its colours) will be visible again in Article Pricing and available to pick in New Order.`
         }
         confirmLabel={
-          actionInFlight ? 'Working…' : confirmTarget?.action === 'archive' ? 'Archive' : 'Reactivate'
+          actionInFlight
+            ? 'Working…'
+            : confirmTarget?.action === 'archive'
+              ? confirmTarget?.stockStatus === 'loading'
+                ? 'Checking stock…'
+                : 'Archive'
+              : 'Reactivate'
         }
         tone={confirmTarget?.action === 'archive' ? 'danger' : 'success'}
+        // Disabled until the stock check settles. This is the safety property the whole check
+        // exists for: without it, a fast tap could confirm an archive during the window where the
+        // dialog hasn't yet been able to say the article is holding stock.
+        confirmDisabled={actionInFlight || confirmTarget?.stockStatus === 'loading'}
         onConfirm={handleConfirmArchiveAction}
         onCancel={() => setConfirmTarget(null)}
       />
