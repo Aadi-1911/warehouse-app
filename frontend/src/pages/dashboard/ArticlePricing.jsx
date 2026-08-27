@@ -321,14 +321,28 @@ export default function DashboardArticlePricing() {
                         </tr>
                       </thead>
                       <tbody>
-                        {group.products.map((product) => {
+                        {group.products.map((product, rowIndex) => {
                           const pending = isPending(product);
                           const isEditing = editingId === product.id;
                           const isStaged = isEditing && !!priceDraft;
 
                           return (
                             <Fragment key={product.id}>
-                              <tr className={isEditing ? 'dash-pricing-row-editing' : ''}>
+                              {/* Alternating stripe keyed to `rowIndex` (this product's own
+                                  position in group.products), NOT :nth-child — the conditionally-
+                                  inserted error/PIN rows below would otherwise shift which stripe
+                                  colour every later row lands on every time one opens or closes.
+                                  See --row-stripe-fill and .dash-pricing-row-alt's own comments in
+                                  index.css. isEditing wins when both classes would apply (CSS
+                                  cascade order, not string order, decides that — see index.css). */}
+                              <tr
+                                className={[
+                                  isEditing ? 'dash-pricing-row-editing' : '',
+                                  rowIndex % 2 === 1 ? 'dash-pricing-row-alt' : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
+                              >
                                 <td>{product.articleNo}</td>
                                 <td>{product.name}</td>
                                 {isEditing && !isStaged ? (

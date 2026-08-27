@@ -275,6 +275,20 @@
   --section-fill: #F5F4F1;
   --text-secondary: #6B6863;
   --text-tertiary: #9A968F;
+
+  /* Added 2026-08-27 for genuine data-table alternating rows (Receive Stock's receipt table,
+     Article Pricing's mobile and dashboard price tables) — deliberately NOT plain --section-fill.
+     --section-fill is already this app's OWN "a row/area needs a quiet highlight" token, already
+     used at full strength for a row actually mid-edit (.dash-pricing-row-editing) and for the
+     error/PIN rows beneath it (.dash-pricing-error-row, .dash-pricing-pin-row) — if a plain
+     alternating stripe used that same full-strength colour, an editing row landing on an even
+     index would render IDENTICAL to a normal stripe, and the "this row is different" signal those
+     three classes exist to give would silently disappear. This token dilutes --section-fill
+     toward --card-bg (white) via color-mix(), the same technique this file already uses elsewhere
+     (.dash-lock-overlay's veil) rather than inventing a new hex value — genuinely fainter than
+     --section-fill on its own, so a real state highlight still reads as visibly stronger than a
+     plain stripe wherever both could appear on the same table. */
+  --row-stripe-fill: color-mix(in srgb, var(--section-fill) 50%, var(--card-bg));
 }
 
 * {
@@ -1274,6 +1288,15 @@ body {
   border-bottom: none;
 }
 
+/* Alternating rows (2026-08-27) — prevents misreading a value into the wrong row once a group has
+   more than a couple of colours. Plain :nth-child is safe here (unlike the dashboard pricing
+   table below): every row in this tbody is a genuine data row, one per `group.rows` entry, with
+   no conditionally-inserted extra <tr> that could shift which rows land on even vs odd. See
+   --row-stripe-fill's own :root comment for why this isn't plain --section-fill. */
+.receipt-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
+}
+
 /* Sets/Pieces right-aligned as numbers; Colour (first column) stays left-aligned. */
 .receipt-table th:not(:first-child),
 .receipt-table td:not(:first-child) {
@@ -1335,6 +1358,16 @@ body {
 
 .pricing-table tr:last-child td {
   border-bottom: none;
+}
+
+/* Alternating rows (2026-08-27) — same reasoning as .receipt-table above: this is the one screen
+   with the widest real column count (7) on this app's mobile surface, so losing track of which
+   row you're on while scanning right toward Margin/Edit is the exact risk this is for. Plain
+   :nth-child is safe here too — one <tr> per `sortedProducts` entry, no inserted extra rows (the
+   inline edit form for a selected article renders in its own block below the table, never as an
+   additional <tr> inside it). */
+.pricing-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
 }
 
 .pricing-table-num {
@@ -3503,6 +3536,26 @@ body {
 
 .dash-pricing-table tr:last-child > td {
   border-bottom: none;
+}
+
+/* Alternating rows (2026-08-27) — DELIBERATELY NOT plain :nth-child(even), unlike .receipt-table/
+   .pricing-table above. This table's <tbody> can contain conditionally-inserted extra rows
+   (.dash-pricing-error-row, .dash-pricing-pin-row) directly beneath whichever product row is
+   currently being edited — real <tr> siblings, not decoration. :nth-child counts EVERY <tr> child
+   regardless of what it represents, so the moment one of those extra rows appears or disappears,
+   every product row below it would shift which stripe colour it lands on — rows visually
+   "changing colour" for no reason related to their own data, which is a worse version of the exact
+   misreading risk this whole task exists to prevent. Striped by DATA POSITION instead
+   (dashboard/ArticlePricing.jsx computes `rowIndex % 2` from the product's own index in
+   `group.products`, applied only to that product's own <tr>) so a stripe is anchored to which
+   product a row IS, immune to how many extra rows happen to be open elsewhere in the same table.
+   Declared BEFORE .dash-pricing-row-editing below on purpose: both classes have identical
+   specificity (one class + child combinator), so if a row being actively edited also happens to
+   land on an odd index, source order alone must decide the tie — editing's own (stronger,
+   full-strength --section-fill) rule needs to win, and placing it later in the cascade is what
+   makes that automatic rather than accidental. */
+.dash-pricing-row-alt > td {
+  background: var(--row-stripe-fill);
 }
 
 .dash-pricing-num {
