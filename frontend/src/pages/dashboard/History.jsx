@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listHistory } from '../../api/history';
+import { actorBadgeColorFor } from '../../utils/avatar';
 import { listLocations } from '../../api/locations';
 import { listFactories } from '../../api/factories';
 import { listProducts, getValidColors } from '../../api/products';
@@ -462,6 +463,7 @@ export default function History() {
             <div className="dash-card history-day-card">
               {day.entries.map((entry) => {
                 const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
+                const actorColor = actorBadgeColorFor(entry.actorName);
                 const isReceipt = entry.type === 'RECEIPT';
                 const correcting = isReceipt && correctingId === entry.transactionId;
                 const isTransfer = entry.type === 'TRANSFER';
@@ -473,9 +475,14 @@ export default function History() {
                       <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
                     </div>
                     <p className="history-row-description">{entry.description}</p>
-                    <p className="muted history-row-actor">
-                      {entry.actorName}
-                      {entry.partyName ? ` · ${entry.partyName}` : ''}
+                    <p className="history-row-actor">
+                      <span
+                        className="badge history-actor-badge"
+                        style={{ background: actorColor.bg, color: actorColor.text }}
+                      >
+                        {entry.actorName}
+                      </span>
+                      {entry.partyName ? <span className="muted">· {entry.partyName}</span> : null}
                     </p>
 
                     {isReceipt && !entry.corrected && !correcting && (

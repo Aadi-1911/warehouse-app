@@ -1,6 +1,8 @@
 import { apiFetch } from './client';
 
-// GET /api/history -> [{ id, type, label, timestamp, actorName, partyName, description }]
+// GET /api/history -> [{ id, type, label, timestamp, actorId, actorName, partyName, description }]
+// actorId (added 2026-08-26 for per-employee avatar colours) is the acting User's id — used only
+// to hash a consistent colour per person in utils/avatar.js, never displayed directly.
 // Any authenticated role — both OWNER and STAFF get the identical feed, no role-based filtering.
 //
 // A read-time merge across Order / OrderAdjustment / Transfer, sorted newest-first server-side

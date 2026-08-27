@@ -55,6 +55,99 @@
   --indigo-bg: #ECEEFB;
   --indigo-text: #3D4A9E;
 
+  /* Added 2026-08-27 for History's per-employee name-badge feature (utils/avatar.js,
+     ACTOR_BADGE_COLORS) — specifically to replace Mukesh Kumar Yadav's colour a SECOND time in
+     one day. His first replacement (this same day, earlier) was --success-*, chosen after Rust
+     was retired out from under this feature by the tile-recolor task. That choice only checked
+     for conflicts against the other three actors' colours and the 8 Home tile tokens — it never
+     checked against History's OWN entry-type badges (TYPE_BADGE_CLASSES in both History.jsx
+     files), which render on the exact same row as an actor badge. Success is also
+     ORDER_STATUS's colour, and Pack Order (an ORDER_STATUS-producing action) is reachable by
+     STAFF — so a real STAFF-packed order puts a green entry-type badge directly next to Mukesh's
+     green actor badge, same row, two different meanings, indistinguishable at a glance. Found
+     because this task's own step 1 finally ran the FULL conflict check the previous fix skipped:
+     every actor colour + all 8 tile tokens + all 4 of History's own entry-type badge colours
+     (purple/ORDER_PLACED, success/ORDER_STATUS, warning/ORDER_ADJUSTMENT+GOOD_RETURN+
+     RECEIPT_CORRECTION+TRANSFER_CORRECTION, accent/TRANSFER+RECEIPT) at once.
+     With that full list, EVERY existing unused token failed: Danger sits just 4.2° from Tile Red,
+     Warning/Purple/Accent are entry-type colours themselves, Success is the one just proven
+     broken, Teal/Indigo are Ram's/Harsh's own colours, and all 8 tiles are excluded outright. No
+     existing token cleared a safe margin from the full conflict set, so — per this task's own
+     instruction — a new one was added rather than forcing a near-collision. A rose/magenta hue
+     (~316°) was picked because it sits in the single largest open gap across ALL 14 conflict
+     hues (accent/indigo/teal, all 8 tiles, and the 3 distinct entry-type hues) — its closest
+     neighbour is Tile Purple at a full 43.0° away, more than 1.5x the 28.8° margin the (flawed)
+     Success pick had. It's also a colour family — pink/magenta — nothing else anywhere in this
+     app currently uses, so it can't even coincidentally read as "close to" an existing meaning.
+     Border/bg/text S/L values follow this file's own established per-slot averages (border
+     ~54-72% sat/72-82% light, bg ~58-77% sat/93-95% light, text ~44-69% sat/25-43% light) — text
+     contrast against bg measures 6.2:1, inside the existing 4.85-6.91:1 baseline range. Scoped
+     the same way Teal/Indigo are: a real CSS custom property, not just a class, since
+     ACTOR_BADGE_COLORS consumes it directly via var(--rose-bg)/var(--rose-text) rather than
+     through a `.badge-rose`/`.tile-rose` class — there is no tile or generic badge use for this
+     colour, only History's actor badges, so no derived class was added for it. */
+  --rose-border: #EAA4D7;
+  --rose-bg: #FBEAF6;
+  --rose-text: #962C7A;
+
+  /* OWNER Home tile grid, full palette replacement (2026-08-27) — every one of the 8 OWNER tiles
+     now gets its OWN dedicated token, confirmed directly by Aadi with real hex values, rather
+     than reusing this file's shared semantic tokens above (Success/Danger/Warning/Accent/
+     Purple). Those five stay completely untouched — they still carry their original meaning
+     everywhere else in the app (badges, buttons, status indicators) — precisely why a tile whose
+     colour happens to look similar (e.g. Receive Stock's green vs Success's green) gets its own
+     independent `--tile-*` token instead of pointing at the shared one: a future edit to Success
+     for its OTHER uses must never accidentally recolour a tile, and vice versa. Prefixed
+     `--tile-<colour>-*` specifically so the name itself never collides with or implies a
+     relationship to the shared semantic tokens, even where the hue is deliberately similar.
+     Contrast checked against this app's own existing baseline (its five shared tokens run
+     4.85:1-6.91:1 text-on-background) before accepting Aadi's confirmed values as-is: every one
+     of the 8 below measures 6.6:1 or higher, so no lightness adjustment was needed.
+     This replaces Rust, Lavender and Olive outright — all three retired as orphaned tokens in
+     this same change (Article Pricing and History move off Rust/Lavender onto Orange/Grey below;
+     Ship Order moves off Olive, added only the day before for this exact tile, onto Brown below).
+     Verified via grep immediately before removing them that nothing else in the app referenced
+     any of the three, then removed both the tokens and their `.tile-rust`/`.tile-lavender`/
+     `.tile-olive` CSS classes — same precedent this file already established for `.tile-neutral`
+     and `.tile-teal`, each removed the same way once genuinely dead. Teal's own tokens
+     (--teal-*) are NOT part of this retirement — untouched, still solely and actively used by
+     History's per-employee name-badge feature (Ram's colour), a different UI surface entirely. */
+  --tile-green-border: #6EE7B7;
+  --tile-green-bg: #ECFDF5;
+  --tile-green-text: #065F46;
+
+  --tile-orange-border: #FDBA74;
+  --tile-orange-bg: #FFF7ED;
+  --tile-orange-text: #9A3412;
+
+  --tile-purple-border: #D8B4FE;
+  --tile-purple-bg: #FAF5FF;
+  --tile-purple-text: #6B21A8;
+
+  --tile-yellow-border: #FDE047;
+  --tile-yellow-bg: #FEFCE8;
+  --tile-yellow-text: #854D0E;
+
+  --tile-red-border: #FCA5A5;
+  --tile-red-bg: #FEF2F2;
+  --tile-red-text: #991B1B;
+
+  /* "Brown/Warm-stone" — Ship Order's own colour, deliberately a muted, desaturated warm tone
+     rather than a vivid one: its hue sits close to Orange's (both warm/earthy), differentiated by
+     being paler and less saturated, per Aadi's own naming ("Warm-stone"). Confirmed distinct from
+     Orange visually (not just numerically) via a real side-by-side screenshot of both tiles. */
+  --tile-brown-border: #E7C6B8;
+  --tile-brown-bg: #FDF8F6;
+  --tile-brown-text: #7C2D12;
+
+  --tile-blue-border: #93C5FD;
+  --tile-blue-bg: #EFF6FF;
+  --tile-blue-text: #1E40AF;
+
+  --tile-grey-border: #CBD5E1;
+  --tile-grey-bg: #F1F5F9;
+  --tile-grey-text: #334155;
+
   --card-border: #E4E2DE;
   --card-bg: #fff;
   --text-primary: #1C1B19;
@@ -2120,6 +2213,23 @@ body {
 
 .history-row-actor {
   margin: 3px 0 0;
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Replaces the earlier avatar-circle-plus-plain-text pair (2026-08-26) with ONE pill containing
+   the actor's full name — same shape/padding/weight family as this app's own .badge (the type tag
+   right above it on the same row), reusing that class directly rather than re-declaring an
+   identical shape under a new name. font-size is bumped slightly past .badge's own 10.5px because
+   this pill holds a real name ("Mukesh Kumar Yadav"), not a short status word, and needed to stay
+   comfortably legible at that length — confirmed not to wrap or overflow at a real 390px mobile
+   width. Background/text colour is NOT set here — it comes from an inline style driven by
+   utils/avatar.js's actorBadgeColorFor(actorName), a manually-curated map (never a hash — see
+   that function's own comment for why two automated attempts were discarded), so this rule only
+   owns shape, never colour. */
+.history-actor-badge {
   font-size: 11.5px;
 }
 

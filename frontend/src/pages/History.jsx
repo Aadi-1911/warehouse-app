@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HistoryIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listHistory } from '../api/history';
+import { actorBadgeColorFor } from '../utils/avatar';
 
 // History — a unified, read-only feed of what's happened across Orders, Transfers and Good
 // Returns, newest first. Reachable by both roles, and both see the identical feed (GET /api/history applies no
@@ -127,6 +128,7 @@ export default function History() {
             <div className="card history-day-card">
               {day.entries.map((entry) => {
                 const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
+                const actorColor = actorBadgeColorFor(entry.actorName);
                 return (
                   <div key={entry.id} className="history-row">
                     <div className="history-row-top">
@@ -134,7 +136,14 @@ export default function History() {
                       <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
                     </div>
                     <p className="history-row-description">{entry.description}</p>
-                    <p className="muted history-row-actor">{entry.actorName}</p>
+                    <p className="history-row-actor">
+                      <span
+                        className="badge history-actor-badge"
+                        style={{ background: actorColor.bg, color: actorColor.text }}
+                      >
+                        {entry.actorName}
+                      </span>
+                    </p>
                   </div>
                 );
               })}

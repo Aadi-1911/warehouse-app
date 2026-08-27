@@ -170,7 +170,7 @@ async function listHistory(req, res) {
         createdAt: true,
         // role rides along with name on every actor select below — it's what the fail-closed
         // backstop filter at the end of this function checks each built entry against.
-        createdBy: { select: { name: true, role: true } },
+        createdBy: { select: { id: true, name: true, role: true } },
         party: { select: { name: true } },
         // _count rather than pulling every line item just to length them — the feed only ever
         // shows the count for a creation entry.
@@ -187,7 +187,7 @@ async function listHistory(req, res) {
         oldValue: true,
         newValue: true,
         reason: true,
-        changedBy: { select: { name: true, role: true } },
+        changedBy: { select: { id: true, name: true, role: true } },
         order: { select: { party: { select: { name: true } } } },
         // Null for order-level changes (a status transition); populated for line-level ones,
         // which is what lets the description name the specific article/colour.
@@ -220,7 +220,7 @@ async function listHistory(req, res) {
         toLocationId: true,
         createdAt: true,
         qtySets: true,
-        user: { select: { name: true, role: true } },
+        user: { select: { id: true, name: true, role: true } },
         bundle: {
           select: {
             product: { select: { articleNo: true } },
@@ -245,7 +245,7 @@ async function listHistory(req, res) {
         createdAt: true,
         qtySets: true,
         reason: true,
-        user: { select: { name: true, role: true } },
+        user: { select: { id: true, name: true, role: true } },
         party: { select: { name: true } },
         bundle: {
           select: {
@@ -272,7 +272,7 @@ async function listHistory(req, res) {
         id: true,
         qtySets: true,
         createdAt: true,
-        user: { select: { name: true, role: true } },
+        user: { select: { id: true, name: true, role: true } },
         stock: {
           select: {
             bundleId: true,
@@ -306,7 +306,7 @@ async function listHistory(req, res) {
         id: true,
         reason: true,
         createdAt: true,
-        correctedBy: { select: { name: true, role: true } },
+        correctedBy: { select: { id: true, name: true, role: true } },
         original: {
           select: {
             qtySets: true,
@@ -348,7 +348,7 @@ async function listHistory(req, res) {
         id: true,
         reason: true,
         createdAt: true,
-        correctedBy: { select: { name: true, role: true } },
+        correctedBy: { select: { id: true, name: true, role: true } },
         originalTransfer: {
           select: {
             qtySets: true,
@@ -382,6 +382,7 @@ async function listHistory(req, res) {
       type: 'ORDER_PLACED',
       label: 'Placed',
       timestamp: o.createdAt,
+      actorId: o.createdBy.id,
       actorName: o.createdBy.name,
       actorRole: o.createdBy.role,
       partyName: o.party.name,
@@ -403,6 +404,7 @@ async function listHistory(req, res) {
         // a.newValue the description below is built from, so the two can never disagree.
         label: statusLabel(a.newValue),
         timestamp: a.changedAt,
+        actorId: a.changedBy.id,
         actorName: a.changedBy.name,
         actorRole: a.changedBy.role,
         partyName,
@@ -418,6 +420,7 @@ async function listHistory(req, res) {
         type: 'ORDER_ADJUSTMENT',
         label: 'Cancelled',
         timestamp: a.changedAt,
+        actorId: a.changedBy.id,
         actorName: a.changedBy.name,
         actorRole: a.changedBy.role,
         partyName,
@@ -435,6 +438,7 @@ async function listHistory(req, res) {
         type: 'ORDER_ADJUSTMENT',
         label: 'Change',
         timestamp: a.changedAt,
+        actorId: a.changedBy.id,
         actorName: a.changedBy.name,
         actorRole: a.changedBy.role,
         partyName,
@@ -451,6 +455,7 @@ async function listHistory(req, res) {
       type: 'TRANSFER',
       label: 'Transfer',
       timestamp: t.createdAt,
+      actorId: t.user.id,
       actorName: t.user.name,
       actorRole: t.user.role,
       partyName: null,
@@ -489,6 +494,7 @@ async function listHistory(req, res) {
       type: 'TRANSFER_CORRECTION',
       label: 'Corrected',
       timestamp: c.createdAt,
+      actorId: c.correctedBy.id,
       actorName: c.correctedBy.name,
       actorRole: c.correctedBy.role,
       partyName: null,
@@ -505,6 +511,7 @@ async function listHistory(req, res) {
       type: 'GOOD_RETURN',
       label: 'Return',
       timestamp: r.createdAt,
+      actorId: r.user.id,
       actorName: r.user.name,
       actorRole: r.user.role,
       partyName: r.party.name,
@@ -522,6 +529,7 @@ async function listHistory(req, res) {
       type: 'RECEIPT',
       label: 'Received',
       timestamp: t.createdAt,
+      actorId: t.user.id,
       actorName: t.user.name,
       actorRole: t.user.role,
       partyName: null,
@@ -572,6 +580,7 @@ async function listHistory(req, res) {
       type: 'RECEIPT_CORRECTION',
       label: 'Corrected',
       timestamp: c.createdAt,
+      actorId: c.correctedBy.id,
       actorName: c.correctedBy.name,
       actorRole: c.correctedBy.role,
       partyName: null,
