@@ -42,6 +42,47 @@ const ADULT_SIZE_ORDER = [EXTRA_ADULT_SIZE, ...COMMON_ADULT_SIZES, ...EXTENDED_A
 // labels shown here can never drift from the actual conversion piecesPerSetFor uses.
 const KIDS_CATEGORIES = Object.entries(KIDS_PIECES_BY_LABEL).map(([label, pieces]) => ({ label, pieces }));
 
+// --- Deferred creation (2026-08-28). Nothing this screen does — typing an article number, naming
+// it, setting sizes, picking or inventing a colour — writes anything to the database any more.
+// Product, ProductSize, Color and Bundle are all created at ONE point: "Save receipt", inside
+// handleSaveReceiptConfirmed, immediately before the Transaction that gives them a reason to
+// exist. Before that, they live only in React state.
+//
+// Why this had to change: all three used to POST the instant they were entered, so simply walking
+// away from a half-filled form — closing the tab, backgrounding the PWA, tapping "Change" —
+// permanently left a real Product (with its ProductSize rows), a real Color, and/or a real Bundle
+// behind, for stock that was never received. Those orphans are indistinguishable from genuine
+// records afterwards: they show up in article lookups, in the colour picker, in Live Stock at 0
+// sets. The database recorded an INTENTION, not an event.
+//
+// A "pending" record still needs an id, because the whole colour-staging/receipt-grouping UI keys
+// off ids. These prefixes make a synthetic one recognisable at a glance and impossible to confuse
+// with a real cuid, so the save path can tell which of the two it's holding.
+//
+// The suffix is DERIVED from the record's own identity (factory+articleNo, or the colour's name),
+// never a counter. That's what makes it stable: searching the same brand-new article twice in one
+// session produces the same synthetic id both times, so the receipt table merges them into one
+// group (rule 53) exactly as it does for an article that already exists — and the save path's
+// dedupe cache below gets a second, independent guarantee that only one real record is created.
+const PENDING_PRODUCT_PREFIX = 'pending-product::';
+const PENDING_COLOR_PREFIX = 'pending-color::';
+
+function pendingProductId(factoryId, articleNo) {
+  return `${PENDING_PRODUCT_PREFIX}${factoryId}::${articleNo.trim().toLowerCase()}`;
+}
+
+// Lowercased on purpose — the server's own uniqueness check for a Color is case-insensitive
+// (colorController.js), so "Navy" and "navy" must resolve to ONE pending colour here too, or the
+// save path would try to create the second and take a 409 for something the UI should never have
+// offered twice in the first place.
+function pendingColorId(name) {
+  return `${PENDING_COLOR_PREFIX}${name.trim().toLowerCase()}`;
+}
+
+function isPendingColorId(id) {
+  return typeof id === 'string' && id.startsWith(PENDING_COLOR_PREFIX);
+}
+
 // One adult size and its quantity-in-the-set. Extracted rather than repeated because all three
 // adult size rows (Common, Extended, and the "+ add other size" S row) render exactly this, and
 // the whole point of the interaction is that every chip looks and behaves identically — three
@@ -141,12 +182,17 @@ export default function ReceiveStock() {
   const [sizeQtys, setSizeQtys] = useState({});
   const [selectedKidsCategory, setSelectedKidsCategory] = useState(null); // KIDS ONLY — one label or null, never counted
   const [showExtraSize, setShowExtraSize] = useState(false);
-  const [creatingArticle, setCreatingArticle] = useState(false);
+  // No `creatingArticle` flag any more: "Create article" no longer makes a network call, so there
+  // is no in-flight window for a "Creating…" label to describe. It doesn't just resolve fast — it
+  // never leaves the browser, so a spinner would be describing a request that doesn't exist.
   const [createArticleError, setCreateArticleError] = useState(null);
 
-  // --- Color staging. "Resolved" = colors we know for certain have a real Bundle for the
-  // current Product — either bulk-fetched (Matched article) or built one-by-one as each is
-  // first picked (a justCreated article, which starts with zero Bundles).
+  // --- Color staging. "Resolved" = colors this screen has settled on for the current Product.
+  // Each entry is { id, name, bundleId } — bundleId is a REAL Bundle id only for colours that
+  // were bulk-fetched from a genuinely matched article (getValidColors below). It is null for
+  // every colour picked during this session, because no Bundle is created any more until save
+  // time; null is the flag the save path reads to know it must resolve one (see
+  // resolveBundleForLine). "Resolved" therefore now means "settled on", not "already exists".
   const [resolvedColors, setResolvedColors] = useState([]);
   // 'idle' | 'loading' | 'loaded' — NOT a boolean. A boolean here has a genuine hole in it: it
   // can only say "am I fetching right now", so "haven't started yet" and "finished, found
@@ -174,8 +220,24 @@ export default function ReceiveStock() {
   // exist in the system yet" while the fetch hasn't even started.
   const [globalColorsStatus, setGlobalColorsStatus] = useState('idle');
   const [globalColorsError, setGlobalColorsError] = useState(null);
-  const [bundleCreating, setBundleCreating] = useState(false);
-  const [bundleCreateError, setBundleCreateError] = useState(null);
+  // `bundleCreating` / `bundleCreateError` are gone with the eager POST they described. Picking a
+  // colour is now pure local state, so there is no request to be mid-flight and none to fail; a
+  // colour that can't be made real is discovered at save time and reported through the existing
+  // failed-lines banner, alongside every other reason a line couldn't be saved.
+
+  // Colours invented via "+ Create new color" this session. These are NOT in the database yet, so
+  // no fetch will ever return them — without keeping them here they'd vanish from the picker the
+  // moment the next article was looked up (resetLookup clears globalColors, and the refetch that
+  // follows can only return real ones). Deliberately NOT cleared by resetLookup: a colour typed
+  // once should stay offered for the rest of the receiving session, exactly as it did back when
+  // creating it wrote a real row immediately.
+  const [pendingColors, setPendingColors] = useState([]);
+  // The same colours again, as a Map, purely so they can be read back in the SAME tick they were
+  // added. Combobox calls onChange(created.id) immediately after its onCreate promise resolves —
+  // before React has re-rendered — so handleColorChange reading `pendingColors` there would be
+  // reading the previous render's array and would find nothing, leaving the staged entry with a
+  // blank colour name. A ref is the only thing that's already updated at that point.
+  const pendingColorsRef = useRef(new Map());
 
   // The one color actively being set up (picked, not yet staged). Picked via Combobox
   // (components/Combobox.jsx, added 2026-08-22) — a live-filtering text input replacing the
@@ -389,7 +451,6 @@ export default function ReceiveStock() {
     setSizeQtys({});
     setSelectedKidsCategory(null);
     setShowExtraSize(false);
-    setCreatingArticle(false);
     setCreateArticleError(null);
     setResolvedColors([]);
     // Back to 'idle', not 'loaded' — after a reset nothing has been asked about the next
@@ -400,7 +461,7 @@ export default function ReceiveStock() {
     setGlobalColors([]);
     setGlobalColorsStatus('idle');
     setGlobalColorsError(null);
-    setBundleCreateError(null);
+    // pendingColors is deliberately NOT reset here — see its own declaration above.
     setSelectedColorId('');
     setCurrentSets(0);
     setCurrentDamaged(false);
@@ -472,7 +533,11 @@ export default function ReceiveStock() {
     setShowExtraSize(false);
   }
 
-  async function handleCreateArticle() {
+  // Builds the new article LOCALLY — no POST. Everything gathered here (name, category, kids
+  // flag, sizes) is exactly the body createProduct will eventually be given; it's just held in
+  // React state until the receipt is actually saved. Synchronous now, because nothing leaves the
+  // browser: the screen moves straight into colour staging, same as it always did.
+  function handleCreateArticle() {
     setCreateArticleError(null);
 
     if (!newArticleName.trim()) {
@@ -509,25 +574,28 @@ export default function ReceiveStock() {
           qty: sizeQtys[label],
         }));
 
-    setCreatingArticle(true);
-    try {
-      const product = await createProduct({
-        articleNo: lookup.articleNo,
-        factoryId,
-        name: newArticleName.trim(),
-        categoryId,
-        isKids,
-        sizes,
-      });
-      // Transition into the SAME color-staging UI the Matched branch uses — justCreated is
-      // what tells the effects/handlers above this Product has no Bundles yet. The globalColors
-      // effect fires from this same `lookup` change, same as for any other matched article.
-      setLookup({ status: 'matched', product, justCreated: true });
-    } catch (err) {
-      setCreateArticleError(err.message);
-    } finally {
-      setCreatingArticle(false);
-    }
+    // A pending Product, shaped exactly like a real one for everything downstream that reads it.
+    // piecesPerSetFor() only needs `isKids` + `sizes` (with each row's qty), and the receipt
+    // table only needs articleNo/name/id — all of which are here, so nothing below this point
+    // has to know or care that the record doesn't exist in the database yet. The extra fields
+    // (factoryId, categoryId) are carried because they're part of the eventual POST body, not
+    // because the UI reads them.
+    const product = {
+      id: pendingProductId(factoryId, lookup.articleNo),
+      articleNo: lookup.articleNo,
+      factoryId,
+      name: newArticleName.trim(),
+      categoryId,
+      isKids,
+      sizes,
+    };
+
+    // Transition into the SAME color-staging UI the Matched branch uses — justCreated is what
+    // tells the effects/handlers above this Product has no Bundles to fetch. That was already
+    // true when the Product was created eagerly (a brand-new article genuinely had zero
+    // Bundles); it's true for a different reason now (the Product itself doesn't exist yet), but
+    // the behaviour it needs to drive — don't call getValidColors — is identical either way.
+    setLookup({ status: 'matched', product, justCreated: true });
   }
 
   // --- Color staging (shared by Matched and justCreated articles).
@@ -550,32 +618,37 @@ export default function ReceiveStock() {
     ];
   }
 
-  // knownColor lets a caller that already has the freshly-fetched/created color object (see
-  // handleCreateColor) pass it directly, instead of this function reading it back out of
-  // globalColors — that state update wouldn't have landed yet if called in the same tick a color
-  // was just created, since setGlobalColors is async like any other state setter.
-  async function handleColorChange(newColorId, knownColor) {
+  // Picking a colour writes nothing any more. It used to POST a Bundle the first time a colour
+  // was chosen for an article — which is precisely how abandoning a form left phantom Bundles
+  // behind (Wine/Sky Blue, investigated earlier). The Bundle is created at save time instead, by
+  // resolveBundleForLine, from the colour recorded here.
+  //
+  // Synchronous now, deliberately: there is no request to await, and Combobox calls this directly
+  // from its own onChange, so keeping it async would only add a microtask before the UI updates.
+  //
+  // knownColor lets a caller that already holds the colour object pass it in rather than have
+  // this read it back out of state that may not have re-rendered yet.
+  function handleColorChange(newColorId, knownColor) {
     setStagedColors((prev) => finalizeActiveColor(prev));
 
-    // No Bundle exists until the FIRST time a color is picked for this Product — that pick is
-    // what makes it real. Checking resolvedColors (not stagedColors, and no longer gated on
-    // justCreated specifically — a matched article with zero colors of its own needs exactly the
-    // same bootstrapping) means re-selecting a color that was picked-then-abandoned (0 sets,
-    // switched away from) never re-POSTs; its Bundle already exists from the first time.
+    // bundleId: null means "this colour still needs a real Bundle" — the save path's signal, and
+    // the reason nothing here needs to distinguish a brand-new colour from an existing one that
+    // simply has no Bundle for this article yet. Both are equally unmade until the receipt is
+    // saved, and both are made the same way.
+    //
+    // The guard is still on resolvedColors (not stagedColors): re-selecting a colour that was
+    // picked then abandoned at 0 sets must not add a second entry for it. The functional-update
+    // form re-checks inside the setter as well, so this stays correct even if two picks land
+    // before a re-render.
     const alreadyResolved = resolvedColors.some((c) => c.id === newColorId);
     if (!alreadyResolved) {
-      setBundleCreateError(null);
-      setBundleCreating(true);
-      try {
-        const bundle = await createBundle(lookup.product.id, newColorId);
-        const color = knownColor ?? globalColors.find((c) => c.id === newColorId);
-        setResolvedColors((prev) => [...prev, { id: newColorId, name: color?.name ?? '', bundleId: bundle.id }]);
-      } catch (err) {
-        setBundleCreateError(err.message);
-        setBundleCreating(false);
-        return; // don't select a color whose Bundle creation just failed
-      }
-      setBundleCreating(false);
+      const color =
+        knownColor ?? pendingColorsRef.current.get(newColorId) ?? globalColors.find((c) => c.id === newColorId);
+      setResolvedColors((prev) =>
+        prev.some((c) => c.id === newColorId)
+          ? prev
+          : [...prev, { id: newColorId, name: color?.name ?? '', bundleId: null }]
+      );
     }
 
     setSelectedColorId(newColorId);
@@ -583,14 +656,32 @@ export default function ReceiveStock() {
     setCurrentDamaged(false);
   }
 
-  // Inline "+ Create new color" — creates the master Color record (POST /api/colors, same
-  // endpoint Color Management would use if it existed as its own screen) and then runs it
-  // through the exact same auto-Bundle-creation path as picking any other unresolved color, so
-  // there's no separate, unverified code path for a color that happens to be brand new.
-  async function handleCreateColor(name) {
-    const color = await createColor({ name });
-    setGlobalColors((prev) => [...prev, color]);
-    await handleColorChange(color.id, color);
+  // Inline "+ Create new color" — now records the colour locally and returns it; POST /api/colors
+  // happens at save time. Returning the object matters: Combobox's triggerCreate does
+  // `onChange(created.id)` with whatever this resolves to, which is what actually selects the new
+  // colour. (The old version returned undefined, so that line read `.id` off undefined and threw
+  // straight into Combobox's catch — the colour got selected by this function's own
+  // handleColorChange call, but an error banner appeared underneath it for no reason. Fixed here
+  // by returning the object and letting Combobox drive selection through the one normal path,
+  // rather than this function selecting it too and the change handler running twice — which would
+  // have folded the active colour into stagedColors twice over.)
+  function handleCreateColor(name) {
+    const trimmed = name.trim();
+
+    // The server refuses a duplicate colour name case-insensitively (409 DUPLICATE_COLOR). With
+    // creation deferred, that check has to happen here instead, or two spellings of one colour
+    // would stage as two separate entries and only reveal themselves as one at save time.
+    // Returning the existing colour makes "create" quietly resolve to "select" — the same outcome
+    // the person wanted, without an error they can't act on.
+    const existing = colorPickerSource.find((c) => c.name.trim().toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing;
+
+    const color = { id: pendingColorId(trimmed), name: trimmed };
+    // Ref first, state second — Combobox reads this back within the same tick (see
+    // pendingColorsRef's own comment), and the state update won't have landed by then.
+    pendingColorsRef.current.set(color.id, color);
+    setPendingColors((prev) => [...prev, color]);
+    return color;
   }
 
   function handleRemoveStaged(colorId) {
@@ -628,12 +719,31 @@ export default function ReceiveStock() {
     // sizing is untouched: sizes.length is still exactly the piece count there.
     const piecesPerSet = piecesPerSetFor(lookup.product);
 
+    // For an article that doesn't exist yet, snapshot the exact POST body createProduct will be
+    // given at save time. Snapshotted for the same reason Factory/Location are (rule 52): this
+    // entry is committed to the receipt now, and must not be re-derived later from form state
+    // that has since been reset for the next article.
+    //
+    // null for a genuinely matched article — that's the flag the save path reads to know the
+    // Product is already real and productId can be used as-is.
+    const pendingProduct = lookup.product.id.startsWith(PENDING_PRODUCT_PREFIX)
+      ? {
+          articleNo: lookup.product.articleNo,
+          factoryId: lookup.product.factoryId,
+          name: lookup.product.name,
+          categoryId: lookup.product.categoryId,
+          isKids: lookup.product.isKids,
+          sizes: lookup.product.sizes,
+        }
+      : null;
+
     const entry = {
       id: nextReceiptIdRef.current++,
       articleNo: lookup.product.articleNo,
       productId: lookup.product.id,
       productName: lookup.product.name,
       piecesPerSet,
+      pendingProduct,
       // Snapshotted now, not read live later (rule 52) — a later Factory/Location change
       // must not retroactively alter an already-committed entry.
       factoryId,
@@ -663,10 +773,16 @@ export default function ReceiveStock() {
   // resolved runs through the exact same auto-Bundle-creation path handleColorChange already
   // has (it checks resolvedColors, not "am I in some fallback mode") — nothing downstream of
   // the picker itself needed to change for this fix.
+  //
+  // pendingColors joins the merge (2026-08-28): a colour invented this session isn't in the
+  // database yet, so listColors() can never return it. Without it here, typing a new colour for
+  // article A and then looking up article B would silently lose it from the picker — the person
+  // would have to type it again, and (deterministic ids aside) it would look to them as though
+  // the colour they just made had been thrown away.
   const colorPickerSource = (() => {
     const seen = new Set();
     const merged = [];
-    for (const c of [...resolvedColors, ...globalColors]) {
+    for (const c of [...resolvedColors, ...globalColors, ...pendingColors]) {
       if (!seen.has(c.id)) {
         seen.add(c.id);
         merged.push(c);
@@ -683,8 +799,9 @@ export default function ReceiveStock() {
   const colorListsSettled = resolvedColorsStatus === 'loaded' && globalColorsStatus === 'loaded';
   // "+ Create new color" is always offered now (canCreate is unconditional below), so the
   // select never needs disabling just because availableColors is empty — that escape hatch is
-  // always the way forward. Only genuine blockers disable it: still loading, or mid-create.
-  const colorSelectDisabled = !colorListsSettled || bundleCreating;
+  // always the way forward. The only genuine blocker left is the lists not having settled;
+  // "mid-create" is gone along with the POST that used to happen on every colour pick.
+  const colorSelectDisabled = !colorListsSettled;
   // Two genuinely different empty states, needing different guidance (never say "no colors for
   // this article" when the real problem is "no colors exist anywhere yet", and vice versa — the
   // person reading it can't act correctly on the wrong one). No longer gated to a one-time
@@ -696,7 +813,6 @@ export default function ReceiveStock() {
     // from the user's side "not asked yet" and "asked, waiting" are the same experience, and
     // both are honest, which "All colors staged" was not.
     if (!colorListsSettled) return 'Loading…';
-    if (bundleCreating) return 'Adding color…';
     if (availableColors.length > 0) return 'Select color';
     return colorPickerSource.length === 0
       ? 'No colors exist in the system yet — create the first one below'
@@ -744,6 +860,12 @@ export default function ReceiveStock() {
           colorId: color.colorId,
           articleNo: item.articleNo,
           colorName: color.colorName,
+          // Everything the save path needs to make this line's records real, carried on the line
+          // itself rather than looked up from state at submit time — a retry after a partial
+          // failure re-submits these same line objects, and the form state they came from is
+          // long gone by then.
+          productId: item.productId,
+          pendingProduct: item.pendingProduct,
           bundleId: color.bundleId,
           locationId: item.locationId,
           sets: color.sets,
@@ -758,6 +880,87 @@ export default function ReceiveStock() {
   const saveSummaryLines = buildSubmissionLines();
   const saveSummaryTotalSets = saveSummaryLines.reduce((sum, l) => sum + l.sets, 0);
   const saveSummaryDamagedCount = saveSummaryLines.filter((l) => l.damaged).length;
+
+  // Turns one submission line into a REAL Bundle id, creating whatever doesn't exist yet along
+  // the way: Product (+ its ProductSize rows) -> Color -> Bundle. This is the single place the
+  // deferred records actually become real, and it runs immediately before that line's
+  // Transaction — so a record is only ever written when there is genuine received stock to
+  // attach to it.
+  //
+  // `caches` is created once per save run and shared across every line. That's what satisfies
+  // "create each record once, not once per line": a receipt with four colour lines for the same
+  // brand-new article creates ONE Product, and two lines using the same new colour create ONE
+  // Color. The lookup keys are the records' real identities (factory+articleNo, lowercased
+  // colour name), not the synthetic ids, so two lines that arrived from separate lookups of the
+  // same new article still collapse to one create.
+  //
+  // Every step is look-up-first or recover-on-409, never a bare create. Three separate things
+  // make that necessary rather than defensive:
+  //   - A retry after a partial save re-runs this for lines that already got their Product made
+  //     on the first attempt. Without the lookup, the retry would 409 and fail the line forever.
+  //   - Someone else may have created the same article/colour between the form being filled in
+  //     and the receipt being saved. That's a normal outcome of deferring, not an error — the
+  //     right answer is to use theirs.
+  //   - The 409 responses deliberately don't carry the existing row's id (colorController.js /
+  //     bundleController.js), so recovering from one MEANS re-reading. There's no shortcut.
+  async function resolveBundleForLine(line, caches) {
+    // 1. Product. A real productId is used as-is; a pending one is created (or found).
+    let productId = line.productId;
+    if (line.pendingProduct) {
+      const key = `${line.pendingProduct.factoryId}::${line.pendingProduct.articleNo.trim().toLowerCase()}`;
+      if (caches.products.has(key)) {
+        productId = caches.products.get(key);
+      } else {
+        const existing = await findExactMatch(line.pendingProduct.factoryId, line.pendingProduct.articleNo);
+        const product = existing ?? (await createProduct(line.pendingProduct));
+        productId = product.id;
+        caches.products.set(key, productId);
+      }
+    }
+
+    // 2. Colour. Only ever pending for one this session invented — a colour picked from the real
+    // list already carries its real id.
+    let colorId = line.colorId;
+    if (isPendingColorId(colorId)) {
+      const key = line.colorName.trim().toLowerCase();
+      if (caches.colors.has(key)) {
+        colorId = caches.colors.get(key);
+      } else {
+        try {
+          colorId = (await createColor({ name: line.colorName.trim() })).id;
+        } catch (err) {
+          if (err.code !== 'DUPLICATE_COLOR') throw err;
+          // The name is taken — by an earlier retry of this same line, or by someone else. Find
+          // it the same case-insensitive way the server matched it.
+          const all = await listColors();
+          const match = all.find((c) => c.name.trim().toLowerCase() === key);
+          if (!match) throw err; // genuinely unresolvable — let the line fail honestly
+          colorId = match.id;
+        }
+        caches.colors.set(key, colorId);
+      }
+    }
+
+    // 3. Bundle. A non-null bundleId can only have come from getValidColors on a genuinely
+    // matched article, so it's real and needs nothing further.
+    if (line.bundleId) return line.bundleId;
+
+    const key = `${productId}::${colorId}`;
+    if (caches.bundles.has(key)) return caches.bundles.get(key);
+
+    let bundleId;
+    try {
+      bundleId = (await createBundle(productId, colorId)).id;
+    } catch (err) {
+      if (err.code !== 'DUPLICATE_BUNDLE') throw err;
+      const valid = await getValidColors(productId);
+      const match = valid.find((c) => c.id === colorId);
+      if (!match?.bundleId) throw err;
+      bundleId = match.bundleId;
+    }
+    caches.bundles.set(key, bundleId);
+    return bundleId;
+  }
 
   // Submits every line sequentially — deliberately not Promise.all/batched, and never stops
   // early on a failure. Each POST is independently atomic on the backend; a line that succeeds
@@ -774,11 +977,22 @@ export default function ReceiveStock() {
     const failedLines = [];
     let succeededCount = 0;
 
+    // One set of caches for the whole run — see resolveBundleForLine. Scoped to this run rather
+    // than the component: once these records are real, the NEXT save must re-verify against the
+    // database rather than trust ids from a run that may have partly failed.
+    const caches = { products: new Map(), colors: new Map(), bundles: new Map() };
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       try {
+        // Inside the same try as the Transaction on purpose: if a line's Product/Colour/Bundle
+        // can't be made, that line simply failed to save, which is already a state this screen
+        // handles — it stays in the table with everything it needs to be retried. A separate
+        // resolution phase up front would be worse: it would create records for lines whose
+        // Transactions later fail, which is the exact orphan problem this change removes.
+        const bundleId = await resolveBundleForLine(line, caches);
         await createTransaction({
-          bundleId: line.bundleId,
+          bundleId,
           locationId: line.locationId,
           type: 'STOCK_IN',
           qtySets: line.sets,
@@ -803,6 +1017,11 @@ export default function ReceiveStock() {
       setReceiptItems([]);
       setFactoryId('');
       setLocationId('');
+      // Every pending colour is a real Color row now, so the synthetic entries must go — leaving
+      // them would keep offering a fake id for a colour the next listColors() will return
+      // properly, and picking it would send the save path resolving something already resolved.
+      pendingColorsRef.current.clear();
+      setPendingColors([]);
       resetLookup();
     } else {
       // Partial (or total) failure: keep ONLY the lines that failed, so the table itself shows
@@ -952,12 +1171,6 @@ export default function ReceiveStock() {
                   Could not load colors: {globalColorsError}
                 </p>
               )}
-              {bundleCreateError && (
-                <p className="error-banner" role="alert">
-                  Could not add that color: {bundleCreateError}
-                </p>
-              )}
-
               {selectedColorId && (
                 <div className="field">
                   <span className="field-label">Sets</span>
@@ -1230,9 +1443,8 @@ export default function ReceiveStock() {
                 type="button"
                 className="btn-primary"
                 onClick={handleCreateArticle}
-                disabled={creatingArticle}
               >
-                {creatingArticle ? 'Creating…' : 'Create article'}
+                Create article
               </button>
             </div>
           </>
