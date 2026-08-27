@@ -32,19 +32,6 @@
   --teal-bg: #E6F6F4;
   --teal-text: #146B63;
 
-  /* Added 2026-08-22 (same-day follow-up) for OWNER's Article Pricing tile, replacing the
-     placeholder neutral treatment it launched with earlier the same day. See Home.jsx's
-     OWNER_TILES comment and LEARNING_LOG.md for why. */
-  --rust-border: #E8B896;
-  --rust-bg: #FBF0E8;
-  --rust-text: #A85A2E;
-
-  /* Added 2026-08-22 (same-day follow-up) for OWNER's History tile, same reasoning as Rust
-     directly above — replaces the placeholder neutral treatment. */
-  --lavender-border: #C7C0D6;
-  --lavender-bg: #F2F0F7;
-  --lavender-text: #5D5470;
-
   /* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. A
      ninth genuinely new tone, not a reuse of an existing one — see Home.jsx's STAFF_TILES
      comment and LEARNING_LOG.md for the reasoning (Danger risks a false "something's wrong"
@@ -90,63 +77,195 @@
   --rose-bg: #FBEAF6;
   --rose-text: #962C7A;
 
-  /* OWNER Home tile grid, full palette replacement (2026-08-27) — every one of the 8 OWNER tiles
-     now gets its OWN dedicated token, confirmed directly by Aadi with real hex values, rather
-     than reusing this file's shared semantic tokens above (Success/Danger/Warning/Accent/
-     Purple). Those five stay completely untouched — they still carry their original meaning
-     everywhere else in the app (badges, buttons, status indicators) — precisely why a tile whose
-     colour happens to look similar (e.g. Receive Stock's green vs Success's green) gets its own
-     independent `--tile-*` token instead of pointing at the shared one: a future edit to Success
-     for its OTHER uses must never accidentally recolour a tile, and vice versa. Prefixed
-     `--tile-<colour>-*` specifically so the name itself never collides with or implies a
-     relationship to the shared semantic tokens, even where the hue is deliberately similar.
-     Contrast checked against this app's own existing baseline (its five shared tokens run
-     4.85:1-6.91:1 text-on-background) before accepting Aadi's confirmed values as-is: every one
-     of the 8 below measures 6.6:1 or higher, so no lightness adjustment was needed.
-     This replaces Rust, Lavender and Olive outright — all three retired as orphaned tokens in
-     this same change (Article Pricing and History move off Rust/Lavender onto Orange/Grey below;
-     Ship Order moves off Olive, added only the day before for this exact tile, onto Brown below).
-     Verified via grep immediately before removing them that nothing else in the app referenced
-     any of the three, then removed both the tokens and their `.tile-rust`/`.tile-lavender`/
-     `.tile-olive` CSS classes — same precedent this file already established for `.tile-neutral`
-     and `.tile-teal`, each removed the same way once genuinely dead. Teal's own tokens
-     (--teal-*) are NOT part of this retirement — untouched, still solely and actively used by
-     History's per-employee name-badge feature (Ram's colour), a different UI surface entirely. */
-  --tile-green-border: #6EE7B7;
-  --tile-green-bg: #ECFDF5;
-  --tile-green-text: #065F46;
+  /* OWNER Home tile grid, SECOND full palette replacement (2026-08-27, same day) — supersedes the
+     first palette (Green/Orange/Purple/Yellow/Red/Brown/Blue/Grey) before it ever shipped: that
+     palette was staged in this file only hours earlier and never reached production, so this is a
+     straight replacement, not a migration with a prior live version to preserve compatibility
+     with. Derived systematically rather than picked by eye: each tile has one base hue, a pale
+     tint of that hue for the fill (bg), one darker step of the same tint for the border, and the
+     base mixed 50/50 with near-black #151412 for the text/icon ink — confirmed directly by Aadi,
+     verified per-tile internally consistent (bg/border/text of a given tile sit within ~1° of
+     each other in hue) before accepting any of it.
+     THREE of the 8 tiles changed HUE FAMILY, not just shade, versus the first palette — Article
+     Pricing moved off orange onto gold/yellow, Pack Order moved off yellow onto cyan/turquoise,
+     Ship Order moved off brown/warm-stone onto true orange — which means the token NAMES that
+     described the FIRST palette's hues no longer describe what's actually assigned now. Renamed
+     to match, following this file's own standing convention that a tile token's name describes
+     its colour, not the tile it happens to be attached to:
+       --tile-orange-* (was Article Pricing, orange) -> --tile-gold-* (Article Pricing, now gold)
+       --tile-yellow-* (was Pack Order, yellow)       -> --tile-cyan-* (Pack Order, now cyan)
+       --tile-brown-*  (was Ship Order, brown-stone)  -> --tile-orange-* (Ship Order, now orange —
+         reusing the "orange" name is correct, not confusing, precisely because the FIRST
+         palette's own orange tile (Article Pricing) just vacated that name in the rename above,
+         so there is no longer a live token called --tile-orange-* pointing at a different hue by
+         the time this one claims it)
+     Before any of the three renames/retirements, grepped the WHOLE frontend (not just this file,
+     not just derived class names) for the raw token variable names --tile-orange-, --tile-yellow-
+     and --tile-brown- — this is the exact check the same-day Rust incident (see LEARNING_LOG.md)
+     proved insufficient to skip: that incident's own verification only checked derived CSS class
+     names and the :root definition site, and missed a direct var(--rust-bg) reference sitting in
+     an unrelated file (utils/avatar.js). All three greps came back clean: every reference to
+     --tile-orange-/--tile-yellow-/--tile-brown- lived inside this file's own :root block and its
+     own .tile-orange/.tile-yellow/.tile-brown rules below — expected, since the first palette's
+     tokens were only staged earlier today specifically for tile use and never had time to
+     accumulate an external consumer, but confirmed rather than assumed.
+     Green/Purple/Red/Blue/Grey did NOT change hue family (Receive Stock stays green, New Order
+     stays violet/purple, Bill Orders stays red, Live Stock stays blue, History stays slate grey),
+     so those five token names are unchanged — only their hex values were updated in place to the
+     new systematic derivation.
+     VERIFICATION (computed hue/saturation/lightness distance for all 8 against each other, against
+     History's 4 actor-badge colours, and against History's 4 entry-type badge colours — every
+     pair, not a subset) surfaced two real findings, SHIPPED AS CONFIRMED BUT FLAGGED FOR AADI'S
+     OWN REVIEW below rather than silently corrected — unlike the same-day Rust/Success token
+     fixes, these are Aadi's own explicitly confirmed exact hex values from a stated derivation
+     method, not a placeholder this task was free to retune on its own judgment:
+       (1) Tile Gold (Article Pricing) vs Tile Orange (Ship Order): 15.1° apart, comparable
+       saturation and lightness at every corresponding tint step (bg/border/text alike) — the
+       least-protected pair found, and the only one where BOTH tiles sit on the SAME grid a person
+       directly compares. A real screenshot of the full OWNER grid (see LEARNING_LOG.md) shows them
+       as genuinely distinguishable — a butter-gold vs a peachy true-orange — but they are the
+       closest-reading pair of all 8 by a wide margin; every other pair is either a different hue
+       family outright or has a large compensating saturation/lightness gap the way this app's
+       earlier palette corrections relied on.
+       (2) CONTRAST: re-checked against this app's own established baseline (4.85:1-6.91:1 across
+       its five shared tokens) for all 8 new text/bg pairs, expecting a clean pass the way the
+       FIRST same-day palette's own values did — it did NOT clean pass this time. Tile Gold
+       measures 4.09:1 and Tile Cyan measures 3.99:1, BOTH below this app's own 4.85:1 floor, and
+       Cyan sits below the WCAG AA 4.5:1 minimum for normal-size text outright. This is a direct,
+       structural consequence of Aadi's own stated derivation method (base color mixed 50/50 with
+       near-black for the text ink): a naturally light/high-lightness base hue like gold or cyan
+       still doesn't darken as much from a 50/50 near-black mix as a naturally darker base hue like
+       red or blue does, so the method itself produces uneven contrast across the 8 tiles depending
+       on how light each base hue starts. Every other tile (Green 4.97, Purple 5.14, Red 5.75,
+       Orange 5.04, Blue 6.97, Grey 7.30) clears the floor comfortably. NOT silently corrected here
+       — flagged plainly for Aadi's own call, the same way step 3 of this task asked for a genuine
+       decision rather than a reflexive pass, and because darkening either ink further is a real
+       edit to Aadi's own confirmed derivation, not a judgment call this task should make alone.
+       (3) PERCEIVED DENSITY (the design brief's own stated constraint, step 5 of this task): no
+       tile should read lighter/weaker than the others. Computed relative luminance for all 8 bg
+       AND border values, not eyeballed. Cyan is the clear outlier: bg Y=0.886 and border Y=0.795
+       are both the palest of the 8 by a real margin (next-palest bg is Gold at 0.833, then Purple
+       at 0.774; every other border sits 0.41-0.58, well under Cyan's 0.795). Gold is the
+       second-palest on both counts. Same root cause as (2), not a coincidence: this derivation
+       method produces a paler bg/border from a naturally light base hue exactly as it produces
+       lower text contrast from one. Confirmed in the real OWNER grid screenshot too — Pack
+       Order's tile visibly reads more washed-out than its 7 neighbours. Flagged rather than
+       corrected for the same reason as (2).
+     This still replaces Rust, Lavender and Olive, which the first same-day palette had already
+     retired — nothing further to do for those three here.
 
-  --tile-orange-border: #FDBA74;
-  --tile-orange-bg: #FFF7ED;
-  --tile-orange-text: #9A3412;
+     THIRD pass, same day (2026-08-27) — FINAL. Aadi reviewed a real before/after comparison of the
+     second palette above and confirmed per-tile: Live Stock and Ship Order stay exactly as they
+     were (no change); Receive Stock/Article Pricing/New Order/Bill Orders/History all get their
+     fill+border lightened further toward white, TEXT INK UNCHANGED (a darker ink on a lighter fill
+     only ever improves contrast, never regresses it — confirmed by re-running the contrast numbers
+     below, not just assumed); and Pack Order abandons cyan entirely for a new vivid pink base,
+     #FF9FF3, requiring an actual derivation rather than a copy-in of a given fill/border pair.
 
-  --tile-purple-border: #D8B4FE;
-  --tile-purple-bg: #FAF5FF;
-  --tile-purple-text: #6B21A8;
+     REVERSE-ENGINEERING THE DERIVATION (done before computing anything for Pack Order, per this
+     task's own instruction not to assume a fixed blend %): checked the white-blend fraction each
+     tile's fill/border actually uses against its base hue, in plain sRGB terms. It is NOT a fixed
+     percentage — Receive Stock's fill blends ~80% toward white, Article Pricing's ~79%, Bill
+     Orders' ~82%, Live Stock's (unchanged) ~79%, History's ~84% — different enough that "just use
+     the same % as everyone else" would have been the wrong instruction to follow literally. Their
+     absolute OKLCH lightness (L) also isn't tightly fixed (fills span L=0.913-0.963). What IS
+     tightly consistent is each tile's fill/border lightness EXPRESSED AS A FRACTION OF THE
+     REMAINING DISTANCE FROM ITS OWN BASE HUE'S LIGHTNESS UP TO WHITE — i.e. fill_L = base_L +
+     f*(1-base_L) — which lands in a much tighter band: f≈0.68-0.85 for fill (mean 0.774) and
+     f≈0.36-0.59 for border (mean 0.469), across all 7 confirmed tiles including two very dark
+     bases (Blue, Grey) and two very light ones (Gold, Violet). This is the real rule: the palette
+     targets comparable PERCEIVED lightness headroom used up, not a fixed white percentage or a
+     fixed absolute lightness — exactly what this task's own instructions predicted checking
+     Receive Stock against Bill Orders would show.
 
-  --tile-yellow-border: #FDE047;
-  --tile-yellow-bg: #FEFCE8;
-  --tile-yellow-text: #854D0E;
+     Applied that same mean fraction (fill f=0.774, border f=0.469) to Pack Order's own base OKLCH
+     lightness (#FF9FF3 -> L=0.826, notably light for a "base" colour to begin with, since pink at
+     full saturation is inherently lighter than e.g. red or blue at full saturation) and solved
+     numerically (binary search on the white-blend amount) for the exact sRGB blend that lands on
+     the resulting target L in each case — not eyeballed, and not the flat "target the group's mean
+     fill" approach tried and rejected first (that produced a border barely different from the base,
+     because Pack Order's base is already close to the fill target's absolute lightness — the
+     fraction-of-remaining-headroom approach is what actually generalises correctly to a base this
+     light). Chroma came out at 21% of base for fill and 50% of base for border once L was solved
+     for — both comfortably inside the other 7 tiles' own chroma-retention range (fill 17-34%,
+     border 44-67%), confirming the fraction-based derivation, not just the L target alone.
+     Text ink used the one part of this derivation that IS an exact fixed rule, not a fraction:
+     base mixed precisely 50/50 with near-black #151412, ROUND-HALF-UP per channel — verified
+     against all 7 already-confirmed tiles' real text values first (this matters: Python's own
+     built-in round() uses round-half-to-even and gets 3 of the 7 tiles WRONG — Receive Stock,
+     Ship Order and Live Stock's real text values only match under round-half-up, confirmed by
+     testing both conventions against all 7 known-correct answers before trusting either).
 
-  --tile-red-border: #FCA5A5;
-  --tile-red-bg: #FEF2F2;
-  --tile-red-text: #991B1B;
+     PACK ORDER'S FULL NUMBERS: base #FF9FF3 -> fill #FFEBFC, border #FFCFF9, text #8A5A83.
 
-  /* "Brown/Warm-stone" — Ship Order's own colour, deliberately a muted, desaturated warm tone
-     rather than a vivid one: its hue sits close to Orange's (both warm/earthy), differentiated by
-     being paler and less saturated, per Aadi's own naming ("Warm-stone"). Confirmed distinct from
-     Orange visually (not just numerically) via a real side-by-side screenshot of both tiles. */
-  --tile-brown-border: #E7C6B8;
-  --tile-brown-bg: #FDF8F6;
-  --tile-brown-text: #7C2D12;
+     MANDATORY conflict checks before accepting this (grep discipline, then colour distance):
+     grepped the whole frontend for the raw --tile-cyan- token before renaming/retiring it — found
+     only inside this file's own :root block and its own .tile-cyan rule, same clean result as
+     every other same-day rename. Renamed --tile-cyan-* -> --tile-pink-* to match the new hue.
+     Computed hue distance for the new pink against EVERY colour already in play, not assumed:
+       - vs History's Rose actor badge (Mukesh, --rose-*, ~316°) specifically, since this was
+         flagged in advance as the real risk: 8.3-8.8° apart across every representation (base,
+         text, fill, border alike) — genuinely the closest pair introduced anywhere this session.
+         Real compensating gaps exist (text: 33.6pt saturation gap, 6.7pt lightness gap; border:
+         37.5pt saturation gap, 12.6pt lightness gap — Pink consistently paler/less saturated than
+         Rose at every tint step) but the raw hue proximity is real and reported as-is, not
+         downplayed — see LEARNING_LOG.md for the actual screenshot-based call, not just this math.
+       - vs all 7 other tiles: closest is Red at 55.8° — no new tile-to-tile collision.
+       - vs History's other 3 actor colours (Accent/Indigo/Teal): doesn't appear in the closest 10
+         pairs at all — comfortably clear, no new collision there either.
+       - vs History's 4 entry-type badge colours: closest is Purple/ORDER_PLACED at 37.7° — no new
+         collision there either.
+     So Pink's only genuine new proximity anywhere is the Rose comparison — isolated, not part of a
+     wider pattern, and reported rather than silently substituted for a "safer" hue, per this task's
+     own explicit instruction that this decision belongs to Aadi.
+     CONTRAST for Pack Order's new text-on-fill: 4.79:1 — computed for real, not assumed to clear
+     just because most of the others did. This sits BELOW this app's own established 4.85:1 floor
+     (same shortfall class as finding (2) above for Gold/Cyan in the prior palette) but ABOVE the
+     WCAG AA 4.5:1 minimum for normal-size text. Flagged, not silently adjusted, for the identical
+     reason as every other confirmed-value finding today: darkening the ink is a real deviation from
+     Aadi's own fixed 50/50-near-black rule, which is his call, not this task's to make alone.
 
-  --tile-blue-border: #93C5FD;
-  --tile-blue-bg: #EFF6FF;
-  --tile-blue-text: #1E40AF;
+     The five lightened tiles (Green/Gold/Violet/Red/Grey) below keep their existing text ink
+     UNCHANGED from the second palette — only fill/border moved lighter — so their contrast can only
+     have improved, not regressed against their OWN prior number; re-verified numerically rather
+     than assumed: Green 4.97->5.69, Gold 4.09->4.38, Violet 5.14->5.67, Red 5.75->6.77, Grey
+     7.30->8.43. All five genuinely improved, but Gold's improvement is NOT enough to clear either
+     bar this task cares about — 4.38:1 still sits below this app's own 4.85:1 floor AND below the
+     WCAG AA 4.5:1 minimum, same shortfall class as Pack Order's 4.79:1 above. "Improved" and
+     "now passes" are different claims and only the first is true for Gold; flagged plainly rather
+     than let the word "improved" imply the second. Live Stock and Ship Order are untouched,
+     confirmed still exactly matching what was already staged. */
+  --tile-green-border: #83DDCB;
+  --tile-green-bg: #CBF1E9;
+  --tile-green-text: #0B6653;
 
-  --tile-grey-border: #CBD5E1;
-  --tile-grey-bg: #F1F5F9;
-  --tile-grey-text: #334155;
+  --tile-gold-border: #FCE38E;
+  --tile-gold-bg: #FEF3CD;
+  --tile-gold-text: #876F1B;
+
+  --tile-purple-border: #D4D1FE;
+  --tile-purple-bg: #EEEDFF;
+  --tile-purple-text: #5C5888;
+
+  --tile-pink-border: #FFCFF9;
+  --tile-pink-bg: #FFEBFC;
+  --tile-pink-text: #8A5A83;
+
+  --tile-red-border: #FFA7A2;
+  --tile-red-bg: #FFDCDA;
+  --tile-red-text: #8A2A23;
+
+  --tile-orange-border: #F6BD7E;
+  --tile-orange-bg: #FBDFBF;
+  --tile-orange-text: #83541F;
+
+  --tile-blue-border: #82C0F1;
+  --tile-blue-bg: #CEE6F9;
+  --tile-blue-text: #0F4C7B;
+
+  --tile-grey-border: #BCC1C3;
+  --tile-grey-bg: #E6E8E9;
+  --tile-grey-text: #3C4142;
 
   --card-border: #E4E2DE;
   --card-bg: #fff;
@@ -950,64 +1069,67 @@ body {
   color: inherit;
 }
 
-.tile-success {
-  background: var(--success-bg);
-  border-color: var(--success-border);
-  color: var(--success-text);
+/* THIRD (final) OWNER tile palette pass (2026-08-27, same day) — see this file's own :root comment
+   above for the full reasoning. `.tile-cyan` (Pack Order, second palette) is renamed here to
+   `.tile-pink` to match its new base hue (#FF9FF3) — confirmed via a whole-frontend grep that
+   nothing outside this file and Home.jsx's own `tone` values referenced `.tile-cyan`/`--tile-cyan-*`
+   before renaming, same discipline every rename today has followed. `.tile-green`/`.tile-gold`/
+   `.tile-purple`/`.tile-red`/`.tile-orange`/`.tile-blue`/`.tile-grey` keep their names from the
+   second palette (none of them changed hue family this pass) — only the underlying token hex
+   values moved lighter (or, for Orange/Blue, stayed exactly as they were). New Order keeps the
+   word "purple" for the same reason recorded originally: the colour genuinely is purple and
+   nothing else ever used that class name. */
+.tile-green {
+  background: var(--tile-green-bg);
+  border-color: var(--tile-green-border);
+  color: var(--tile-green-text);
 }
 
-.tile-accent {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  color: var(--accent-text);
+.tile-gold {
+  background: var(--tile-gold-bg);
+  border-color: var(--tile-gold-border);
+  color: var(--tile-gold-text);
 }
 
 .tile-purple {
-  background: var(--purple-bg);
-  border-color: var(--purple-border);
-  color: var(--purple-text);
+  background: var(--tile-purple-bg);
+  border-color: var(--tile-purple-border);
+  color: var(--tile-purple-text);
 }
 
-.tile-warning {
-  background: var(--warning-bg);
-  border-color: var(--warning-border);
-  color: var(--warning-text);
+.tile-pink {
+  background: var(--tile-pink-bg);
+  border-color: var(--tile-pink-border);
+  color: var(--tile-pink-text);
 }
 
-/* Added 2026-08-22 alongside the new --teal-* tokens above, for Ship Order's tile — as of the
-   same-day follow-up below, this is shared by BOTH roles' Ship Order entries. */
-.tile-teal {
-  background: var(--teal-bg);
-  border-color: var(--teal-border);
-  color: var(--teal-text);
+.tile-red {
+  background: var(--tile-red-bg);
+  border-color: var(--tile-red-border);
+  color: var(--tile-red-text);
 }
 
-/* Added 2026-08-22 for OWNER's Bill Orders tile, reusing the existing Danger role (previously
-   unused as a tile anywhere) rather than inventing a colour — see Home.jsx's OWNER_TILES
-   comment for why Bill Orders specifically got this one over Ship Order. */
-.tile-danger {
-  background: var(--danger-bg);
-  border-color: var(--danger-border);
-  color: var(--danger-text);
+.tile-orange {
+  background: var(--tile-orange-bg);
+  border-color: var(--tile-orange-border);
+  color: var(--tile-orange-text);
 }
 
-/* Added 2026-08-22 (same-day follow-up) for OWNER's Article Pricing tile — replaces the
-   placeholder .tile-neutral treatment it launched with earlier the same day. */
-.tile-rust {
-  background: var(--rust-bg);
-  border-color: var(--rust-border);
-  color: var(--rust-text);
+.tile-blue {
+  background: var(--tile-blue-bg);
+  border-color: var(--tile-blue-border);
+  color: var(--tile-blue-text);
 }
 
-/* Added 2026-08-22 (same-day follow-up) for OWNER's History tile — same replacement as Rust
-   directly above. */
-.tile-lavender {
-  background: var(--lavender-bg);
-  border-color: var(--lavender-border);
-  color: var(--lavender-text);
+.tile-grey {
+  background: var(--tile-grey-bg);
+  border-color: var(--tile-grey-border);
+  color: var(--tile-grey-text);
 }
 
-/* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. */
+/* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. Not part
+   of the 2026-08-27 palette replacement above — Transfer isn't one of the 8 OWNER tiles, and
+   Indigo was explicitly confirmed to stay as-is. */
 .tile-indigo {
   background: var(--indigo-bg);
   border-color: var(--indigo-border);

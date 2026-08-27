@@ -34,66 +34,109 @@ import {
 // for the same route on the day the two roles briefly disagreed, so it stopped fitting then and
 // staying split is simpler than reconverging now.
 //
+// Ship Order moved again on 2026-08-27, from Teal to a new Olive/mustard-green token
+// (--olive-*), on both role arrays — the unification itself (both roles share one tone for this
+// tile) stays exactly as confirmed above, only which tone changed. Teal is untouched and remains
+// in active use elsewhere (History's per-employee name-badge feature assigns it to Ram — a
+// different UI surface entirely, unrelated to Home tiles).
+//
+// Later the SAME day (2026-08-27), all 8 OWNER tiles got a full palette replacement — Receive
+// Stock/Article Pricing/New Order/Pack Order/Bill Orders/Ship Order/Live Stock/History each now
+// use their OWN dedicated `--tile-*` token (green/orange/purple/yellow/red/brown/blue/grey — see
+// index.css's own `:root` comment for the reasoning), rather than reusing this app's shared
+// Success/Danger/Warning/Accent/Purple tokens the way several of them did before. Those five
+// shared tokens are completely untouched by this: they keep meaning exactly what they always
+// have everywhere else (badges, buttons, status indicators), and none of them drive a tile's
+// colour any more. This also retired Rust, Lavender AND the Olive token added just above the
+// same day — all three replaced by dedicated tokens in this same pass, and removed as dead code
+// once confirmed nothing else referenced them. Shared tiles (Receive Stock, New Order, Pack
+// Order, Live Stock) got the identical new tone on both STAFF_TILES and OWNER_TILES below, same
+// unification rule Ship Order's own colour changes have already established twice.
+//
+// SUPERSEDED the same day, again, by a second confirmed palette (still 2026-08-27) — the first
+// palette above never shipped (staged in index.css for a few hours, never in production), so this
+// is a straight replacement, not a migration preserving a live prior version. Three tiles changed
+// HUE FAMILY this time, not just shade — Article Pricing moved off orange onto gold/yellow, Pack
+// Order moved off yellow onto cyan/turquoise, Ship Order moved off brown/warm-stone onto true
+// orange — so their `tone` identifiers below changed to match (`orange`->`gold`, `yellow`->`cyan`,
+// `brown`->`orange`; the `orange` name is free to reattach to Ship Order specifically because
+// Article Pricing just vacated it in the same change). Receive Stock/New Order/Bill Orders/Live
+// Stock/History did NOT change hue family, so their `tone` identifiers (`green`/`purple`/`red`/
+// `blue`/`grey`) are unchanged — only the underlying token hex values moved. See index.css's own
+// `:root` comment for the full derivation method and the hue/saturation/lightness verification
+// this second palette was checked against before accepting it.
+//
+// FINALIZED the same day, a third pass (still 2026-08-27) — Aadi reviewed a real before/after
+// screenshot comparison of the second palette and confirmed per-tile: Live Stock and Ship Order
+// stay exactly as they were; Receive Stock/New Order/Bill Orders/History keep their `tone`
+// identifiers (`green`/`purple`/`red`/`grey`) with only their underlying fill/border tokens
+// lightened further toward white (text ink unchanged); and Pack Order abandons cyan entirely for
+// a new vivid pink (`tone: 'pink'`, base #FF9FF3) — a genuine hue-family change, not a shade
+// adjustment, so `--tile-cyan-*`/`.tile-cyan` were renamed to `--tile-pink-*`/`.tile-pink` (grepped
+// the whole frontend for the raw token first, same discipline as every rename today). See
+// index.css's own `:root` comment for the full derivation (including how Pack Order's own fill/
+// border were computed from the other 7 tiles' actual pattern, not guessed) and the honest
+// hue/contrast findings this pass surfaced — most notably that Pack Order's pink sits only
+// 8.3-8.8° from History's Rose actor badge by hue (flagged, not silently changed to a different
+// hue), and that Article Pricing's contrast, while improved by the lightening, still falls short
+// of both this app's own baseline and the WCAG AA minimum.
+//
 // Colored tiles are reserved for core, frequent, semantically-distinct actions — everything
 // else lives in the plain "More" list, icon + label only, no colour tint.
 
 // STAFF's tile grid — 2026-08-22, two same-day changes: Ship Order moved from Accent to Teal
 // (deliberately matching OWNER's tile now, a confirmed reversal of the original "STAFF stays
-// byte-for-byte unchanged" rule, scoped to just this one tile's colour), and Transfer Stock was
+// byte-for-byte unchanged" rule, scoped to just this one tile's colour — since 2026-08-27, that
+// shared tone is Olive instead, see the file header comment above), and Transfer Stock was
 // promoted from MORE_ITEMS — staff use it often enough to earn a tile, and OWNER's grid was
 // already fixed at exactly 8 tiles with no room/need for it there.
 //
-// Transfer's tone (`indigo`) is a ninth, genuinely new token — not a reuse. By this point every
-// existing tone (Success, Danger, Warning, Accent, Purple, Teal, Rust, Lavender) is already in
-// use somewhere across the two role screens. Danger was ruled out for the same reason it was
-// ruled out for Ship Order earlier — a routine action shouldn't borrow the tone the rest of the
-// app uses for "something's wrong" (low stock, damaged, remove). Rust and Lavender were ruled
-// out because those exact colours mean "Article Pricing" and "History" on OWNER's own Home
-// screen (see OWNER_TILES below) — reusing either for "Transfer" on STAFF's screen would make
-// the same colour mean two different things to the one person (the owner) who sees both
-// screens. A genuinely new tone avoids all three collisions, same precedent as Teal/Rust/
-// Lavender each being added when an actual need arose rather than forced into an existing slot.
+// Transfer's tone (`indigo`) is a ninth, genuinely new token — not a reuse, and explicitly
+// confirmed to stay exactly as-is during the 2026-08-27 tile-palette replacement (it isn't one of
+// OWNER's 8 tiles, and wasn't part of that request). At the time it was added, every existing
+// tone (Success, Danger, Warning, Accent, Purple, Teal, Rust, Lavender) was already in use
+// somewhere across the two role screens — Rust and Lavender specifically were ruled out because
+// reusing either would have meant the same colour standing for "Article Pricing"/"History" on
+// OWNER's screen AND "Transfer" on STAFF's, confusing for the one person (the owner) who sees
+// both. That reasoning is now historical (Rust and Lavender were retired outright the same day
+// their tiles moved to Orange/Grey — see the file header comment and index.css), but Indigo
+// itself was never affected by that retirement, since Transfer never used either of those tones.
 // Appended at the end of the array (no explicit order was specified) — same "append, don't
 // renumber" precedent Locations/Article Pricing already established elsewhere in this app.
 const STAFF_TILES = [
-  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
-  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
+  { to: '/receive', label: 'Receive Stock', tone: 'green', Icon: TruckIcon },
+  { to: '/live-stock', label: 'Live Stock', tone: 'blue', Icon: ListIcon },
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
-  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'pink', Icon: PackageIcon },
   // Any role, rule 63 — staff mark orders shipped, same reasoning as Pack Order above.
-  { to: '/ship-orders', label: 'Ship Order', tone: 'teal', Icon: SendIcon },
+  { to: '/ship-orders', label: 'Ship Order', tone: 'orange', Icon: SendIcon },
   { to: '/transfer', label: 'Transfer Stock', tone: 'indigo', Icon: TransferIcon },
 ];
 
 // OWNER's tile grid — reorganised 2026-08-22: Article Pricing and History promoted here from
-// MORE_ITEMS (frequent enough for an owner to earn a tile), in this exact order, plus a colour
-// fix for the clash Live Stock/Bill Orders/Ship Order used to share on Accent blue (§3.4's own
-// token table groups "Stock / Ship / Billed" under one Accent row, which is *why* they clashed
-// — this reorganisation is a deliberate departure from that table, not a bug).
-//
-// Live Stock keeps Accent. Bill Orders moves to Danger — reusing it (it was otherwise unused
-// as a tile) rather than inventing a colour, on the reasoning that billing/money-owed is the
-// closer semantic fit of the two for a red the app otherwise means "remove/low-stock/damaged"
-// by. Ship Order gets a Teal token (--teal-*, added to index.css and 07_UI_DESIGN_BRIEF §3.4) —
-// the palette only had one tone free (Danger) for two tiles that needed distinct new colours,
-// so one had to be genuinely new; as of a same-day follow-up, STAFF's Ship Order tile uses this
-// same Teal too (see STAFF_TILES above), a deliberate, confirmed reversal for this one tile.
-//
-// Article Pricing (Rust) and History (Lavender) launched the same day with a placeholder
-// `tile-neutral` treatment (existing card tokens, no semantic colour) since the task that added
-// them didn't specify a colour and every semantic tone was already claimed. A same-day
-// follow-up replaced that placeholder with two real, genuinely new tones once specific colours
-// were requested — `tile-neutral` itself was removed from index.css as dead code once nothing
-// referenced it any more.
+// MORE_ITEMS (frequent enough for an owner to earn a tile), in this exact order. The colours
+// below reflect the 2026-08-27 full-palette replacement (see the file header comment) — every
+// tile now has its OWN dedicated `--tile-*` token, so the historical reasoning about which SHARED
+// token a tile borrowed (Accent, Danger, Teal, Rust, Lavender, Olive) no longer describes today's
+// code; it's kept below purely as a record of how this grid got here, not as a description of the
+// current CSS. At the time: Live Stock kept Accent, Bill Orders moved to Danger (reusing it
+// rather than inventing a colour, since billing/money-owed was the closer semantic fit for a red
+// the app otherwise means "remove/low-stock/damaged" by), Ship Order got a new Teal token (later
+// Olive, per the file header comment), and Article Pricing/History launched on Rust/Lavender
+// after a same-day `tile-neutral` placeholder. All of that borrowing/placeholder history ended
+// 2026-08-27: every one of these 8 tiles was given its own confirmed, dedicated token instead,
+// and Rust/Lavender/Olive were retired outright once nothing referenced them any more (`Danger`,
+// `Accent`, `Success`, `Warning`, `Purple` themselves were never touched — only which tiles
+// pointed at them, which is now none).
 const OWNER_TILES = [
-  { to: '/receive', label: 'Receive Stock', tone: 'success', Icon: TruckIcon },
-  { to: '/article-pricing', label: 'Article Pricing', tone: 'rust', Icon: TagIcon },
+  { to: '/receive', label: 'Receive Stock', tone: 'green', Icon: TruckIcon },
+  { to: '/article-pricing', label: 'Article Pricing', tone: 'gold', Icon: TagIcon },
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
-  { to: '/pack-orders', label: 'Pack Order', tone: 'warning', Icon: PackageIcon },
-  { to: '/bill-orders', label: 'Bill Orders', tone: 'danger', Icon: InvoiceIcon },
-  { to: '/ship-orders', label: 'Ship Order', tone: 'teal', Icon: SendIcon },
-  { to: '/live-stock', label: 'Live Stock', tone: 'accent', Icon: ListIcon },
-  { to: '/history', label: 'History', tone: 'lavender', Icon: HistoryIcon },
+  { to: '/pack-orders', label: 'Pack Order', tone: 'pink', Icon: PackageIcon },
+  { to: '/bill-orders', label: 'Bill Orders', tone: 'red', Icon: InvoiceIcon },
+  { to: '/ship-orders', label: 'Ship Order', tone: 'orange', Icon: SendIcon },
+  { to: '/live-stock', label: 'Live Stock', tone: 'blue', Icon: ListIcon },
+  { to: '/history', label: 'History', tone: 'grey', Icon: HistoryIcon },
 ];
 
 // Each entry decides its own visibility from `user`. Low Stock and Good Returns are
