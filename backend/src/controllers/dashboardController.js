@@ -118,8 +118,18 @@ async function getOverview(req, res) {
   // Counted in the database rather than by filtering the rows already fetched above: this is the
   // one KPI whose definition is a shared business rule (56), and expressing it as a real query
   // keeps it readable as that rule rather than as an incidental array filter.
+  //
+  // bundle.product.isActive: true excludes archived articles (2026-08-28, confirmed by Aadi) —
+  // this is a genuinely separate query from GET /api/stock (stockController.js), not a shared
+  // source, so fixing the two Low Stock SCREENS' own client-side filters alone would have left
+  // this KPI card showing a higher, stale-feeling number than what either list actually displays.
+  // Deliberately NOT the same call as stockValue/setsInStock/piecesInStock just above, which stay
+  // unfiltered on purpose (rule 85 extended to reporting — archived stock is still real value).
+  // This KPI is a different kind of number: an action prompt ("go restock this"), not a valuation,
+  // and an archived article — hidden from the daily receiving/ordering pickers by definition —
+  // isn't something anyone would act on from this nag, so it's excluded here specifically.
   const lowStockCount = await prisma.stock.count({
-    where: { qtySets: { lte: LOW_STOCK_THRESHOLD } },
+    where: { qtySets: { lte: LOW_STOCK_THRESHOLD }, bundle: { product: { isActive: true } } },
   });
 
   const revenue = await revenueForPeriod(prisma, requestedPeriod);

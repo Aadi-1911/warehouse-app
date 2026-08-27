@@ -111,7 +111,15 @@ export default function LowStock() {
 
   // Rule 56's ≤1 threshold, same shared constant LiveStock/New Order/Pack Order already import —
   // never redefined here.
-  const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD);
+  //
+  // productIsActive excluded here too (2026-08-28, confirmed by Aadi) — same reasoning as the
+  // staff-facing Low Stock List's identical change: an archived article is deliberately hidden
+  // from the daily pickers (rule 85) so nobody acts on it, and this alert exists to tell someone
+  // to go restock something, which an archived article isn't. Distinct from the reporting-side
+  // KPIs on the Overview page (stock value/sets/pieces), which correctly keep counting archived
+  // stock as real value — this is an actionability question, not a valuation one. Live Stock's own
+  // archived section is a separate consumer of the same listStock() call and is unaffected.
+  const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD && row.productIsActive);
 
   // Factory -> Article -> rows, matching LiveStock's own convention (§5.5) — the one LiveStock's
   // comment explicitly hands this exact global view off to. productId (not the bare articleNo
