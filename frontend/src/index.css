@@ -1039,6 +1039,16 @@ body {
   color: var(--warning-text);
 }
 
+/* Reactivate-with-a-new-price form (2026-08-28), shown under an ARCHIVED article's lookup banner
+   in Receive Stock — OWNER only. A nested .card inside the lookup area, so it needs its own top
+   margin to sit clear of the banner above it rather than butting straight against it; everything
+   else (padding, radius, background) is inherited from .card unchanged. Deliberately not given
+   its own colour: the amber warning banner directly above it already carries the "this article is
+   archived" signal, and repeating that tint here would read as a second, separate warning. */
+.reactivate-price-form {
+  margin-top: var(--space-3);
+}
+
 /* --- Save Receipt result banner: plain-language outcome, not a status code in sight ---
    Unlike .lookup-banner (a single line + an action, laid out in a row), this can hold several
    paragraphs and a list of exactly which lines still need saving, so it stacks vertically. */

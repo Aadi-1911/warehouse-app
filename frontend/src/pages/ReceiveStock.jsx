@@ -10,7 +10,14 @@ import { listLocations, createLocation } from '../api/locations';
 import { listColors, createColor } from '../api/colors';
 import { listCategories, createCategory, deactivateCategory, reactivateCategory } from '../api/categories';
 import { createBundle } from '../api/bundles';
-import { findExactMatch, getValidColors, createProduct } from '../api/products';
+import {
+  findExactMatch,
+  getValidColors,
+  createProduct,
+  updateProduct,
+  reactivateProduct,
+} from '../api/products';
+import PinPrompt from '../components/PinPrompt';
 import { createTransaction } from '../api/transactions';
 import { KIDS_PIECES_BY_LABEL, piecesPerSetFor } from '../utils/piecesPerSet';
 
@@ -186,6 +193,31 @@ export default function ReceiveStock() {
   // is no in-flight window for a "Creating…" label to describe. It doesn't just resolve fast — it
   // never leaves the browser, so a spinner would be describing a request that doesn't exist.
   const [createArticleError, setCreateArticleError] = useState(null);
+
+  // --- Reactivating an archived article (2026-08-28).
+  //
+  // Two genuinely different paths, and the split is deliberate rather than an inconsistency:
+  //
+  //   No price change -> DEFERRED. Reactivation is staged on the receipt line and only happens at
+  //   "Save receipt", inside resolveBundleForLine, exactly like Product/Color/Bundle creation.
+  //   Walking away from the form leaves the article archived, with no trace — which is the whole
+  //   point of the deferred-creation work this builds on.
+  //
+  //   Price change -> IMMEDIATE. A price edit requires OWNER + PIN (CLAUDE.md's non-negotiable
+  //   rule, rule 71), and every PIN-gated price edit in this app already commits the moment the
+  //   PIN is confirmed (Article Pricing's inline edit, Factory Payables' payment/debit forms).
+  //   Deferring a PIN-confirmed action would mean holding a verified PIN's authority in browser
+  //   state until some later, unrelated button — so the price, and the reactivation that comes
+  //   with it, land together at confirmation time.
+  //
+  // priceEditOpen only ever opens for an OWNER: PATCH /api/products/:id is requireRole('OWNER')
+  // unconditionally (routes/products.js), not merely PIN-gated, and productSelect() never even
+  // selects costPrice for a STAFF request — so there is no version of this form a STAFF user
+  // could meaningfully fill in, and it isn't rendered for them at all.
+  const [priceEditOpen, setPriceEditOpen] = useState(false);
+  const [newCostPrice, setNewCostPrice] = useState('');
+  const [newSellingPrice, setNewSellingPrice] = useState('');
+  const [priceEditSuccess, setPriceEditSuccess] = useState(null);
 
   // --- Color staging. "Resolved" = colors this screen has settled on for the current Product.
   // Each entry is { id, name, bundleId } — bundleId is a REAL Bundle id only for colours that
@@ -452,6 +484,13 @@ export default function ReceiveStock() {
     setSelectedKidsCategory(null);
     setShowExtraSize(false);
     setCreateArticleError(null);
+    // The reactivation price form belongs to the article being looked at, so it closes with it.
+    // A price ALREADY committed through it isn't undone by this — that write is real and done;
+    // this only clears the form's own transient state.
+    setPriceEditOpen(false);
+    setNewCostPrice('');
+    setNewSellingPrice('');
+    setPriceEditSuccess(null);
     setResolvedColors([]);
     // Back to 'idle', not 'loaded' — after a reset nothing has been asked about the next
     // article yet. Leaving these settled would hand the next lookup a stale "answer already
@@ -483,9 +522,21 @@ export default function ReceiveStock() {
     setLookingUp(true);
     try {
       const match = await findExactMatch(factoryId, articleNo);
+      // `archived` rides alongside status rather than becoming a status of its own (2026-08-28).
+      // Everything downstream of the lookup — both colour-fetch effects, handleColorChange,
+      // handleAddToReceipt — branches on `status === 'matched'`, and an archived article needs
+      // every one of those behaviours unchanged: it's a real Product with real Bundles and real
+      // sizes. Only the banner and the reactivation affordance differ, so only they read the flag.
+      //
+      // Worth being explicit that this is NOT a new capability: GET /api/products has never
+      // filtered on isActive (productController.js's listProducts builds its where-clause from
+      // factoryId/articleNo alone), so findExactMatch has ALWAYS returned archived articles and
+      // this screen has always let stock be received against one. What it couldn't do was say so
+      // — an archived match rendered as an ordinary green "Matched" banner, identical to an
+      // active article. This flag is what makes an already-reachable state visible.
       setLookup(
         match
-          ? { status: 'matched', product: match }
+          ? { status: 'matched', product: match, archived: !match.isActive }
           : { status: 'new', articleNo: articleNo.trim() }
       );
     } catch (err) {
@@ -596,6 +647,55 @@ export default function ReceiveStock() {
     // Bundles); it's true for a different reason now (the Product itself doesn't exist yet), but
     // the behaviour it needs to drive — don't call getValidColors — is identical either way.
     setLookup({ status: 'matched', product, justCreated: true });
+  }
+
+  // Commits a new price AND the reactivation together, immediately, the moment the PIN is
+  // confirmed — the deliberate exception to this screen's "everything defers to Save receipt"
+  // rule. See priceEditOpen's own declaration for why deferring a PIN-confirmed action would be
+  // the wrong call.
+  //
+  // Passed to PinPrompt as its onSubmit, so PinPrompt owns the PIN field, the submit button, the
+  // in-flight label, and the INVALID_PIN "(N attempts remaining)" rendering — this function never
+  // touches any of that. Throwing from here is the documented way to surface an error through
+  // PinPrompt's own banner, which is why the price validation below throws rather than setting
+  // some separate error state.
+  async function handleReactivateWithPrice(pin) {
+    const parsedCost = Number(newCostPrice);
+    const parsedSelling = Number(newSellingPrice);
+    if (!newCostPrice || !parsedCost || parsedCost <= 0) {
+      throw new Error('Enter a valid cost price.');
+    }
+    if (!newSellingPrice || !parsedSelling || parsedSelling <= 0) {
+      throw new Error('Enter a valid selling price.');
+    }
+
+    // TWO calls, not one, and this was verified rather than assumed: PATCH /api/products/:id
+    // accepts only categoryId/isKids/costPrice/sellingPrice (PATCHABLE_FIELDS in
+    // productController.js) — isActive is deliberately not patchable there, so reactivation has
+    // its own dedicated endpoint and cannot ride along in the price request.
+    //
+    // Price first, reactivate second, on purpose. If the second call fails, the article is left
+    // archived but correctly re-priced, and the line still carries its deferred reactivation
+    // intent (staged below), so "Save receipt" will finish the job — the failure degrades into
+    // the no-price path rather than into an inconsistent state. The reverse order would leave an
+    // article reactivated at a stale price, which is the worse of the two.
+    const updated = await updateProduct(lookup.product.id, {
+      costPrice: parsedCost,
+      sellingPrice: parsedSelling,
+      pin,
+    });
+    const reactivated = await reactivateProduct(lookup.product.id);
+
+    // The line is now an ordinary matched line for the rest of the flow: archived flag cleared,
+    // so nothing downstream stages a redundant reactivation at save time. Merging both responses
+    // keeps whichever fields each one actually returned rather than assuming either is complete.
+    setLookup((prev) =>
+      prev ? { ...prev, product: { ...prev.product, ...updated, ...reactivated }, archived: false } : prev
+    );
+    setPriceEditOpen(false);
+    setPriceEditSuccess(
+      `${lookup.product.articleNo} reactivated, and its price updated. Both are saved already — they don't wait for "Save receipt".`
+    );
   }
 
   // --- Color staging (shared by Matched and justCreated articles).
@@ -737,6 +837,16 @@ export default function ReceiveStock() {
         }
       : null;
 
+    // Deferred reactivation intent (2026-08-28), staged in exactly the same shape and at exactly
+    // the same moment as pendingProduct above, so it travels with the line and gets resolved at
+    // the same single point (resolveBundleForLine) rather than through a separate mechanism.
+    //
+    // Only set when the article is STILL archived at commit time. An OWNER who already went
+    // through the price path has had `archived` cleared on the lookup, because that path already
+    // reactivated for real — re-staging it here would queue a redundant second reactivate call
+    // for something that is no longer archived.
+    const reactivateProductId = lookup.archived ? lookup.product.id : null;
+
     const entry = {
       id: nextReceiptIdRef.current++,
       articleNo: lookup.product.articleNo,
@@ -744,6 +854,7 @@ export default function ReceiveStock() {
       productName: lookup.product.name,
       piecesPerSet,
       pendingProduct,
+      reactivateProductId,
       // Snapshotted now, not read live later (rule 52) — a later Factory/Location change
       // must not retroactively alter an already-committed entry.
       factoryId,
@@ -866,6 +977,7 @@ export default function ReceiveStock() {
           // long gone by then.
           productId: item.productId,
           pendingProduct: item.pendingProduct,
+          reactivateProductId: item.reactivateProductId,
           bundleId: color.bundleId,
           locationId: item.locationId,
           sets: color.sets,
@@ -915,6 +1027,26 @@ export default function ReceiveStock() {
         const product = existing ?? (await createProduct(line.pendingProduct));
         productId = product.id;
         caches.products.set(key, productId);
+      }
+    }
+
+    // 1b. Reactivation (2026-08-28). An archived article that stock is being received against
+    // becomes active again — but only now, at save time, so abandoning the form leaves it
+    // archived with no trace, exactly like every other deferred record on this screen.
+    //
+    // Deliberately AFTER product resolution and BEFORE the Bundle/Transaction work: by the time
+    // any new stock is attached, the article it attaches to is already active again.
+    //
+    // Needs no 409/duplicate recovery, unlike Color and Bundle above — reactivateProduct is
+    // idempotent by construction (productController.js sets isActive: true unconditionally and
+    // returns 200 whether or not it was already true), so a retry after a partial save is safe
+    // with no special handling. The cache is still worth having: it keeps a receipt with four
+    // colour lines against one archived article to a single reactivate call rather than four
+    // identical ones, the same "once per record, not once per line" guarantee the caches above give.
+    if (line.reactivateProductId) {
+      if (!caches.reactivated.has(productId)) {
+        await reactivateProduct(productId);
+        caches.reactivated.add(productId);
       }
     }
 
@@ -980,7 +1112,15 @@ export default function ReceiveStock() {
     // One set of caches for the whole run — see resolveBundleForLine. Scoped to this run rather
     // than the component: once these records are real, the NEXT save must re-verify against the
     // database rather than trust ids from a run that may have partly failed.
-    const caches = { products: new Map(), colors: new Map(), bundles: new Map() };
+    // `reactivated` is a Set, not a Map: unlike the other three it isn't resolving an identity to
+    // an id, only remembering which products this run has already reactivated so a multi-line
+    // receipt doesn't repeat the call.
+    const caches = {
+      products: new Map(),
+      colors: new Map(),
+      bundles: new Map(),
+      reactivated: new Set(),
+    };
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -1126,9 +1266,28 @@ export default function ReceiveStock() {
             nothing was actually "matched" against an existing record. */}
         {lookup?.status === 'matched' && (
           <>
-            <div className="lookup-banner lookup-banner-success">
+            {/* Three visually distinct states now, not two (2026-08-28). An ARCHIVED match gets
+                the amber warning treatment rather than the green success one, because green here
+                means "this is ready to receive into, carry on" and an archived article isn't
+                quite that — it's receivable, but doing so changes its status, which the person
+                should know before they do it rather than discover afterwards. Amber is the same
+                colour this screen already uses for its "New article" state, and for the same
+                reason: something other than the straightforward path is about to happen. The two
+                amber states are never ambiguous with each other — they can't co-occur (an article
+                is either found or not), and each spells out its own consequence in words. */}
+            <div
+              className={`lookup-banner ${
+                lookup.archived ? 'lookup-banner-warning' : 'lookup-banner-success'
+              }`}
+            >
               <p>
-                {lookup.justCreated ? (
+                {lookup.archived ? (
+                  <>
+                    <strong>Archived article:</strong> {lookup.product.articleNo} —{' '}
+                    {lookup.product.name} is archived. Receiving stock against it will reactivate
+                    it when you save this receipt.
+                  </>
+                ) : lookup.justCreated ? (
                   <>
                     <strong>Created:</strong> {lookup.product.articleNo} — {lookup.product.name}{' '}
                     (sizes set)
@@ -1144,6 +1303,113 @@ export default function ReceiveStock() {
                 Change
               </button>
             </div>
+
+            {/* Confirmation that the immediate (price) path already committed — deliberately
+                explicit that these did NOT wait for "Save receipt", since everything else on this
+                screen does, and that difference is exactly what would otherwise be surprising. */}
+            {priceEditSuccess && (
+              <p className="result-banner result-banner-success">{priceEditSuccess}</p>
+            )}
+
+            {/* OWNER-only, and not merely by convention: PATCH /api/products/:id is
+                requireRole('OWNER') unconditionally (routes/products.js) — a STAFF request is
+                rejected for the role before the PIN is even considered — and productSelect()
+                never selects costPrice for STAFF, so there'd be no current price to show them
+                either. Rendering this for STAFF would be an affordance that cannot succeed.
+                STAFF still reactivate archived articles perfectly well: they just take the
+                deferred no-price path, which is the default and needs no extra interaction. */}
+            {lookup.archived && isOwner && !priceEditOpen && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setPriceEditOpen(true);
+                  // Pre-fill with the CURRENT prices rather than blank: this form always sets
+                  // BOTH fields (PATCH replaces each value it's given), so starting empty would
+                  // quietly invite someone updating only the selling price to wipe the cost
+                  // price — or force them to re-type a number they didn't intend to change.
+                  setNewCostPrice(
+                    lookup.product.costPrice != null ? String(lookup.product.costPrice) : ''
+                  );
+                  setNewSellingPrice(
+                    lookup.product.sellingPrice != null ? String(lookup.product.sellingPrice) : ''
+                  );
+                }}
+              >
+                Update price while reactivating
+              </button>
+            )}
+
+            {lookup.archived && isOwner && priceEditOpen && (
+              <div className="card reactivate-price-form">
+                <h3 className="card-title">Reactivate with a new price</h3>
+                {/* The current values, shown plainly so the new number is entered against a
+                    known starting point rather than from memory. "Not set yet" is a real state
+                    (rule 8/71's pending-price article), not a missing value to hide. */}
+                <p className="muted hint-text">
+                  Current cost{' '}
+                  <strong>
+                    {lookup.product.costPrice != null
+                      ? `₹${Number(lookup.product.costPrice).toLocaleString('en-IN')}`
+                      : 'not set yet'}
+                  </strong>{' '}
+                  · Current selling{' '}
+                  <strong>
+                    {lookup.product.sellingPrice != null
+                      ? `₹${Number(lookup.product.sellingPrice).toLocaleString('en-IN')}`
+                      : 'not set yet'}
+                  </strong>
+                </p>
+
+                <div className="field-row">
+                  <label className="field">
+                    <span className="field-label">New cost price</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      value={newCostPrice}
+                      onChange={(e) => setNewCostPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">New selling price</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      value={newSellingPrice}
+                      onChange={(e) => setNewSellingPrice(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <p className="muted hint-text">
+                  Unlike the rest of this screen, this saves straight away — the price change and
+                  the reactivation both happen as soon as your PIN is confirmed, not when the
+                  receipt is saved.
+                </p>
+
+                {/* The shared PinPrompt (components/PinPrompt.jsx), not a hand-built PIN field —
+                    it already owns the field, the submit button, the in-flight label, and the
+                    INVALID_PIN "(N attempts remaining)" rendering that this action can genuinely
+                    hit. handleReactivateWithPrice throws on invalid prices, which is how those
+                    messages reach PinPrompt's own error banner. */}
+                <PinPrompt
+                  submitLabel="Confirm price & reactivate"
+                  submittingLabel="Saving…"
+                  onSubmit={handleReactivateWithPrice}
+                />
+
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => setPriceEditOpen(false)}
+                >
+                  Cancel — reactivate without changing the price
+                </button>
+              </div>
+            )}
 
             <div className="color-staging">
               {/* Combobox (components/Combobox.jsx, added 2026-08-22) — one live-filtering text
