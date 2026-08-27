@@ -184,7 +184,9 @@ export default function BillOrderDetail() {
   if (orderStatus !== 'loaded') {
     return (
       <div className="page">
-        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+        {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+            Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -201,7 +203,9 @@ export default function BillOrderDetail() {
   if (order.status !== 'PACKED') {
     return (
       <div className="page">
-        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+        {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+            Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
           This order can no longer be billed — its status is now {order.status}.
@@ -266,7 +270,9 @@ export default function BillOrderDetail() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+      {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+          Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-warning">Packed</span>
 

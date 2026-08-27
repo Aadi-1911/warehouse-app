@@ -386,7 +386,13 @@ export default function NewOrder() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<ShoppingBagIcon size={20} />} tone="purple" title="New Order" />
+      {/* tone="tile-purple" (2026-08-27) matches Home's New Order tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "purple" (the shared
+          --purple-* token, used only here for New Order's header, never for a status badge on
+          this page), now the dedicated --tile-purple-* token instead. No collision found: nothing
+          else on this screen renders shared-purple, so there's no second, different-looking purple
+          left behind. */}
+      <ScreenHeader icon={<ShoppingBagIcon size={20} />} tone="tile-purple" title="New Order" />
       {selectedParty && <p className="muted">{selectedParty.name}</p>}
 
       {placedOutcome && (

@@ -823,7 +823,14 @@ export default function ReceiveStock() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<TruckIcon size={20} />} tone="success" title="Receive Stock" />
+      {/* tone="tile-green" (2026-08-27) matches Home's Receive Stock tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "success" (the shared
+          --success-* green), which is a DIFFERENT green from the new dedicated --tile-green-*
+          tokens. Flagged, not silently touched: this page's own "Matched" lookup banner and its
+          Save-receipt result banner/confirm modal (below) still genuinely mean success and still
+          use the original --success-* green — two different greens now share this one screen,
+          reported to Aadi rather than decided here. See LEARNING_LOG.md. */}
+      <ScreenHeader icon={<TruckIcon size={20} />} tone="tile-green" title="Receive Stock" />
 
       {listsError && (
         <p className="error-banner" role="alert">

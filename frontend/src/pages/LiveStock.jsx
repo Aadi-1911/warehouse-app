@@ -182,7 +182,12 @@ export default function LiveStock() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<ListIcon size={20} />} title="Live Stock" />
+      {/* tone="tile-blue" (2026-08-27) matches Home's Live Stock tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was unset (ScreenHeader's own
+          default, accent-blue). Flagged, not silently touched: this page's own "N colours" badge
+          below still genuinely uses --accent-* blue — a different, if closely related, blue from
+          the new dedicated --tile-blue-* tokens, reported to Aadi rather than decided here. */}
+      <ScreenHeader icon={<ListIcon size={20} />} tone="tile-blue" title="Live Stock" />
 
       {error && (
         <p className="error-banner" role="alert">

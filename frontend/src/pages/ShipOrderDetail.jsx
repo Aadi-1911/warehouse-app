@@ -80,7 +80,9 @@ export default function ShipOrderDetail() {
   if (orderStatus !== 'loaded') {
     return (
       <div className="page">
-        <ScreenHeader icon={<SendIcon size={20} />} tone="accent" title="Ship Order" />
+        {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
+            Home's Ship Order tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -95,7 +97,9 @@ export default function ShipOrderDetail() {
   if (order.status !== 'BILLED') {
     return (
       <div className="page">
-        <ScreenHeader icon={<SendIcon size={20} />} tone="accent" title="Ship Order" />
+        {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
+            Home's Ship Order tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
           This order can no longer be shipped — its status is now {order.status}.
@@ -120,7 +124,9 @@ export default function ShipOrderDetail() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<SendIcon size={20} />} tone="accent" title="Ship Order" />
+      {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
+          Home's Ship Order tile; see that file's comment for the full reasoning. */}
+      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-accent">Billed</span>
 

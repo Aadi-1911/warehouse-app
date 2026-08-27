@@ -286,7 +286,10 @@ export default function PackOrderDetail() {
   if (orderStatus !== 'loaded') {
     return (
       <div className="page">
-        <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+        {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+            Home's Pack Order tile; see that file's comment for the full reasoning. Applied
+            identically across all 3 render states (loading/blocked/main) on this screen. */}
+        <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -304,7 +307,10 @@ export default function PackOrderDetail() {
   if (order.status !== 'PLACED') {
     return (
       <div className="page">
-        <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+        {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+            Home's Pack Order tile; see that file's comment for the full reasoning. Applied
+            identically across all 3 render states (loading/blocked/main) on this screen. */}
+        <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
           This order is no longer open for packing — its status is now {order.status}.
@@ -356,7 +362,9 @@ export default function PackOrderDetail() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+      {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+          Home's Pack Order tile; see that file's comment for the full reasoning. */}
+      <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-warning">Placed</span>
 

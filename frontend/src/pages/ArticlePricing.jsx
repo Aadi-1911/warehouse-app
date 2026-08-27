@@ -253,7 +253,15 @@ export default function ArticlePricing() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<TagIcon size={20} />} title="Article Pricing" />
+      {/* tone="tile-gold" (2026-08-27) matches Home's Article Pricing tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was unset (ScreenHeader's own
+          default, accent-blue), so this is a genuinely new header colour, not a repoint of an
+          existing one. Flagged, not silently touched: this page's own "Pending" price badges and
+          its PIN-setup banner (below) still genuinely mean warning and still use --warning-*
+          amber — gold and warning already sit only ~6° apart by hue (see the same-day tile-palette
+          work in LEARNING_LOG.md), so this is the closest-reading collision of the four found this
+          task, reported to Aadi rather than decided here. */}
+      <ScreenHeader icon={<TagIcon size={20} />} tone="tile-gold" title="Article Pricing" />
 
       {factoriesError && (
         <p className="error-banner" role="alert">

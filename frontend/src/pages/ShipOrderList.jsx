@@ -49,7 +49,11 @@ export default function ShipOrderList() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<SendIcon size={20} />} tone="accent" title="Ship Order" />
+      {/* tone="tile-orange" (2026-08-27) matches Home's Ship Order tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "accent" (blue). No same-page
+          collision found: neither this screen nor ShipOrderDetail.jsx use orange/warning-amber
+          anywhere else for genuine status meaning. */}
+      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
 
       {shippedOutcome && (
         <div className="result-banner result-banner-success">

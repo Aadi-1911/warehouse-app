@@ -374,6 +374,74 @@ body {
   color: var(--purple-text);
 }
 
+/* Added 2026-08-27 — Home-tile-to-screen colour continuity: tap a coloured tile, land on a screen
+   whose own header icon carries the exact same colour, confirmed by Aadi as the intended feel.
+   Deliberately prefixed `tile-*`, NOT reusing the bare `accent`/`success`/`warning`/`purple` names
+   above, even where a screen's new colour is in the same family as one of those four (e.g. Live
+   Stock's new tile-blue vs the existing `accent` blue) — this is the exact same naming discipline
+   already established for Home's own `--tile-*` custom properties (see that comment in this
+   file's `:root` block): a shared class name would silently redefine what e.g. `.icon-mark.purple`
+   means everywhere it's already used, rather than adding a genuinely new, independent one. Reuses
+   the SAME `--tile-*` custom properties Home's tiles already read from — not a second copy of the
+   hex values — so a header and its tile can never drift out of sync with each other by construction:
+   editing a tile's colour in one place (the `:root` block above) updates its screen's header too.
+   Scoped to exactly the 8 OWNER_TILES tones (Home.jsx) — Indigo (Transfer Stock) is deliberately
+   NOT given an `.icon-mark` class here: it's a separate, older, already-settled colour decision,
+   out of scope for this pass. Four of these 8 screens ALSO use one of the FOUR original semantic
+   tones above for a real, unrelated status meaning elsewhere on the same page (Receive Stock's own
+   "Matched" banner is genuinely `success`-green; Article Pricing's "Pending" badges are genuinely
+   `warning`-amber; Bill Orders' "Cancelled"/"can't be billed" badges are genuinely `danger`-red;
+   Live Stock's "N colours" badge is genuinely `accent`-blue) — flagged for Aadi's own review rather
+   than silently touched, since changing those OTHER elements to match the header was never asked
+   for and is a separate decision. See LEARNING_LOG.md for the full per-screen reasoning. */
+.icon-mark.tile-green {
+  background: var(--tile-green-bg);
+  border: 1px solid var(--tile-green-border);
+  color: var(--tile-green-text);
+}
+
+.icon-mark.tile-gold {
+  background: var(--tile-gold-bg);
+  border: 1px solid var(--tile-gold-border);
+  color: var(--tile-gold-text);
+}
+
+.icon-mark.tile-purple {
+  background: var(--tile-purple-bg);
+  border: 1px solid var(--tile-purple-border);
+  color: var(--tile-purple-text);
+}
+
+.icon-mark.tile-pink {
+  background: var(--tile-pink-bg);
+  border: 1px solid var(--tile-pink-border);
+  color: var(--tile-pink-text);
+}
+
+.icon-mark.tile-red {
+  background: var(--tile-red-bg);
+  border: 1px solid var(--tile-red-border);
+  color: var(--tile-red-text);
+}
+
+.icon-mark.tile-orange {
+  background: var(--tile-orange-bg);
+  border: 1px solid var(--tile-orange-border);
+  color: var(--tile-orange-text);
+}
+
+.icon-mark.tile-blue {
+  background: var(--tile-blue-bg);
+  border: 1px solid var(--tile-blue-border);
+  color: var(--tile-blue-text);
+}
+
+.icon-mark.tile-grey {
+  background: var(--tile-grey-bg);
+  border: 1px solid var(--tile-grey-border);
+  color: var(--tile-grey-text);
+}
+
 .eyebrow {
   font-size: 11px;
   font-weight: 600;

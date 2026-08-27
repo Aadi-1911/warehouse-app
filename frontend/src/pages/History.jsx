@@ -109,7 +109,11 @@ export default function History() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<HistoryIcon size={20} />} title="History" />
+      {/* tone="tile-grey" (2026-08-27) matches Home's History tile exactly, per Aadi's confirmed
+          tap-a-tile/land-on-that-colour continuity — was unset (ScreenHeader's own default,
+          accent-blue). No same-page collision: none of this page's own entry-type badges
+          (purple/success/warning/accent) or actor badges (accent/indigo/teal/rose) use grey. */}
+      <ScreenHeader icon={<HistoryIcon size={20} />} tone="tile-grey" title="History" />
 
       {error && (
         <p className="error-banner" role="alert">

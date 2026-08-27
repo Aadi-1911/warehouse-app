@@ -60,7 +60,13 @@ export default function BillOrderList() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+      {/* tone="tile-red" (2026-08-27) matches Home's Bill Orders tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "accent" (blue). Flagged, not
+          silently touched: BillOrderDetail.jsx's own "Cancelled"/"can't be billed" badges and its
+          cancel button/confirm modal still genuinely mean danger and still use --danger-* red —
+          two different reds now exist across this one flow, reported to Aadi rather than decided
+          here. See LEARNING_LOG.md. */}
+      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
 
       {billedOutcome && (
         <div className="result-banner result-banner-success">
