@@ -3246,23 +3246,16 @@ body {
 }
 
 /* --- Owner Dashboard: Parties page (§8, rule 98) --- */
-/* Master-detail: a fixed left column of party cards, a flexible right column of stacked
-   .dash-card sections for the selected party — same two-pane split idiom as the layout shell
-   itself (rail + main), just one level in. */
+/* Single-column layout, 2026-08-28 (supersedes the original fixed-left-column master-detail
+   grid — see dashboard/Parties.jsx's own header comment for why, including the same-day revision
+   splitting this into two separate pieces): PartySearchBar (lookup) then PartyInfoBox (constant
+   display of the current selection) stack at the top, both full width; Sales Summary/Party
+   Payables/Orders and bills stack below them, also full width, now that there's no separate list
+   column splitting the page in two. */
 .dash-parties-layout {
   display: flex;
-  gap: var(--space-4);
-  align-items: flex-start;
-}
-
-.dash-parties-list {
-  flex: none;
-  width: 260px;
-  display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: calc(100vh - 160px);
-  overflow-y: auto;
+  gap: var(--space-4);
 }
 
 .dash-party-detail {
@@ -3273,68 +3266,71 @@ body {
   gap: var(--space-4);
 }
 
-/* §8's literal spec: "a grid of party cards ... rectangular, name + location, tap/click to
-   select." A <button> rather than a div+onClick, same reasoning as every other clickable row in
-   this app — real keyboard/focus behaviour for free. */
-.dash-party-card {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font-family: inherit;
-  cursor: pointer;
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 12px;
-  padding: 12px 14px;
+/* PartySearchBar — a real .field so it inherits the app's standard input look
+   (.field input:not([type='checkbox']) above) for free, matching every other text input rather
+   than a bespoke one just for this screen. margin-bottom:0 overrides .field's own default
+   spacing, since .dash-parties-layout's own flex gap already spaces this from its neighbours —
+   without this override the two would stack, doubling the gap. */
+.dash-party-search {
+  margin-bottom: 0;
 }
 
-.dash-party-card:hover {
-  background: var(--section-fill);
-}
-
-.dash-party-card-selected {
-  border-color: var(--text-primary);
-  background: var(--section-fill);
-}
-
-.dash-party-card-name {
+.dash-party-option-name {
   font-weight: 700;
   font-size: 13.5px;
 }
 
-.dash-party-card-location {
+.dash-party-option-location {
   margin-top: 2px;
   font-size: 12px;
 }
 
-.dash-party-header {
+/* PartyInfoBox — a CONSTANT display, not a control: no cursor:pointer, no hover state, per
+   Aadi's own correction that this box must never itself act like a button or an input (that's
+   PartySearchBar's separate job, above). justify-content: space-between is what actually spreads
+   Name/Address/GST/Phone evenly across the full width, rather than clustering them on the left
+   with empty space on the right. */
+.dash-party-summary-line {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  width: 100%;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
-/* Same shape/role-tint idiom as .dash-rail-logo's own avatar-initials tile, just larger — this is
-   the detail panel's header, not a 30px nav-rail icon. */
-.dash-party-avatar {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--accent-bg);
-  color: var(--accent-text);
-  display: grid;
-  place-items: center;
-  font-size: 16px;
+.dash-party-summary-empty {
+  justify-content: flex-start;
+  font-size: 14px;
+}
+
+.dash-party-summary-name {
+  font-size: 15px;
   font-weight: 700;
 }
 
-.dash-party-name {
-  font-size: 16px;
-  font-weight: 700;
+.dash-party-summary-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* The "Address:"/"GST:"/"Phone number:" prefixes themselves — a lighter weight/tint than the
+   value that follows, so the label reads as a label rather than more of the value. */
+.dash-party-summary-field-label {
+  font-weight: 600;
+  color: var(--text-tertiary);
 }
 
 /* GSTIN row: the copy button sits directly next to the number itself (per §8), not next to the
-   "GSTIN" label — .party-detail-label is the label, this span is the value + button. */
+   "GST:" label — .dash-party-summary-field-label is the label, this span is the label+value+
+   button together. */
 .dash-party-gstin {
   display: inline-flex;
   align-items: center;

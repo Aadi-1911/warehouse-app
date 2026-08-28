@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CopyIcon, CheckCircleIcon } from '../../components/icons';
 import { listParties, getPartyRevenue, getPartyPayable } from '../../api/parties';
 import { createPartyPayment } from '../../api/partyPayments';
@@ -10,18 +10,31 @@ import PinPrompt from '../../components/PinPrompt';
 // Owner Dashboard — Parties (07_UI_DESIGN_BRIEF.md §8's "Parties page" section, rule 98).
 // Desktop-only per rule 15 and §8's own note — no mobile/responsive version is attempted here.
 //
-// Scope is deliberately just what §8 documents: master-detail party browsing, contact info with
-// a GSTIN copy button, a per-party sales summary, and a plain orders/bills list. Party Payables
-// (a pending-amount/payment-history section) and any location-based revenue split are separate,
+// Scope is deliberately just what §8 documents: party browsing, contact info with a GSTIN copy
+// button, a per-party sales summary, and a plain orders/bills list. Party Payables (a
+// pending-amount/payment-history section) and any location-based revenue split are separate,
 // explicitly out-of-scope future tasks — not partially built here.
 //
-// Two things the task's own brief pointed at as "existing patterns to reuse" turned out not to
-// exist anywhere in the codebase yet: there is no "party card" component (Manage Parties uses a
-// flat accordion-row list, not cards — .party-option-row in New Order's picker isn't a card
-// either), and there is no GSTIN copy-to-clipboard behaviour anywhere (Manage Parties just prints
-// the number in a plain <span>). Both are built fresh here, directly off §8's own literal spec
-// ("rectangular cards, name + location" / "copies just the number, brief checkmark
-// confirmation") rather than off a precedent that isn't actually there.
+// LAYOUT, 2026-08-28 (supersedes §8's original master-detail spec — updated there too), REVISED
+// same day after Aadi's direct feedback on the first version: that version combined the search
+// bar and the selected-party display into ONE element that switched modes on click. Aadi's
+// correction — two separate, always-mounted pieces instead: PartySearchBar (a pure lookup tool,
+// sits at the top) and PartyInfoBox (a constant display of the current selection, always visible,
+// never itself becomes an input). Typing in the search bar only ever calls onSelect; it has no
+// other effect on how the info box renders. Reasoning for the underlying "drop the party-card
+// list" decision is unchanged: with only a couple of parties today the list read as mostly wasted
+// space, and it doesn't scale as a browse surface once there are dozens either — a search-first
+// control does the job in far less vertical space, freeing the reclaimed width for Sales
+// Summary/Party Payables to use at full page width instead of a cramped right column. The old
+// separate "header" (avatar+name) and "Contact" (phone/address/GSTIN) blocks are gone too, not
+// just the list — both are now redundant once PartyInfoBox carries Name/Address/GSTIN/Phone
+// together; keeping either would mean showing the same fields twice, right next to each other,
+// for no reason.
+//
+// There is no GSTIN copy-to-clipboard behaviour anywhere else in the codebase (Manage Parties
+// just prints the number in a plain <span>) — built fresh here, per §8's literal spec ("copies
+// just the number, brief checkmark confirmation"), now living inside PartyInfoBox rather than a
+// separate Contact card.
 //
 // The sales summary calls the real shared calculation (utils/revenue.js's computeRevenue, via
 // the new GET /api/parties/:id/revenue) — no revenue math of any kind lives in this file. "Last
@@ -72,13 +85,190 @@ function todayIso() {
   return `${year}-${month}-${day}`;
 }
 
-function initialsOf(name) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('');
+// Two SEPARATE, always-mounted pieces — not one control switching modes, per Aadi's own direct
+// feedback on the first version of this screen (which did combine them into one element). The
+// search bar is purely a lookup tool; the info box is a constant display of whichever party is
+// currently selected and never itself becomes an input. Typing in the search bar filters and
+// eventually calls onSelect — it never touches how the info box renders except through that.
+//
+// Deliberately NOT built on top of components/Combobox.jsx despite the obvious surface-level
+// similarity (live-filtering text input + dropdown) — investigated first, not assumed either way.
+// Combobox's own input permanently displays `option.name` as its value once something is picked,
+// because Combobox IS the one place a selected value is shown. PartySearchBar's job here is
+// narrower and different: it's a lookup box, not the display of the current selection (that's
+// PartyInfoBox's job, a separate element) — so after a pick, it clears back to empty and ready
+// for the next search, rather than parking the last result's name in it. Reuses Combobox's
+// proven interaction mechanics instead of re-deriving them (outside-click closes without
+// selecting, the same .combobox/.combobox-dropdown/.combobox-option CSS classes), since those
+// parts really are the same problem Combobox already solved.
+function PartySearchBar({ parties, selectedPartyId, onSelect }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const containerRef = useRef(null);
+
+  // Filters by NAME ONLY, per Aadi's explicit instruction — not phone/GSTIN, even though both are
+  // visible data on this same screen. Empty query shows the full list (same "browse everything"
+  // capability the old list gave for free), narrowing only once something is actually typed.
+  const trimmed = query.trim();
+  const filteredParties = trimmed
+    ? parties.filter((p) => p.name.toLowerCase().includes(trimmed.toLowerCase()))
+    : parties;
+
+  // Clears the query too, not just closes the dropdown — this box never keeps a stale result
+  // sitting in it (see header comment: it's a lookup tool, not a display of the current pick).
+  function closeDropdown() {
+    setOpen(false);
+    setQuery('');
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        closeDropdown();
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  function pick(party) {
+    onSelect(party.id);
+    closeDropdown();
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      setHighlightedIndex((i) => Math.min(i + 1, filteredParties.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      setHighlightedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!open) {
+        setOpen(true);
+        return;
+      }
+      const party = filteredParties[highlightedIndex];
+      if (party) pick(party);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDropdown();
+    }
+  }
+
+  return (
+    <div className="field combobox dash-party-search" ref={containerRef}>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+          setHighlightedIndex(0);
+        }}
+        onFocus={() => {
+          setOpen(true);
+          setHighlightedIndex(0);
+        }}
+        onKeyDown={handleKeyDown}
+        placeholder="Search parties by name…"
+        aria-label="Search parties"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        autoComplete="off"
+      />
+      {open && (
+        <ul className="combobox-dropdown" role="listbox">
+          {filteredParties.length === 0 ? (
+            <li className="combobox-empty-row">
+              {parties.length === 0 ? 'No parties yet.' : `No parties match "${trimmed}".`}
+            </li>
+          ) : (
+            filteredParties.map((p, index) => (
+              <li
+                key={p.id}
+                role="option"
+                aria-selected={p.id === selectedPartyId}
+                className={`combobox-option${index === highlightedIndex ? ' combobox-option-highlighted' : ''}${p.id === selectedPartyId ? ' combobox-option-selected' : ''}`}
+                // onMouseDown (not onClick) + preventDefault, same reason as Combobox's own
+                // dropdown rows: this fires before the input's blur, so the pick registers before
+                // the outside-click handler would otherwise close the dropdown first.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(p);
+                }}
+                onMouseEnter={() => setHighlightedIndex(index)}
+              >
+                <div className="dash-party-option-name">{p.name}</div>
+                {p.location && <div className="muted dash-party-option-location">{p.location}</div>}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// The constant, always-visible display of whichever party is currently selected — a plain,
+// non-interactive box, not a button and not a second copy of the search input. Labels ("Address:"
+// / "GST:" / "Phone number:") are literal per Aadi's own spec; Name gets no label since it's
+// self-evident as the bold, first field. justify-content: space-between (in CSS) is what actually
+// spreads the fields across the full width — this component just renders them as flex children.
+function PartyInfoBox({ party, copiedGstin, copyError, onCopyGstin }) {
+  if (!party) {
+    return <div className="dash-party-summary-line dash-party-summary-empty muted">No party selected.</div>;
+  }
+
+  return (
+    <>
+      <div className="dash-party-summary-line">
+        <span className="dash-party-summary-name">{party.name}</span>
+        {party.address && (
+          <span className="dash-party-summary-field">
+            <span className="dash-party-summary-field-label">Address:</span> {party.address}
+          </span>
+        )}
+        {party.gstNo && (
+          <span className="dash-party-summary-field dash-party-gstin">
+            <span className="dash-party-summary-field-label">GST:</span> {party.gstNo}
+            <button
+              type="button"
+              className="dash-party-copy-btn"
+              onClick={() => onCopyGstin(party.gstNo)}
+              aria-label="Copy GSTIN"
+            >
+              {copiedGstin ? <CheckCircleIcon size={14} /> : <CopyIcon size={14} />}
+            </button>
+            {copiedGstin && <span className="dash-party-copied-text">Copied</span>}
+          </span>
+        )}
+        {party.contact && (
+          <span className="dash-party-summary-field">
+            <span className="dash-party-summary-field-label">Phone number:</span> {party.contact}
+          </span>
+        )}
+      </div>
+      {copyError && (
+        <p className="dash-party-copy-error" role="alert">
+          {copyError}
+        </p>
+      )}
+    </>
+  );
 }
 
 export default function Parties() {
@@ -306,82 +496,26 @@ export default function Parties() {
 
   return (
     <div className="dash-parties-layout">
-      <div className="dash-parties-list">
-        {partiesError && (
-          <p className="error-banner" role="alert">
-            Could not refresh parties: {partiesError}
-          </p>
-        )}
-        {sortedParties.length === 0 ? (
-          <p className="muted dash-empty">No parties yet.</p>
-        ) : (
-          sortedParties.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`dash-party-card${p.id === selectedPartyId ? ' dash-party-card-selected' : ''}`}
-              onClick={() => handleSelectParty(p.id)}
-            >
-              <div className="dash-party-card-name">{p.name}</div>
-              {p.location && <div className="muted dash-party-card-location">{p.location}</div>}
-            </button>
-          ))
-        )}
-      </div>
+      {partiesError && (
+        <p className="error-banner" role="alert">
+          Could not refresh parties: {partiesError}
+        </p>
+      )}
+
+      <PartySearchBar parties={sortedParties} selectedPartyId={selectedPartyId} onSelect={handleSelectParty} />
+
+      <PartyInfoBox
+        party={selectedParty}
+        copiedGstin={copiedGstin}
+        copyError={copyError}
+        onCopyGstin={handleCopyGstin}
+      />
 
       <div className="dash-party-detail">
         {!selectedParty ? (
           <p className="muted dash-empty">Select a party to view details.</p>
         ) : (
           <>
-            <div className="dash-card dash-party-header">
-              <div className="dash-party-avatar">{initialsOf(selectedParty.name)}</div>
-              <div>
-                <div className="dash-party-name">{selectedParty.name}</div>
-                {selectedParty.location && <div className="muted">{selectedParty.location}</div>}
-              </div>
-            </div>
-
-            <div className="dash-card">
-              {selectedParty.contact && (
-                <div className="party-detail-row">
-                  <span className="party-detail-label">Phone</span>
-                  <span>{selectedParty.contact}</span>
-                </div>
-              )}
-              {selectedParty.address && (
-                <div className="party-detail-row">
-                  <span className="party-detail-label">Address</span>
-                  <span>{selectedParty.address}</span>
-                </div>
-              )}
-              {selectedParty.gstNo && (
-                <div className="party-detail-row">
-                  <span className="party-detail-label">GSTIN</span>
-                  <span className="dash-party-gstin">
-                    {selectedParty.gstNo}
-                    <button
-                      type="button"
-                      className="dash-party-copy-btn"
-                      onClick={() => handleCopyGstin(selectedParty.gstNo)}
-                      aria-label="Copy GSTIN"
-                    >
-                      {copiedGstin ? <CheckCircleIcon size={14} /> : <CopyIcon size={14} />}
-                    </button>
-                    {copiedGstin && <span className="dash-party-copied-text">Copied</span>}
-                  </span>
-                  {copyError && (
-                    <span className="dash-party-copy-error" role="alert">
-                      {copyError}
-                    </span>
-                  )}
-                </div>
-              )}
-              {!selectedParty.contact && !selectedParty.address && !selectedParty.gstNo && (
-                <p className="muted">No additional details on file.</p>
-              )}
-            </div>
-
             <div className="dash-card dash-party-summary">
               <h2 className="dash-section-title">Sales summary</h2>
               <div className="dash-party-chip-row">
