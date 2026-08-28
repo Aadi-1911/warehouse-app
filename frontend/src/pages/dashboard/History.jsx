@@ -7,13 +7,16 @@ import { listProducts, getValidColors } from '../../api/products';
 import { createTransactionCorrection } from '../../api/transactionCorrections';
 import { createTransferCorrection } from '../../api/transferCorrections';
 import PinPrompt from '../../components/PinPrompt';
+import HistoryGroupingDrilldown from '../../components/HistoryGroupingDrilldown';
 import {
   GROUP_MODES,
-  articleGroupFor,
-  locationGroupFor,
-  buildGroups,
-  buildPersonGroups,
   buildDayGroups,
+  entriesForPerson,
+  entriesForLocation,
+  entriesForMonth,
+  entriesForBiweekly,
+  entriesForBundleIds,
+  filterByDateRange,
 } from '../../utils/historyGrouping';
 
 // Owner Dashboard — History (07_UI_DESIGN_BRIEF.md §8's "History page" section, rules 58 and 70).
@@ -156,11 +159,28 @@ export default function History() {
   const [transferDraft, setTransferDraft] = useState(null);
   const [transferConfirmSubmitting, setTransferConfirmSubmitting] = useState(false);
 
-  // 'chronological' is the default, matching mobile's own default — the other three modes
-  // re-bucket the SAME `entries` array client-side; switching between them never re-fetches and
-  // never touches correction state (correctingId/draft/etc are keyed off the entry itself, not
-  // off which bucket it's currently rendered under).
+  // 'chronological' is the default, matching mobile's own default. The other five modes now
+  // drill down to one specific value first (2026-08-29, see mobile History.jsx's own DRILL-DOWN
+  // comment) before showing anything; switching between modes never re-fetches and never touches
+  // correction state (correctingId/draft/etc are keyed off the entry itself, not off which
+  // bucket/filter it's currently rendered under).
   const [groupMode, setGroupMode] = useState('chronological');
+  const [drillValue, setDrillValue] = useState(null);
+  const [articleBundleIds, setArticleBundleIds] = useState(null);
+  // True for exactly the gap between picking a specific article and its bundleIds actually
+  // arriving — see mobile History.jsx's own comment and HistoryGroupingDrilldown's header comment.
+  const [articleResolving, setArticleResolving] = useState(false);
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+
+  function handleGroupModeChange(mode) {
+    setGroupMode(mode);
+    setDrillValue(null);
+    setArticleBundleIds(null);
+    setArticleResolving(false);
+    setDateStart('');
+    setDateEnd('');
+  }
 
   function loadHistory() {
     setStatus('loading');
@@ -432,14 +452,22 @@ export default function History() {
     }
   }
 
-  // Grouping computed for whichever mode is active — logic shared with mobile's History.jsx via
-  // utils/historyGrouping.js (see this file's header comment for why the RULES are shared but the
-  // rendering below isn't). Cheap to compute all branches unconditionally since `entries` is at
-  // most a few hundred rows and only one branch's OUTPUT is ever used per render.
+  // Chronological's own day grouping — unaffected by the drill-down below, exactly as before.
   const dayGroups = buildDayGroups(entries);
-  const personGroups = buildPersonGroups(entries);
-  const articleGroups = buildGroups(entries, articleGroupFor);
-  const locationGroups = buildGroups(entries, locationGroupFor);
+
+  // Drill-down narrowing for every other mode — logic shared with mobile's History.jsx via
+  // utils/historyGrouping.js's entriesForX functions (see that file's DRILL-DOWN section and
+  // mobile History.jsx's own header comment for the full reasoning). `null` means "no value
+  // picked yet," distinct from a real `[]` (a value picked with zero matches).
+  let drilldownEntries = null;
+  if (groupMode === 'person' && drillValue) drilldownEntries = entriesForPerson(entries, drillValue);
+  else if (groupMode === 'location' && drillValue) drilldownEntries = entriesForLocation(entries, drillValue);
+  else if (groupMode === 'month' && drillValue) drilldownEntries = entriesForMonth(entries, drillValue);
+  else if (groupMode === 'biweekly' && drillValue) drilldownEntries = entriesForBiweekly(entries, drillValue);
+  else if (groupMode === 'article' && articleBundleIds) drilldownEntries = entriesForBundleIds(entries, articleBundleIds);
+
+  const finalEntries = drilldownEntries ? filterByDateRange(drilldownEntries, dateStart, dateEnd) : null;
+  const finalDayGroups = finalEntries ? buildDayGroups(finalEntries) : [];
 
   // One entry's row + its Correct affordance and (when open) correction form — extracted so every
   // "Group by" mode renders an IDENTICAL row rather than four hand-copied versions. Stays a plain
@@ -868,7 +896,7 @@ export default function History() {
           an empty feed, so the chosen mode doesn't silently reset underneath someone. */}
       <label className="field">
         <span className="field-label">Group by</span>
-        <select value={groupMode} onChange={(e) => setGroupMode(e.target.value)}>
+        <select value={groupMode} onChange={(e) => handleGroupModeChange(e.target.value)}>
           {GROUP_MODES.map((m) => (
             <option key={m.value} value={m.value}>
               {m.label}
@@ -877,30 +905,37 @@ export default function History() {
         </select>
       </label>
 
+      {groupMode !== 'chronological' && (
+        <HistoryGroupingDrilldown
+          key={groupMode}
+          groupMode={groupMode}
+          entries={entries}
+          locations={locations}
+          factories={factories}
+          selectedValue={drillValue}
+          onSelectValue={setDrillValue}
+          onArticleResolved={({ bundleIds }) => setArticleBundleIds(bundleIds)}
+          onArticleResolvingChange={setArticleResolving}
+          onArticleCleared={() => setArticleBundleIds(null)}
+          dateStart={dateStart}
+          dateEnd={dateEnd}
+          onDateStartChange={setDateStart}
+          onDateEndChange={setDateEnd}
+        />
+      )}
+
       {entries.length === 0 ? (
         <p className="muted dash-empty">Nothing recorded yet.</p>
       ) : groupMode === 'chronological' ? (
         dayGroups.map((day) => renderSection(day.heading, day.heading, day.entries))
-      ) : groupMode === 'person' ? (
-        personGroups.map((group) =>
-          renderSection(
-            group.actorName,
-            <span
-              className="badge history-actor-badge"
-              style={{
-                background: actorBadgeColorFor(group.actorName).bg,
-                color: actorBadgeColorFor(group.actorName).text,
-              }}
-            >
-              {group.actorName}
-            </span>,
-            group.entries
-          )
-        )
-      ) : groupMode === 'article' ? (
-        articleGroups.map((group) => renderSection(group.key, group.label, group.entries))
+      ) : groupMode === 'article' && articleResolving ? (
+        <p className="muted dash-empty">Loading…</p>
+      ) : finalEntries === null ? (
+        <p className="muted dash-empty">Pick a value above to see its history.</p>
+      ) : finalDayGroups.length === 0 ? (
+        <p className="muted dash-empty">No entries match this filter.</p>
       ) : (
-        locationGroups.map((group) => renderSection(group.key, group.label, group.entries))
+        finalDayGroups.map((day) => renderSection(day.heading, day.heading, day.entries))
       )}
     </>
   );

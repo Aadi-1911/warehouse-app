@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
 import { HistoryIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
+import HistoryGroupingDrilldown from '../components/HistoryGroupingDrilldown';
 import { listHistory } from '../api/history';
+import { listLocations } from '../api/locations';
+import { listFactories } from '../api/factories';
 import { actorBadgeColorFor } from '../utils/avatar';
 import {
   GROUP_MODES,
-  articleGroupFor,
-  locationGroupFor,
-  buildGroups,
-  buildPersonGroups,
   buildDayGroups,
+  entriesForPerson,
+  entriesForLocation,
+  entriesForMonth,
+  entriesForBiweekly,
+  entriesForBundleIds,
+  filterByDateRange,
 } from '../utils/historyGrouping';
 
 // History — a unified, read-only feed of what's happened across Orders, Transfers and Good
@@ -43,6 +48,19 @@ import {
 // destination-bucketing judgment call) now live in utils/historyGrouping.js, shared with
 // dashboard/History.jsx so the two screens' rules can't quietly drift apart. See that file's own
 // comments for the full reasoning. This screen only imports them and handles its own rendering.
+//
+// === DRILL-DOWN (2026-08-29) ===
+//
+// Every mode except Chronological now asks for one SPECIFIC value (a person, a resolved article,
+// a location, a month, a bi-weekly period) plus an optional date range, before showing anything —
+// replacing the old "every bucket at once, scrollable" behaviour, which Aadi flagged as not going
+// to stay usable as History grows. Chronological is deliberately untouched: it still just renders
+// every day, no picker. <HistoryGroupingDrilldown> (shared with dashboard/History.jsx) owns the
+// picker widgets themselves; this file only holds the "which value is currently picked" state and
+// derives the final filtered list via historyGrouping.js's entriesForX functions, then re-uses
+// buildDayGroups on THAT narrowed list — the exact same day-sub-header rendering Chronological
+// already had, just fed a smaller array. See HistoryGroupingDrilldown.jsx's own header comment for
+// why Article's resolution goes through a Product's bundleIds rather than a bare articleNo string.
 
 // Badge COLOUR per type. Colours follow 07_UI_DESIGN_BRIEF.md §3.4's own semantic role table
 // rather than being picked freely: Order = purple, forward progress = success/green, a
@@ -139,9 +157,40 @@ export default function History() {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   // 'chronological' is the default per this task's own spec — the existing day-grouped view,
-  // completely unchanged in behaviour. The other three modes re-bucket the SAME `entries` array;
-  // switching between all four never triggers a re-fetch.
+  // completely unchanged in behaviour. The other five modes now drill down to one specific value
+  // (see DRILL-DOWN section above) before showing anything.
   const [groupMode, setGroupMode] = useState('chronological');
+
+  // Locations/Factories — needed only by the drill-down controls (Location's dropdown, Article's
+  // disambiguation chip labels), fetched once up front the same non-fatal way dashboard/History.jsx
+  // already fetches them for its own correction form: a failure here shouldn't block the main feed,
+  // it would just leave those two pickers with nothing until a retry succeeds.
+  const [locations, setLocations] = useState([]);
+  const [factories, setFactories] = useState([]);
+
+  // --- Drill-down selection state. `drillValue` holds the picked Person/Location/Month/Bi-weekly
+  // value (a plain string); Article is separate (`articleBundleIds`) because what actually filters
+  // entries for Article is a resolved Product's bundleIds, not the typed string itself — see
+  // HistoryGroupingDrilldown's header comment. All four reset together on every mode switch so a
+  // stale selection from one mode can never silently carry into another.
+  const [drillValue, setDrillValue] = useState(null);
+  const [articleBundleIds, setArticleBundleIds] = useState(null);
+  // True for exactly the gap between picking a specific article and its bundleIds actually
+  // arriving (a real GET /api/products/:id/valid-colors round-trip) — see
+  // HistoryGroupingDrilldown's own comment for why this can't just be inferred from
+  // articleBundleIds staying null.
+  const [articleResolving, setArticleResolving] = useState(false);
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+
+  function handleGroupModeChange(mode) {
+    setGroupMode(mode);
+    setDrillValue(null);
+    setArticleBundleIds(null);
+    setArticleResolving(false);
+    setDateStart('');
+    setDateEnd('');
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -162,19 +211,41 @@ export default function History() {
     };
   }, []);
 
-  // Group into day sections purely for display — logic lives in utils/historyGrouping.js,
-  // shared with dashboard/History.jsx. Only built/used when groupMode is 'chronological' — the
-  // default and only mode with a genuinely different SHAPE of grouping (nested under a calendar
-  // boundary, not a single flat bucket list).
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listLocations(), listFactories()])
+      .then(([locs, facs]) => {
+        if (cancelled) return;
+        setLocations(locs);
+        setFactories(facs);
+      })
+      .catch(() => {
+        // Non-fatal — see the state declarations' own comment above.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Group into day sections purely for display — logic lives in utils/historyGrouping.js. Used
+  // as-is for Chronological (every day, no drill-down); every other mode instead narrows `entries`
+  // down to the picked value first (drilldownEntries below) and re-uses this SAME function on that
+  // smaller array, which is what still gives every drilled-down result its own day sub-headers.
   const days = groupMode === 'chronological' ? buildDayGroups(entries) : [];
 
-  // Person grouping needs no fallback bucket (every entry type already carries actorName) and no
-  // article/location-style key/label split — the actor's own NAME is both, and the heading is the
-  // coloured badge itself rather than plain text.
-  const personGroups = groupMode === 'person' ? buildPersonGroups(entries) : [];
+  // The picked-value narrowing for every non-Chronological mode. `null` specifically means "no
+  // value picked yet" (as opposed to `[]`, a real value picked with zero matching entries) — that
+  // distinction is what tells the render below whether to show the "pick a value" prompt or an
+  // actual "nothing matches" empty state.
+  let drilldownEntries = null;
+  if (groupMode === 'person' && drillValue) drilldownEntries = entriesForPerson(entries, drillValue);
+  else if (groupMode === 'location' && drillValue) drilldownEntries = entriesForLocation(entries, drillValue);
+  else if (groupMode === 'month' && drillValue) drilldownEntries = entriesForMonth(entries, drillValue);
+  else if (groupMode === 'biweekly' && drillValue) drilldownEntries = entriesForBiweekly(entries, drillValue);
+  else if (groupMode === 'article' && articleBundleIds) drilldownEntries = entriesForBundleIds(entries, articleBundleIds);
 
-  const articleGroups = groupMode === 'article' ? buildGroups(entries, articleGroupFor) : [];
-  const locationGroups = groupMode === 'location' ? buildGroups(entries, locationGroupFor) : [];
+  const finalEntries = drilldownEntries ? filterByDateRange(drilldownEntries, dateStart, dateEnd) : null;
+  const finalDayGroups = finalEntries ? buildDayGroups(finalEntries) : [];
 
   return (
     <div className="page">
@@ -195,7 +266,7 @@ export default function History() {
           empty avoids the control silently resetting itself underneath someone. */}
       <label className="field">
         <span className="field-label">Group by</span>
-        <select value={groupMode} onChange={(e) => setGroupMode(e.target.value)}>
+        <select value={groupMode} onChange={(e) => handleGroupModeChange(e.target.value)}>
           {GROUP_MODES.map((m) => (
             <option key={m.value} value={m.value}>
               {m.label}
@@ -203,6 +274,25 @@ export default function History() {
           ))}
         </select>
       </label>
+
+      {groupMode !== 'chronological' && (
+        <HistoryGroupingDrilldown
+          key={groupMode}
+          groupMode={groupMode}
+          entries={entries}
+          locations={locations}
+          factories={factories}
+          selectedValue={drillValue}
+          onSelectValue={setDrillValue}
+          onArticleResolved={({ bundleIds }) => setArticleBundleIds(bundleIds)}
+          onArticleResolvingChange={setArticleResolving}
+          onArticleCleared={() => setArticleBundleIds(null)}
+          dateStart={dateStart}
+          dateEnd={dateEnd}
+          onDateStartChange={setDateStart}
+          onDateEndChange={setDateEnd}
+        />
+      )}
 
       {status !== 'loaded' ? (
         <p className="muted centered-empty-state">Loading…</p>
@@ -212,34 +302,15 @@ export default function History() {
         days.map((day) => (
           <HistorySection key={day.heading} heading={day.heading} entries={day.entries} />
         ))
-      ) : groupMode === 'person' ? (
-        personGroups.map((group) => (
-          <HistorySection
-            key={group.actorName}
-            heading={
-              // The exact same pill each row's own actor line renders — see HistorySection's own
-              // comment for why this satisfies "reuses... existing colour-coded name-badge" as
-              // literally as possible, rather than a new, similar-but-different header style.
-              <span
-                className="badge history-actor-badge"
-                style={{
-                  background: actorBadgeColorFor(group.actorName).bg,
-                  color: actorBadgeColorFor(group.actorName).text,
-                }}
-              >
-                {group.actorName}
-              </span>
-            }
-            entries={group.entries}
-          />
-        ))
-      ) : groupMode === 'article' ? (
-        articleGroups.map((group) => (
-          <HistorySection key={group.key} heading={group.label} entries={group.entries} />
-        ))
+      ) : groupMode === 'article' && articleResolving ? (
+        <p className="muted centered-empty-state">Loading…</p>
+      ) : finalEntries === null ? (
+        <p className="muted centered-empty-state">Pick a value above to see its history.</p>
+      ) : finalDayGroups.length === 0 ? (
+        <p className="muted centered-empty-state">No entries match this filter.</p>
       ) : (
-        locationGroups.map((group) => (
-          <HistorySection key={group.key} heading={group.label} entries={group.entries} />
+        finalDayGroups.map((day) => (
+          <HistorySection key={day.heading} heading={day.heading} entries={day.entries} />
         ))
       )}
     </div>

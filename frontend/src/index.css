@@ -2508,6 +2508,14 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* Drill-down picker (2026-08-29) — the value dropdown/article-search plus its optional date range,
+   rendered above the filtered result for every mode but Chronological. Just a bit of breathing
+   room before the first day-section starts; the field/field-row/chip-row/lookup-banner classes
+   inside it are all pre-existing generic form styles, nothing bespoke needed here. */
+.history-drilldown {
+  margin-bottom: 8px;
+}
+
 .history-row-top {
   display: flex;
   align-items: center;
