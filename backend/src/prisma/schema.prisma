@@ -400,6 +400,11 @@ model Transfer {
   userId         String
   user           User         @relation(fields: [userId], references: [id])
   note           String?
+  // Snapshots Product.name at transfer time (added 2026-08-28) — same reasoning and same
+  // nullable/fallback shape as OrderLineItem.productNameSnapshot; see that field's comment.
+  // A Transfer is an immutable historical event ("this moved, then"), so it must read the same
+  // way forever regardless of a later rename.
+  productNameSnapshot String?
   createdAt      DateTime     @default(now())
 
   transactions   Transaction[]
@@ -530,6 +535,11 @@ model PartyStockReturn {
   note          String?
   userId        String
   user          User          @relation(fields: [userId], references: [id])
+  // Snapshots Product.name at return time (added 2026-08-28) — same reasoning and same
+  // nullable/fallback shape as OrderLineItem.productNameSnapshot; see that field's comment.
+  // A return is explicitly "a simple event log" (see this model's own header), so like every
+  // other logged event here it must keep reading as it did when it happened.
+  productNameSnapshot String?
   createdAt     DateTime      @default(now())
 
   transactions  Transaction[]
@@ -598,6 +608,19 @@ model OrderLineItem {
   // is what keeps a cancelled line legible in History and on screen rather than silently zeroed.
   isCancelled      Boolean           @default(false)
   priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
+  // Snapshots Product.name at order time (added 2026-08-28, alongside the article-rename feature).
+  // Exactly the same principle priceAtOrder above already applies to price, extended to the name:
+  // renaming an article must never retroactively change how an order placed BEFORE the rename
+  // reads. Article NUMBER is deliberately not snapshotted alongside it — articleNo is immutable
+  // after creation (productController.js rejects any attempt to patch it), so it has nothing to
+  // drift from; name is the only mutable identifying field, which is why it alone needs this.
+  //
+  // NULLABLE, and deliberately so: every line created before this field existed has no recorded
+  // name and no way to recover one, so those rows stay null and fall back to the live
+  // Product.name at read time (lineItemToResponse). That fallback is a disclosed limitation for
+  // pre-2026-08-28 rows only — never a silent one — not a design preference. Rows created from
+  // here on always carry a real snapshot and are fully immune to a later rename.
+  productNameSnapshot String?
 
   adjustments      OrderAdjustment[]
   transactions     Transaction[]     // billing-time STOCK_OUT rows that fulfilled this line (Transaction.orderLineItemId). Written at Packed → Billed, not at packing — see 03_DATABASE_SCHEMA.md §2's "Hard rules to enforce".

@@ -15,6 +15,7 @@ const LINE_ITEM_SELECT = {
   qtySetsPacked: true,
   isCancelled: true,
   priceAtOrder: true,
+  productNameSnapshot: true,
   bundle: {
     select: {
       // isKids + sizes are the piecesPerSetFor shape (utils/piecesPerSet.js) — needed so a
@@ -57,7 +58,12 @@ function lineItemToResponse(li) {
     bundleId: li.bundleId,
     productId: li.bundle.product.id,
     productArticleNo: li.bundle.product.articleNo,
-    productName: li.bundle.product.name,
+    // The snapshot taken when this line was created, falling back to the live Product.name only
+    // for lines that predate productNameSnapshot existing (2026-08-28) and therefore have no
+    // recorded name to recover. Post-fix lines are immune to a later rename; pre-fix lines still
+    // follow the current name, which is the only value that was ever available for them — a
+    // disclosed limitation, see the schema comment on OrderLineItem.productNameSnapshot.
+    productName: li.productNameSnapshot ?? li.bundle.product.name,
     // Flattened alongside the other product* fields above, same reasoning — lets a client
     // reconstruct { isKids, sizes } and call its own piecesPerSetFor without a second request.
     productIsKids: li.bundle.product.isKids,
@@ -137,7 +143,7 @@ async function createOrder(req, res) {
   const bundleIds = [...new Set(lineItems.map((li) => li.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true } } },
+    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
@@ -145,6 +151,8 @@ async function createOrder(req, res) {
   // moment — never trusted from the request body, same principle as Transaction.
   // costPriceSnapshot. Resolved fully before any DB write, so a bad bundleId or an unpriced
   // product anywhere in the array rejects the whole request with zero rows created.
+  // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, for
+  // exactly the same reason — a later rename must not rewrite what this order said it was for.
   const resolvedLineItems = [];
   for (const li of lineItems) {
     const bundle = bundleById.get(li.bundleId);
@@ -163,6 +171,7 @@ async function createOrder(req, res) {
       bundleId: li.bundleId,
       qtySetsRequested: li.qtySetsRequested,
       priceAtOrder: bundle.product.sellingPrice,
+      productNameSnapshot: bundle.product.name,
     });
   }
 
@@ -878,12 +887,15 @@ async function updateOrderLines(req, res) {
 
   // priceAtOrder for a new line is resolved HERE, from Product.sellingPrice at this exact moment
   // — never trusted from the request body, same principle createOrder already applies.
+  // productNameSnapshot (2026-08-28) rides along on the identical read, same as createOrder:
+  // a line added to an existing order is still a NEW line, so it snapshots the name as of now,
+  // not as of whenever the order it's joining was originally placed.
   const resolvedNewLines = [];
   if (hasNewLines) {
     const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
     const bundles = await prisma.bundle.findMany({
       where: { id: { in: bundleIds } },
-      select: { id: true, product: { select: { sellingPrice: true } } },
+      select: { id: true, product: { select: { sellingPrice: true, name: true } } },
     });
     const bundleById = new Map(bundles.map((b) => [b.id, b]));
     for (const nl of newLines) {
@@ -899,7 +911,12 @@ async function updateOrderLines(req, res) {
           `The article for bundle ${nl.bundleId} has no selling price set yet and cannot be ordered`
         );
       }
-      resolvedNewLines.push({ bundleId: nl.bundleId, qtySetsRequested: nl.qtySetsRequested, priceAtOrder: bundle.product.sellingPrice });
+      resolvedNewLines.push({
+        bundleId: nl.bundleId,
+        qtySetsRequested: nl.qtySetsRequested,
+        priceAtOrder: bundle.product.sellingPrice,
+        productNameSnapshot: bundle.product.name,
+      });
     }
   }
 
@@ -926,7 +943,13 @@ async function updateOrderLines(req, res) {
 
     for (const nl of resolvedNewLines) {
       const created = await tx.orderLineItem.create({
-        data: { orderId: id, bundleId: nl.bundleId, qtySetsRequested: nl.qtySetsRequested, priceAtOrder: nl.priceAtOrder },
+        data: {
+          orderId: id,
+          bundleId: nl.bundleId,
+          qtySetsRequested: nl.qtySetsRequested,
+          priceAtOrder: nl.priceAtOrder,
+          productNameSnapshot: nl.productNameSnapshot,
+        },
       });
       await tx.orderAdjustment.create({
         data: {

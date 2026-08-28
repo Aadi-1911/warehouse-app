@@ -239,7 +239,21 @@ async function reactivateProduct(req, res) {
   res.json(product);
 }
 
-const PATCHABLE_FIELDS = ['categoryId', 'isKids', 'costPrice', 'sellingPrice'];
+// `name` added 2026-08-28 (article rename). It sits with categoryId/isKids as an ordinary
+// non-price attribute edit, NOT with costPrice/sellingPrice: rule 71's PIN gate is specifically
+// about money, and a name carries no financial meaning. The route's own requireRole('OWNER')
+// still applies to it unconditionally (see routes/products.js) — that's the established
+// convention every other non-price Product edit already follows, confirmed by reading the route
+// chain rather than assumed. requirePinForPriceEdits inspects the BODY for price fields only, so
+// a name-only PATCH correctly passes through it without ever prompting for a PIN.
+//
+// Renaming is safe to allow freely precisely because it can no longer rewrite history: every
+// Order line, Transfer and Return created from 2026-08-28 onward snapshots the name at creation
+// (productNameSnapshot), so this edit only ever changes go-forward display.
+//
+// articleNo stays permanently un-patchable (rejected explicitly below) — it's the article's
+// identity, unique per Factory, and is what every historical record is keyed to reading by.
+const PATCHABLE_FIELDS = ['categoryId', 'isKids', 'costPrice', 'sellingPrice', 'name'];
 
 // PATCH /api/products/:id — OWNER only always (📌); PIN additionally required when the body
 // touches costPrice/sellingPrice (enforced by the requirePinForPriceEdits middleware in the
@@ -270,6 +284,16 @@ async function updateProduct(req, res) {
   // "pending" states), there's no valid empty value to patch it to.
   if ('categoryId' in data && !data.categoryId) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'categoryId cannot be empty');
+  }
+  // Same required-field reasoning as categoryId above: Product.name is non-nullable in the
+  // schema, so there's no valid empty value. Trimmed before the length check AND before writing,
+  // so " " is rejected rather than silently stored as a blank-looking name, and a name with
+  // accidental padding is normalised the same way createProduct already normalises its own.
+  if ('name' in data) {
+    data.name = String(data.name ?? '').trim();
+    if (!data.name) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+    }
   }
 
   const existing = await prisma.product.findUnique({ where: { id } });

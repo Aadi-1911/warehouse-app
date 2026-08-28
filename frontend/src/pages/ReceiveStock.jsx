@@ -219,6 +219,42 @@ export default function ReceiveStock() {
   const [newSellingPrice, setNewSellingPrice] = useState('');
   const [priceEditSuccess, setPriceEditSuccess] = useState(null);
 
+  // --- Correct this article's NAME (2026-08-28), for an already-existing matched article.
+  //
+  // IMMEDIATE, not deferred to "Save receipt" — and deliberately NOT by copying the price case's
+  // immediacy, whose justification does not transfer here. Re-derived from scratch:
+  //
+  //   The price path commits immediately because it exercises a PIN — a point-in-time grant of
+  //   authority that must not be held in browser state until some later, unrelated button. A
+  //   name edit involves no PIN at all (rule 71 is about money; `name` is an ordinary OWNER-only
+  //   attribute edit alongside categoryId/isKids), so that reasoning simply doesn't apply.
+  //
+  //   The DEFERRED things on this screen (a pending Product, a pending Colour, a staged
+  //   reactivation) all share one property: they describe intent about THIS RECEIPT, and are
+  //   meaningless if the receipt is abandoned. Reactivating an archived article only makes sense
+  //   if stock actually arrives into it, which is exactly why it waits.
+  //
+  //   A wrong name is in neither category. It's a correction to an already-real, already-shared
+  //   record that is wrong independently of whether this receipt is ever saved. Deferring it
+  //   would mean: notice the typo, fix it, then abandon the receipt for an unrelated reason
+  //   (wrong location, wrong factory) — and silently lose a correction that was valid on its own
+  //   terms. Committing immediately means the fix stands regardless, which is the honest
+  //   behaviour, and it's also why this needs no line-level staging plumbing at all.
+  //
+  // Only offered for an EXISTING matched article. A brand-new article still being created sets
+  // its name correctly the first time through the create form, so there is nothing to correct.
+  // OWNER-only for the same hard reason the price form is: PATCH /api/products/:id is
+  // requireRole('OWNER') unconditionally, so a STAFF-rendered version of this could never succeed.
+  // Named `correctedName`, deliberately not `newArticleName` — that name is already taken by the
+  // NEW-article create form's own field above (line ~177). Two different concepts: one names an
+  // article being brought into existence, this one corrects the name of an article that already
+  // exists. Reusing the identifier would have silently shadowed the create form's state.
+  const [nameEditOpen, setNameEditOpen] = useState(false);
+  const [correctedName, setCorrectedName] = useState('');
+  const [nameEditSubmitting, setNameEditSubmitting] = useState(false);
+  const [nameEditError, setNameEditError] = useState(null);
+  const [nameEditSuccess, setNameEditSuccess] = useState(null);
+
   // --- Color staging. "Resolved" = colors this screen has settled on for the current Product.
   // Each entry is { id, name, bundleId } — bundleId is a REAL Bundle id only for colours that
   // were bulk-fetched from a genuinely matched article (getValidColors below). It is null for
@@ -491,6 +527,13 @@ export default function ReceiveStock() {
     setNewCostPrice('');
     setNewSellingPrice('');
     setPriceEditSuccess(null);
+    // Same reasoning for the name-correction form: it belongs to the article being looked at, so
+    // it closes with it. A name ALREADY committed through it isn't undone — that write is real
+    // and done; this only clears the form's own transient state.
+    setNameEditOpen(false);
+    setCorrectedName('');
+    setNameEditError(null);
+    setNameEditSuccess(null);
     setResolvedColors([]);
     // Back to 'idle', not 'loaded' — after a reset nothing has been asked about the next
     // article yet. Leaving these settled would hand the next lookup a stale "answer already
@@ -647,6 +690,43 @@ export default function ReceiveStock() {
     // Bundles); it's true for a different reason now (the Product itself doesn't exist yet), but
     // the behaviour it needs to drive — don't call getValidColors — is identical either way.
     setLookup({ status: 'matched', product, justCreated: true });
+  }
+
+  // Commits a corrected article name immediately — see nameEditOpen's own declaration for the
+  // full re-derivation of why immediate (and not deferred) is right here, which is a different
+  // argument from the price path's.
+  //
+  // Plain form submit rather than a PinPrompt: there is no PIN in this flow, so this owns its own
+  // submitting/error state the same way Article Pricing's own rename form does.
+  async function handleSubmitNameEdit(event) {
+    event.preventDefault();
+    setNameEditError(null);
+
+    const trimmed = correctedName.trim();
+    if (!trimmed) {
+      setNameEditError('Enter a name.');
+      return;
+    }
+    if (trimmed === lookup.product.name) {
+      setNameEditError('That is already the current name.');
+      return;
+    }
+
+    setNameEditSubmitting(true);
+    try {
+      const updated = await updateProduct(lookup.product.id, { name: trimmed });
+      // Fold the new name straight into the active lookup so every banner/staged row below reads
+      // the corrected name for the rest of this receipt, with no re-lookup needed.
+      setLookup((prev) => (prev ? { ...prev, product: { ...prev.product, ...updated } } : prev));
+      setNameEditOpen(false);
+      setNameEditSuccess(
+        `Renamed to “${trimmed}”. Saved already — it doesn't wait for "Save receipt". Records created before now keep the old name.`
+      );
+    } catch (err) {
+      setNameEditError(err.message);
+    } finally {
+      setNameEditSubmitting(false);
+    }
   }
 
   // Commits a new price AND the reactivation together, immediately, the moment the PIN is
@@ -1309,6 +1389,73 @@ export default function ReceiveStock() {
                 screen does, and that difference is exactly what would otherwise be surprising. */}
             {priceEditSuccess && (
               <p className="result-banner result-banner-success">{priceEditSuccess}</p>
+            )}
+
+            {nameEditSuccess && (
+              <p className="result-banner result-banner-success">{nameEditSuccess}</p>
+            )}
+
+            {/* "Name wrong?" — offered for any EXISTING matched article (archived or not), but
+                never for one this session just created (justCreated), which already had its name
+                set correctly moments ago in the create form. OWNER-only for the same unconditional
+                requireRole('OWNER') reason the price form above states. */}
+            {!lookup.justCreated && isOwner && !nameEditOpen && (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  setNameEditOpen(true);
+                  setCorrectedName(lookup.product.name);
+                  setNameEditError(null);
+                }}
+              >
+                Name wrong? Correct it
+              </button>
+            )}
+
+            {!lookup.justCreated && isOwner && nameEditOpen && (
+              <div className="card reactivate-price-form">
+                <h3 className="card-title">Correct article name</h3>
+                <form onSubmit={handleSubmitNameEdit}>
+                  <label className="field">
+                    <span className="field-label">
+                      Article name — {lookup.product.articleNo}
+                    </span>
+                    <input
+                      type="text"
+                      value={correctedName}
+                      onChange={(e) => setCorrectedName(e.target.value)}
+                      autoFocus
+                      disabled={nameEditSubmitting}
+                    />
+                  </label>
+                  <p className="muted">
+                    Renames the whole article, all its colours. Saves straight away — it does not
+                    wait for “Save receipt”. Anything already recorded keeps the old name.
+                  </p>
+
+                  {nameEditError && (
+                    <p className="error-banner" role="alert">
+                      {nameEditError}
+                    </p>
+                  )}
+
+                  <button type="submit" className="btn-primary" disabled={nameEditSubmitting}>
+                    {nameEditSubmitting ? 'Saving…' : 'Save name'}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setNameEditOpen(false);
+                      setNameEditError(null);
+                    }}
+                    disabled={nameEditSubmitting}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              </div>
             )}
 
             {/* OWNER-only, and not merely by convention: PATCH /api/products/:id is

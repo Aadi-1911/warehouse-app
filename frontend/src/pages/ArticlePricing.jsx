@@ -67,6 +67,19 @@ export default function ArticlePricing() {
   const [actionInFlight, setActionInFlight] = useState(false);
   const [actionError, setActionError] = useState(null);
 
+  // Rename (2026-08-28) — deliberately its own form and its own state, NOT an extra field bolted
+  // onto the price form above, for one concrete reason: the price form is PIN-gated end to end
+  // (its submit hands a PIN to the server and its whole error path is PIN-lockout handling),
+  // while a rename is not PIN-gated at all — rule 71's gate is specifically about money, and
+  // `name` sits with categoryId/isKids as an ordinary OWNER-only attribute edit (confirmed by
+  // reading routes/products.js's own chain, not assumed). Merging them would either drag a PIN
+  // requirement onto a rename that doesn't need one, or make the price form's PIN conditional on
+  // which fields happen to be dirty — a subtler, more breakable rule than two separate forms.
+  const [renamingProduct, setRenamingProduct] = useState(null);
+  const [newName, setNewName] = useState('');
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
+  const [renameError, setRenameError] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     setFactoriesStatus('loading');
@@ -134,6 +147,10 @@ export default function ArticlePricing() {
     setConfirmTarget(null);
     setActionError(null);
     setShowArchived(false);
+    // Identical reasoning for an in-progress rename — it belonged to the previous factory's list.
+    setRenamingProduct(null);
+    setNewName('');
+    setRenameError(null);
   }
 
   function handleStartEdit(product) {
@@ -152,6 +169,58 @@ export default function ArticlePricing() {
     setPin('');
     setSubmitError(null);
     setAttemptsRemaining(null);
+  }
+
+  function handleStartRename(product) {
+    setRenamingProduct(product);
+    // Pre-filled with the CURRENT name rather than blank — a rename is almost always a small
+    // correction to an existing name ("Round Nek" → "Round Neck"), not a fresh entry, so the
+    // useful starting point is the text that's already there.
+    setNewName(product.name);
+    setRenameError(null);
+  }
+
+  function handleCancelRename() {
+    setRenamingProduct(null);
+    setNewName('');
+    setRenameError(null);
+  }
+
+  async function handleSubmitRename(event) {
+    event.preventDefault();
+    setRenameError(null);
+
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setRenameError('Enter a name.');
+      return;
+    }
+    // Nothing to save, and the server would reject a no-op PATCH as "no editable fields" anyway
+    // — catching it here gives a plain-language reason instead of a validation error.
+    if (trimmed === renamingProduct.name) {
+      setRenameError('That is already the current name.');
+      return;
+    }
+
+    setRenameSubmitting(true);
+    try {
+      // No `pin` in this body, on purpose — see the renamingProduct state comment above.
+      await updateProduct(renamingProduct.id, { name: trimmed });
+      setSuccessMessage(
+        `${renamingProduct.articleNo} renamed to “${trimmed}”. Orders and records created before now still show the old name.`
+      );
+      setRenamingProduct(null);
+      setNewName('');
+      // Re-fetch so the table shows the new name rather than the one just replaced.
+      setProductsStatus('loading');
+      const fresh = await listProducts({ factoryId });
+      setProducts(fresh);
+      setProductsStatus('loaded');
+    } catch (err) {
+      setRenameError(err.message);
+    } finally {
+      setRenameSubmitting(false);
+    }
   }
 
   async function handleSubmitEdit(event) {
@@ -466,11 +535,22 @@ export default function ArticlePricing() {
                               >
                                 Edit
                               </button>
+                              {/* Deliberately NOT gated on user.hasPinSet, unlike Edit above —
+                                  a rename needs no PIN, so an owner who has never set one can
+                                  still fix a typo in an article's name. */}
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => handleStartRename(product)}
+                                disabled={actionInFlight || (renamingProduct && renamingProduct.id === product.id)}
+                              >
+                                Rename
+                              </button>
                               <button
                                 type="button"
                                 className="link-button danger-text"
                                 onClick={() => handleStartArchiveAction(product, 'archive')}
-                                disabled={actionInFlight || !!editingProduct}
+                                disabled={actionInFlight || !!editingProduct || !!renamingProduct}
                               >
                                 Archive
                               </button>
@@ -490,6 +570,55 @@ export default function ArticlePricing() {
               <KeyIcon size={18} />
               <span>Set your price-edit PIN to edit article prices.</span>
             </Link>
+          )}
+
+          {/* Rename form (2026-08-28) — no PIN field anywhere in it, and that absence is the
+              point: this is an ordinary OWNER-only attribute edit, not a money edit. The note
+              under the input states the snapshot guarantee in plain language, because "will this
+              rewrite my old orders?" is the first thing anyone renaming an article will wonder,
+              and the honest answer (no, they keep the old name) is reassuring rather than
+              something to hide. */}
+          {renamingProduct && (
+            <div className="card">
+              <h2 className="card-title">
+                Rename article — {renamingProduct.articleNo}
+              </h2>
+              <form onSubmit={handleSubmitRename}>
+                <label className="field">
+                  <span className="field-label">Article name</span>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    autoFocus
+                    disabled={renameSubmitting}
+                  />
+                </label>
+                <p className="muted">
+                  This renames the whole article, including all {renamingProduct.articleNo}’s
+                  colours. Orders, transfers and returns recorded before now keep showing the old
+                  name — renaming only affects what’s created from here on.
+                </p>
+
+                {renameError && (
+                  <p className="error-banner" role="alert">
+                    {renameError}
+                  </p>
+                )}
+
+                <button type="submit" className="btn-primary" disabled={renameSubmitting}>
+                  {renameSubmitting ? 'Saving…' : 'Save name'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleCancelRename}
+                  disabled={renameSubmitting}
+                >
+                  Cancel
+                </button>
+              </form>
+            </div>
           )}
 
           {editingProduct && (

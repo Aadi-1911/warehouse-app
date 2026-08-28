@@ -524,6 +524,10 @@ model PartyPayment {
 - When creating a `Bundle` reference (e.g. during a Transaction), only `Color` values that already have a `Bundle` row for that `Product` are valid — reject arbitrary Product+Color combinations at the API layer.
 - `PartyStockReturn.note` is required when `reason` is `OTHER`, optional for every other reason value — a conditional requirement Prisma can't express, so the write endpoint must enforce it (2026-08-18). Same class of app-layer rule as `OrderAdjustment.reason`'s own conditional requirement.
 - `PartyStockReturn.priceAtReturn` is computed server-side from `Product.sellingPrice` at the moment of the return — **never trusted from the request body**, and never sourced from `costPrice`. Same principle as `OrderLineItem.priceAtOrder` and `Transaction.costPriceSnapshot`.
+- `productNameSnapshot` (added 2026-08-28, on `OrderLineItem`, `Transfer` and `PartyStockReturn`) is captured server-side from `Product.name` at the instant the record is created, and **never recomputed afterwards** — the exact same write-once discipline `priceAtOrder`/`costPriceSnapshot`/`priceAtReturn` already follow, extended from price to the article's name so that renaming an article (`PATCH /api/products/:id` with `name`) can only ever affect go-forward display. Read paths must resolve it as `productNameSnapshot ?? bundle.product.name`: the fallback exists **only** for rows created before this field did, which have no recorded name and no way to recover one, so they continue to follow the live current name. That is a disclosed, deliberately un-backfilled limitation — inventing a "correct" historical name for those rows would be fabricating data, not fixing it.
+  - Deliberately **not** applied to `Transaction` itself: no API response or screen ever renders a product *name* off a Transaction (History builds its entries from `articleNo` + colour only, verified across every `entries.push` in `historyController.js`), so there is nothing there for a rename to corrupt.
+  - Deliberately **not** applied to `Stock`: Live Stock / Low Stock are current-state views, not historical records — they *should* follow a rename immediately, and do.
+  - `articleNo` needs no equivalent snapshot: it is immutable after creation (the write endpoint rejects any attempt to patch it), so it can never drift from what a historical record recorded.
 
 ---
 
@@ -618,6 +622,7 @@ model OrderLineItem {
   qtySetsRequested Int      // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
   qtySetsPacked    Int      @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives both the packing stepper's clamp and the "will adjust for the shortfall" messaging when packed < requested.
   priceAtOrder     Decimal  // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
+  productNameSnapshot String? // snapshots Product.name at order time (2026-08-28) — same principle as priceAtOrder, extended from price to the name so an article rename can't retroactively change how an already-placed order reads. Nullable ONLY because rows predating this field have no recoverable original name; those fall back to the live name at read time. See "Hard rules to enforce" above. Transfer and PartyStockReturn carry the identical field for the identical reason.
 }
 
 model OrderAdjustment {

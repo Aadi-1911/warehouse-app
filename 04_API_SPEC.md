@@ -192,9 +192,13 @@ Body: `{ articleNo, name, factoryId, categoryId?, costPrice?, sellingPrice?, siz
 Validation: `(articleNo, factoryId)` combination must be unique — return `409` on conflict with a clear message (e.g. "Article {articleNo} already exists for this Factory"); `categoryId`, if provided, must reference a real Category — return `404 CATEGORY_NOT_FOUND` otherwise.
 
 ### `PATCH /api/products/:id` 📌
-Body: any subset of editable fields.
+Body: any subset of editable fields — `categoryId`, `isKids`, `name`, `costPrice`, `sellingPrice`.
 **If the body includes `costPrice` or `sellingPrice`:** request must also include `{ pin: "<owner's PIN>" }`. Server verifies `role == OWNER` AND PIN match against `priceEditPinHash` before applying the price change. Reject with `403` if either check fails — do not partially apply the update.
-Non-price fields (`categoryId`, etc.) can be edited by OWNER without the PIN. `categoryId` cannot be patched to empty (it's a required field, unlike the nullable price fields) — return `400` if attempted.
+Non-price fields (`categoryId`, `isKids`, `name`) can be edited by OWNER without the PIN. `categoryId` cannot be patched to empty (it's a required field, unlike the nullable price fields) — return `400` if attempted.
+
+**`name` (article rename, added 2026-08-28)** — an ordinary non-price attribute edit: OWNER role required (route-level, same as every other field here), **no PIN**, since rule 71's gate is specifically about money and a name carries no financial meaning. Trimmed server-side; cannot be patched to empty or whitespace-only (`400`, same required-field reasoning as `categoryId`). A rename applies to the **whole article and every colour/bundle under it** — structurally guaranteed, since `name` lives on `Product`, never per-`Bundle`; there is deliberately no per-colour rename.
+`articleNo` remains permanently un-patchable (`400`) — it's the article's per-Factory identity and what historical records are keyed to reading by.
+**Renaming never rewrites history:** `OrderLineItem`, `Transfer` and `PartyStockReturn` each snapshot `productNameSnapshot` at creation (see below), so records created before a rename keep displaying the name as it was at the time. Records created *before 2026-08-28* have no snapshot and fall back to the live current name — a disclosed, unbackfillable limitation, since the original name was never captured for them.
 
 ### `PATCH /api/products/:id/deactivate` 🔒
 Sets `isActive: false`. Archives the WHOLE article, all its colors together as one unit — not per-color (`Product.isActive`'s own schema comment). **Never hard-delete a Product** — Bundle/Transaction history traces back through `productId` and must stay resolvable forever, same audit-trail principle as `User.isActive`. Any authenticated role — matches `POST /api/products`' own base gating (never a price action, so never OWNER+PIN-gated like the field-edit PATCH above). Idempotent. **No lockout-prevention guard** — no equivalent risk to Users' last-active-owner case.
