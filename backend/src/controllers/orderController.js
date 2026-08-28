@@ -732,10 +732,10 @@ async function shipOrder(req, res) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
   }
   if (order.isCancelled) {
-    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be shipped');
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be dispatched');
   }
   if (order.status !== 'BILLED') {
-    return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to ship — current status is ${order.status}`);
+    return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to dispatch — current status is ${order.status}`);
   }
 
   const updated = await prisma.$transaction(async (tx) => {

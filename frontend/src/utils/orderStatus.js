@@ -7,7 +7,13 @@
 // Billed/Shipped share the Accent/Ship/Billed role — the same pairing already visible in
 // PackOrderDetail ("Placed" badge-warning), BillOrderDetail ("Packed" badge-warning) and
 // ShipOrderDetail ("Billed" badge-accent).
-export const ORDER_STATUS_LABEL = { PLACED: 'Placed', PACKED: 'Packed', BILLED: 'Billed', SHIPPED: 'Shipped' };
+//
+// Display label for SHIPPED is "Dispatched" (renamed 2026-08-28) — a DISPLAY-ONLY rename. The
+// underlying OrderStatus enum value stays SHIPPED everywhere (schema, every `status === 'SHIPPED'`
+// check, the API field itself); only what a person reads on screen changed. This is the ONE key
+// where the display word intentionally no longer matches the enum spelling — PLACED/PACKED/BILLED
+// still read as their own lowercase/titlecase selves.
+export const ORDER_STATUS_LABEL = { PLACED: 'Placed', PACKED: 'Packed', BILLED: 'Billed', SHIPPED: 'Dispatched' };
 export const ORDER_STATUS_BADGE = {
   PLACED: 'badge-warning',
   PACKED: 'badge-warning',

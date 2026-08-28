@@ -6,6 +6,9 @@ import { listOrders } from '../api/orders';
 
 // Ship Order — order list. Same structure as PackOrderList/BillOrderList, scoped to BILLED.
 //
+// Display text renamed "Ship"/"Shipped" -> "Dispatch"/"Dispatched" throughout (2026-08-28) —
+// display-only, see ShipOrderDetail.jsx's own header comment for what stays unchanged.
+//
 // Any authenticated role, deliberately — rule 63 names Billed → Shipped as one of the two
 // transitions staff DO trigger, same reasoning already applied to Pack Order. Unlike billing,
 // this moves no stock and locks nothing; it records that the goods physically left.
@@ -53,12 +56,12 @@ export default function ShipOrderList() {
           confirmed tap-a-tile/land-on-that-colour continuity — was "accent" (blue). No same-page
           collision found: neither this screen nor ShipOrderDetail.jsx use orange/warning-amber
           anywhere else for genuine status meaning. */}
-      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
+      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Dispatch Order" />
 
       {shippedOutcome && (
         <div className="result-banner result-banner-success">
           <p>
-            <strong>Order shipped for {shippedOutcome.partyName}.</strong> This order is now complete.
+            <strong>Order dispatched for {shippedOutcome.partyName}.</strong> This order is now complete.
           </p>
           <button type="button" className="link-button" onClick={() => setShippedOutcome(null)}>
             OK
@@ -75,7 +78,7 @@ export default function ShipOrderList() {
       {status !== 'loaded' ? (
         <p className="muted centered-empty-state">Loading…</p>
       ) : orders.length === 0 ? (
-        <p className="muted centered-empty-state">No billed orders waiting to ship.</p>
+        <p className="muted centered-empty-state">No billed orders waiting to dispatch.</p>
       ) : (
         orders.map((order) => (
           <Link key={order.id} to={`/ship-orders/${order.id}`} className="order-list-card">

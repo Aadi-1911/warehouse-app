@@ -109,7 +109,7 @@ const STAFF_TILES = [
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
   { to: '/pack-orders', label: 'Pack Order', tone: 'pink', Icon: PackageIcon },
   // Any role, rule 63 — staff mark orders shipped, same reasoning as Pack Order above.
-  { to: '/ship-orders', label: 'Ship Order', tone: 'orange', Icon: SendIcon },
+  { to: '/ship-orders', label: 'Dispatch Order', tone: 'orange', Icon: SendIcon },
   { to: '/transfer', label: 'Transfer Stock', tone: 'indigo', Icon: TransferIcon },
 ];
 
@@ -134,7 +134,7 @@ const OWNER_TILES = [
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
   { to: '/pack-orders', label: 'Pack Order', tone: 'pink', Icon: PackageIcon },
   { to: '/bill-orders', label: 'Bill Orders', tone: 'red', Icon: InvoiceIcon },
-  { to: '/ship-orders', label: 'Ship Order', tone: 'orange', Icon: SendIcon },
+  { to: '/ship-orders', label: 'Dispatch Order', tone: 'orange', Icon: SendIcon },
   { to: '/live-stock', label: 'Live Stock', tone: 'blue', Icon: ListIcon },
   { to: '/history', label: 'History', tone: 'grey', Icon: HistoryIcon },
 ];

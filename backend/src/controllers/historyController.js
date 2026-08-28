@@ -124,10 +124,21 @@ const TRANSFER_CORRECTION_REASON_LABELS = {
   OTHER: 'Other',
 };
 
-// "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order shipped" without a
-// separate lookup table that would need updating every time OrderStatus gains a value.
+// "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order dispatched" without
+// a separate lookup table that would need updating every time OrderStatus gains a value.
+//
+// SHIPPED is the one deliberate exception (2026-08-28 display rename: "Ship"/"Shipped" ->
+// "Dispatch"/"Dispatched" everywhere a person reads it, enum value left untouched). Lowercasing
+// the enum directly no longer produces the right word for that one status, since the display text
+// is now required to diverge from the enum spelling — exactly the disagreement this function's own
+// "derive both from one input" design was built to make unrepresentable, for every OTHER status.
+// A single named override for the one case that must diverge is more honest than either (a)
+// silently keeping "shipped" here while the rest of the app says "dispatched" or (b) building a
+// full replacement lookup table for the sake of one entry — PLACED/PACKED/BILLED still want the
+// "no separate table to drift" guarantee.
+const STATUS_WORD_OVERRIDES = { SHIPPED: 'dispatched' };
 function statusWord(status) {
-  return String(status).toLowerCase();
+  return STATUS_WORD_OVERRIDES[status] ?? String(status).toLowerCase();
 }
 
 // "PACKED" -> "Packed", the tag text for a status entry. Deliberately built ON TOP of
@@ -400,7 +411,7 @@ async function listHistory(req, res) {
       entries.push({
         id: `ORDER_STATUS:${a.id}`,
         type: 'ORDER_STATUS',
-        // "Packed" / "Billed" / "Shipped" — the actual moment, not a generic "Status". Same
+        // "Packed" / "Billed" / "Dispatched" — the actual moment, not a generic "Status". Same
         // a.newValue the description below is built from, so the two can never disagree.
         label: statusLabel(a.newValue),
         timestamp: a.changedAt,

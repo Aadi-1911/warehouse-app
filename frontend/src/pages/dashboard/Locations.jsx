@@ -218,7 +218,7 @@ export default function Locations() {
                 <div className="dash-kpi dash-kpi-success">
                   <div className="dash-kpi-label">Revenue</div>
                   <div className="dash-kpi-value">{inrShort(selectedLocationData.revenue)}</div>
-                  <div className="dash-kpi-sub">billed + shipped · {revenueData.label}</div>
+                  <div className="dash-kpi-sub">billed + dispatched · {revenueData.label}</div>
                 </div>
                 <div className="dash-kpi dash-kpi-purple">
                   <div className="dash-kpi-label">Profit</div>

@@ -205,7 +205,7 @@ export default function Overview() {
             </select>
           </div>
           <div className="dash-kpi-value">{inrShort(data.revenue)}</div>
-          <div className="dash-kpi-sub">billed + shipped · {data.revenueLabel}</div>
+          <div className="dash-kpi-sub">billed + dispatched · {data.revenueLabel}</div>
         </div>
       </div>
 

@@ -50,7 +50,7 @@ import {
 //
 // The tag's TEXT is deliberately not in here — it comes from entry.label, computed server-side.
 // A static per-type mapping could only ever produce one word per type, which meant all three of
-// Packed/Billed/Shipped rendered an identical generic "Status" tag and the actual moment was
+// Packed/Billed/Dispatched rendered an identical generic "Status" tag and the actual moment was
 // buried in the description. The three still share ORDER_STATUS's green (they're all forward
 // progress); only the wording distinguishes them.
 const TYPE_BADGE_CLASSES = {

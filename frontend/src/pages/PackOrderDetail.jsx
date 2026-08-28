@@ -645,7 +645,7 @@ export default function PackOrderDetail() {
         title={cancelTarget?.kind === 'order' ? 'Cancel this whole order?' : 'Cancel this line?'}
         body={
           cancelTarget?.kind === 'order'
-            ? `${order.partyName}'s entire order will be cancelled and removed from the packing list. The lines stay on record — nothing is deleted — but the order can't be packed, billed or shipped afterwards.`
+            ? `${order.partyName}'s entire order will be cancelled and removed from the packing list. The lines stay on record — nothing is deleted — but the order can't be packed, billed or dispatched afterwards.`
             : `${cancelTarget?.line.colorName} will be cancelled and won't be packed or billed. The ordered quantity stays on record; only the line is marked cancelled.`
         }
         confirmLabel={cancelling ? 'Cancelling…' : cancelTarget?.kind === 'order' ? 'Cancel whole order' : 'Cancel line'}

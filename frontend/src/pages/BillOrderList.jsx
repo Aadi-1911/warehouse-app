@@ -72,7 +72,7 @@ export default function BillOrderList() {
         <div className="result-banner result-banner-success">
           <p>
             <strong>Order billed for {billedOutcome.partyName}.</strong> Stock has been deducted and this
-            order is now locked — it can no longer be changed. It's ready to ship.
+            order is now locked — it can no longer be changed. It's ready to dispatch.
           </p>
           <button type="button" className="link-button" onClick={() => setBilledOutcome(null)}>
             OK

@@ -7,6 +7,12 @@ import { getOrder, shipOrder } from '../api/orders';
 
 // Ship Order — detail. Same structure as BillOrderDetail, read-only above the button.
 //
+// Display text renamed "Ship"/"Shipped" -> "Dispatch"/"Dispatched" throughout (2026-08-28) —
+// display-only. The route (/ship-orders), this file's own name, component name, `shipOrder()` API
+// call, and the underlying OrderStatus value (SHIPPED) are all deliberately UNCHANGED; only what
+// a person reads on screen changed. See orderStatus.js's own comment on ORDER_STATUS_LABEL for
+// the one place this divergence between enum spelling and display word is centralised.
+//
 // The confirm here is deliberately LIGHTER than Bill's: shipping moves no stock, locks nothing,
 // and changes no quantity — the order was already locked at Billed. It records that the goods
 // physically left, so the copy states that plainly instead of borrowing Bill's warning weight.
@@ -82,7 +88,7 @@ export default function ShipOrderDetail() {
       <div className="page">
         {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
             Home's Ship Order tile; see that file's comment for the full reasoning. */}
-        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
+        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Dispatch Order" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -99,10 +105,10 @@ export default function ShipOrderDetail() {
       <div className="page">
         {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
             Home's Ship Order tile; see that file's comment for the full reasoning. */}
-        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
+        <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Dispatch Order" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
-          This order can no longer be shipped — its status is now {order.status}.
+          This order can no longer be dispatched — its status is now {order.status}.
         </p>
       </div>
     );
@@ -126,13 +132,13 @@ export default function ShipOrderDetail() {
     <div className="page">
       {/* tone="tile-orange" (2026-08-27) — matches ShipOrderList.jsx's own header change and
           Home's Ship Order tile; see that file's comment for the full reasoning. */}
-      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Ship Order" />
+      <ScreenHeader icon={<SendIcon size={20} />} tone="tile-orange" title="Dispatch Order" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-accent">Billed</span>
 
       {submitError && (
         <p className="error-banner" role="alert">
-          Could not mark this order as shipped: {submitError}
+          Could not mark this order as dispatched: {submitError}
         </p>
       )}
 
@@ -177,15 +183,15 @@ export default function ShipOrderDetail() {
           {order.lineItems.length === 1 ? '' : 's'}
         </p>
         <button type="button" className="btn-primary" onClick={() => setConfirmOpen(true)} disabled={submitting}>
-          {submitting ? 'Marking as shipped…' : 'Mark as shipped'}
+          {submitting ? 'Marking as dispatched…' : 'Mark as dispatched'}
         </button>
       </div>
 
       <ConfirmModal
         open={confirmOpen}
-        title="Mark this order as shipped?"
+        title="Mark this order as dispatched?"
         body={`This records that ${order.partyName}'s order has left. Stock was already deducted when it was billed — nothing further changes.`}
-        confirmLabel={submitting ? 'Marking…' : 'Mark as shipped'}
+        confirmLabel={submitting ? 'Marking…' : 'Mark as dispatched'}
         tone="accent"
         onConfirm={handleConfirmShip}
         onCancel={() => setConfirmOpen(false)}
