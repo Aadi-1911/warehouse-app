@@ -8,6 +8,7 @@ import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
 import { preBillingTotal, computeBillingAmounts } from '../utils/orderBilling';
+import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -78,6 +79,11 @@ export default function BillOrderDetail() {
   const [discountPercent, setDiscountPercent] = useState('');
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstPercent, setGstPercent] = useState('');
+  // Optional reference tag captured at billing time (2026-08-30). Lives alongside the discount/GST
+  // inputs because it's answered in the same moment, but it is NOT one of them: it feeds none of
+  // the amount arithmetic below, and leaving it blank never blocks billing (see
+  // billingInputIncomplete, which deliberately doesn't consider it).
+  const [billNo, setBillNo] = useState('');
 
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -151,6 +157,9 @@ export default function BillOrderDetail() {
         discountPercent: discountApplicable ? Number(discountPercent) : null,
         gstApplicable,
         gstPercent: gstApplicable ? Number(gstPercent) : null,
+        // Omitted entirely when blank rather than sent as '' — optional means optional, and the
+        // order simply ends up with a null tag it can be given later.
+        ...(cleanBillNo(billNo) ? { billNo: cleanBillNo(billNo) } : {}),
       });
       setConfirmOpen(false);
       navigate('/bill-orders', {
@@ -179,6 +188,7 @@ export default function BillOrderDetail() {
     setDiscountPercent('');
     setGstApplicable(false);
     setGstPercent('');
+    setBillNo('');
   }
 
   if (orderStatus !== 'loaded') {
@@ -498,6 +508,23 @@ export default function BillOrderDetail() {
           {hasGst && <p className="bill-pricing-line">+{formatCurrency(gstAmount)} GST</p>}
 
           <p className="bill-pricing-final">Total to bill: {formatCurrency(actualPayable)}</p>
+
+          {/* Below the total on purpose: everything above it changes the amount, this doesn't.
+              Placing it among the discount/GST controls would imply it participates in the
+              arithmetic. Optional — blank is a perfectly normal outcome, and it never blocks the
+              confirm button (billingInputIncomplete ignores it entirely). Correctable afterwards
+              from the party's billing history if it's mistyped here. */}
+          <div className="field bill-no-field">
+            <span className="field-label">Bill No. (optional)</span>
+            <input
+              type="text"
+              value={billNo}
+              onChange={(e) => setBillNo(e.target.value)}
+              placeholder="e.g. INV-2291"
+              maxLength={BILL_NO_MAX_LENGTH}
+              disabled={submitting}
+            />
+          </div>
         </div>
       </ConfirmModal>
     </div>

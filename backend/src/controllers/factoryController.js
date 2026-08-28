@@ -202,7 +202,12 @@ async function getFactoryPayable(req, res) {
     }),
     prisma.factoryDebit.findMany({
       where: { factoryId: id },
-      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      // billNo (2026-08-30) is selected for debits ONLY — FactoryPayment has no such column and
+      // deliberately never will: a payment is not tied to exactly one bill (two or three bills
+      // routinely get settled with a single lump sum), so a bill reference on a payment row would
+      // be actively misleading rather than merely unused. Display-only here — nothing below reads
+      // it, and totalDebited/totalOwed/amountPayable are untouched by its presence.
+      select: { id: true, amount: true, date: true, note: true, billNo: true, createdAt: true, updatedAt: true, wasEdited: true },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     }),
   ]);

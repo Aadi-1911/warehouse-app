@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { orderValueOf } = require('../utils/orderValue');
+const { normalizeBillNo } = require('../utils/billNo');
 
 const prisma = new PrismaClient();
 
@@ -27,30 +28,44 @@ const LINE_ITEM_SELECT = {
   },
 };
 
-const ORDER_DETAIL_SELECT = {
-  id: true,
-  partyId: true,
-  party: { select: { name: true } },
-  status: true,
-  createdById: true,
-  createdBy: { select: { name: true } },
-  createdAt: true,
-  packedAt: true,
-  billedAt: true,
-  shippedAt: true,
-  isCancelled: true,
-  // Billing snapshot (rule 101) — null/false for any order not yet BILLED. Selected here so
-  // GET /api/orders/:id and billOrder()'s own response both surface the real stored figures,
-  // not just the client's own live preview from before confirming.
-  discountApplicable: true,
-  discountPercent: true,
-  gstApplicable: true,
-  gstPercent: true,
-  preTaxAmount: true,
-  finalAmount: true,
-  actualPayable: true,
-  lineItems: { select: LINE_ITEM_SELECT },
-};
+// A FUNCTION of the requester's role, not a plain constant, purely because of `billNo` (added
+// 2026-08-30). Every other field here is identical for both roles; billNo is the one field that
+// must never reach a STAFF response, and this select feeds any-role endpoints — GET
+// /api/orders/:id, packOrder and shipOrder are all reachable by STAFF (rule 63), and STAFF's Pack
+// Order and Dispatch Order screens genuinely use them.
+//
+// billNo is therefore left out of the SELECT itself for a STAFF request, so it is never fetched
+// from Postgres at all — deliberately the same never-fetch-it approach productSelect(role)
+// already takes for costPrice, rather than selecting it and deleting the key before responding.
+// A stripped field is one forgotten `res.json(order)` away from leaking; a field that was never
+// read out of the database cannot leak by any path.
+function orderDetailSelect(role) {
+  return {
+    id: true,
+    partyId: true,
+    party: { select: { name: true } },
+    status: true,
+    createdById: true,
+    createdBy: { select: { name: true } },
+    createdAt: true,
+    packedAt: true,
+    billedAt: true,
+    shippedAt: true,
+    isCancelled: true,
+    // Billing snapshot (rule 101) — null/false for any order not yet BILLED. Selected here so
+    // GET /api/orders/:id and billOrder()'s own response both surface the real stored figures,
+    // not just the client's own live preview from before confirming.
+    discountApplicable: true,
+    discountPercent: true,
+    gstApplicable: true,
+    gstPercent: true,
+    preTaxAmount: true,
+    finalAmount: true,
+    actualPayable: true,
+    ...(role === 'OWNER' ? { billNo: true } : {}),
+    lineItems: { select: LINE_ITEM_SELECT },
+  };
+}
 
 function lineItemToResponse(li) {
   return {
@@ -77,7 +92,10 @@ function lineItemToResponse(li) {
   };
 }
 
-function orderDetailToResponse(o) {
+// `role` must be the same one passed to orderDetailSelect above — for a STAFF request the row
+// simply has no billNo property to read, so the two conditionals can't disagree in a way that
+// either invents the field or leaks it.
+function orderDetailToResponse(o, role) {
   return {
     id: o.id,
     partyId: o.partyId,
@@ -97,6 +115,7 @@ function orderDetailToResponse(o) {
     preTaxAmount: o.preTaxAmount,
     finalAmount: o.finalAmount,
     actualPayable: o.actualPayable,
+    ...(role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
     lineItems: o.lineItems.map(lineItemToResponse),
   };
 }
@@ -185,10 +204,10 @@ async function createOrder(req, res) {
     });
     // Re-read inside the transaction, with the full display-ready select, so the response
     // reflects the true post-write state rather than being reassembled in JS from inputs.
-    return tx.order.findUnique({ where: { id: order.id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id: order.id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.status(201).json(orderDetailToResponse(created));
+  res.status(201).json(orderDetailToResponse(created, req.user.role));
 }
 
 // GET /api/orders — any authenticated role (🔒). Lightweight list: party name and a
@@ -244,6 +263,9 @@ async function listOrders(req, res) {
       // would be undefined on every row and orderValueOf would silently fall back forever,
       // which is exactly the quiet-wrong-money failure this fix exists to remove.
       actualPayable: true,
+      // OWNER-only, same never-fetch-for-STAFF reasoning as orderDetailSelect above — this is an
+      // any-role endpoint and STAFF's Pack/Dispatch worklists read it.
+      ...(req.user.role === 'OWNER' ? { billNo: true } : {}),
       // The real cancellation moment — investigated 2026-08-20 for the Owner Dashboard Orders
       // page's month bucketing. A cancelled order can have been cancelled while PLACED (no
       // packedAt/billedAt/shippedAt at all), so those stage timestamps can't reliably date it.
@@ -293,6 +315,9 @@ async function listOrders(req, res) {
     // OrderAdjustment row (shouldn't happen through cancelOrder's own code path, but this is the
     // one place that reads the fallback chain, not left implicit).
     cancelledAt: o.isCancelled ? (o.adjustments[0]?.changedAt ?? o.billedAt ?? o.packedAt ?? o.createdAt) : null,
+    // Present only for OWNER — mirrors the conditional select above, so a STAFF row has no
+    // billNo to read in the first place.
+    ...(req.user.role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
     // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
     // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,
@@ -324,12 +349,12 @@ async function listOrders(req, res) {
 async function getOrder(req, res) {
   const { id } = req.params;
 
-  const order = await prisma.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  const order = await prisma.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
   }
 
-  res.json(orderDetailToResponse(order));
+  res.json(orderDetailToResponse(order, req.user.role));
 }
 
 // PATCH /api/orders/:id/pack — any authenticated role (🔒). Staff is the primary user for this
@@ -471,10 +496,10 @@ async function packOrder(req, res) {
       },
     });
 
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/bill — OWNER ONLY (👑), enforced by requireRole('OWNER') in routes/
@@ -519,6 +544,14 @@ async function billOrder(req, res) {
   }
   if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0 || gstPercent > 5)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a number between 0 and 5 when gstApplicable is true');
+  }
+  // Optional reference tag, captured at billing time (2026-08-30). Validated alongside the money
+  // fields above but deliberately NOT part of any of the rule 101 arithmetic below — it is never
+  // read by preTaxAmount/finalAmount/actualPayable, and billing succeeds identically whether it
+  // is provided or left blank.
+  const billNo = normalizeBillNo(req.body?.billNo);
+  if (!billNo.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
   }
 
   const order = await prisma.order.findUnique({
@@ -704,6 +737,10 @@ async function billOrder(req, res) {
           preTaxAmount,
           finalAmount,
           actualPayable,
+          // Reference tag only — null when not supplied, and correctable afterwards via
+          // PATCH /api/orders/:id/bill-no (unlike every money field above, which rule 23 locks
+          // for good the moment this write lands).
+          billNo: billNo.provided ? billNo.value : null,
         },
       });
       // Routine forward progress, not a correction — reason stays null, same as every other
@@ -719,7 +756,7 @@ async function billOrder(req, res) {
         },
       });
 
-      return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+      return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
     });
   } catch (err) {
     if (err.isInsufficientStock) {
@@ -728,7 +765,7 @@ async function billOrder(req, res) {
     throw err;
   }
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/ship — any authenticated role (🔒). Same staff-primary reasoning as
@@ -762,10 +799,10 @@ async function shipOrder(req, res) {
         reason: null,
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // Shared by updateOrderLines below AND the Cancellation endpoints further down — both are the
@@ -981,10 +1018,10 @@ async function updateOrderLines(req, res) {
       });
     }
 
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // --- Cancellation (added 2026-08-18) ---------------------------------------------------------
@@ -1042,14 +1079,14 @@ async function cancelOrderLine(req, res) {
         reason: 'ORDER_CANCELLED',
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
   // Deliberately NOT auto-cancelling the order when its last live line goes: cancelling every
   // line one by one and cancelling the order are different intents, and inferring the second
   // from the first would take an irreversible decision the owner never actually made. An order
   // with zero live lines simply bills nothing — see billOrder's linesToDeduct.
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/cancel — OWNER only (👑).
@@ -1088,14 +1125,67 @@ async function cancelOrder(req, res) {
         reason: 'ORDER_CANCELLED',
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
   // Line items are deliberately left alone. The order-level flag is what every guard and every
   // worklist reads; stamping isCancelled onto all 13 lines as well would be redundant state that
   // could later disagree with the order flag, and would destroy the distinction between "this
   // one line was cancelled" and "the whole order was".
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
+}
+
+// PATCH /api/orders/:id/bill-no — OWNER only (👑), no PIN. Corrects (or clears) the reference tag
+// captured at billing time, nothing else. Added 2026-08-30.
+//
+// A SEPARATE endpoint rather than a branch inside billOrder or updateOrderLines, for two reasons:
+// billOrder is a one-shot irreversible transition that also deducts stock — it can only ever run
+// once per order, so it structurally cannot host a later correction — and updateOrderLines is
+// explicitly about order CONTENTS, which rule 23 freezes at billing. This endpoint touches
+// neither: no stock movement, no status change, no money field, no OrderAdjustment row (that
+// table records changes to the order's real content and status, and a reference tag is neither —
+// writing one would put a non-event into the History feed).
+//
+// No PIN, deliberately, unlike the factory-side debit edit: requirePin guards actions that move
+// money (rules 71/81/96), and this one provably cannot — `data` below contains exactly one key,
+// billNo, so there is no request shape that reaches this handler and changes an amount.
+//
+// Only meaningful once an order has actually been billed, so a not-yet-billed order is rejected
+// rather than silently accepting a tag that would sit invisibly on a PLACED/PACKED order.
+async function updateOrderBillNo(req, res) {
+  const { id } = req.params;
+
+  const billNo = normalizeBillNo(req.body?.billNo);
+  if (!billNo.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
+  }
+  if (!billNo.provided) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'billNo is required');
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: { id: true, status: true, billedAt: true },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!order.billedAt) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_BILLED',
+      'A bill number can only be set on an order that has been billed'
+    );
+  }
+
+  const updated = await prisma.order.update({
+    where: { id },
+    data: { billNo: billNo.value },
+    select: orderDetailSelect(req.user.role),
+  });
+
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 module.exports = {
@@ -1108,4 +1198,5 @@ module.exports = {
   updateOrderLines,
   cancelOrderLine,
   cancelOrder,
+  updateOrderBillNo,
 };

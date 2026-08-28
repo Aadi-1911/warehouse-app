@@ -586,6 +586,23 @@ model Order {
   finalAmount        Decimal? // preTaxAmount after discount is applied, before GST
   actualPayable      Decimal? // finalAmount after GST is applied — the real amount owed, never trusted from the client
 
+  // Optional reference tag only — the bill/invoice number this order was billed under, captured
+  // at billing time and correctable afterwards. Added 2026-08-30. Same shape and same reasoning
+  // as FactoryDebit.billNo (see that field's comment): a plain nullable String, never summed,
+  // never joined, never part of any amountDue computation, and deliberately NOT unified with
+  // FactoryDebit.billNo into a shared entity.
+  //
+  // Unlike every other field on this model, this one IS role-gated on read: GET /api/orders and
+  // GET /api/orders/:id are any-role (STAFF's Pack and Dispatch screens use them), so billNo is
+  // selected from Postgres only for an OWNER request — the same never-fetch-it-at-all approach
+  // productSelect(role) already uses for costPrice, not a fetch-then-strip.
+  //
+  // Deliberately editable after billing, which rule 23's "a billed order is locked" does not
+  // contradict: rule 23 protects the order's MONEY and CONTENTS (quantities, prices, lines) from
+  // changing after the fact. A reference tag is neither — correcting a mistyped bill number
+  // changes nothing about what is owed.
+  billNo             String?
+
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
 }
@@ -681,6 +698,20 @@ model FactoryDebit {
   amount      Decimal
   date        DateTime
   note        String?
+  // Optional reference tag only — the supplier's own bill/invoice number for this debit, so an
+  // owner can tie a recorded amount back to the paper document it came from. Added 2026-08-30.
+  //
+  // DELIBERATELY a plain nullable String, NOT a relation to a shared BillNo entity, and
+  // deliberately NOT unique: it is never summed, never joined, never used in any
+  // totalOwed/amountPayable computation, and carries no per-bill balance or allocation meaning.
+  // Order.billNo is a separate, independent field of the same kind — the two are not unified,
+  // because unifying them would imply a shared bill entity this system does not have and is not
+  // (yet) tracking. A real formal ledger (per-bill running balance, FIFO payment allocation) is
+  // explicitly out of scope and deferred — see LEARNING_LOG.md's ledger investigation entry.
+  //
+  // Editing this field never sets wasEdited (see updateFactoryDebit): that flag means "the money
+  // on this entry was corrected," and fixing a typo'd reference tag is not that.
+  billNo      String?
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

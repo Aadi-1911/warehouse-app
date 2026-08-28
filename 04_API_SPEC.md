@@ -97,11 +97,22 @@ Corrects a previously-recorded payment. **Unlike `PATCH /api/products/:id`, the 
 No body beyond `{ pin }` (always required, same unconditional gating as PATCH above). **A genuine hard delete** — the first one in this API. Safe specifically because nothing else in the schema references `FactoryPayment` by foreign key (unlike Factory/Product/User/Location/Party/Category, which all use soft-deactivate via `isActive` because other rows trace back through them and must stay resolvable forever). Returns `204` with no body on success. `404 FACTORY_PAYMENT_NOT_FOUND` if the id doesn't exist.
 
 ### `POST /api/factory-debits` 📌
-Body: `{ factoryId, amount, date, note?, pin }`
+Body: `{ factoryId, amount, date, note?, billNo?, pin }`
 Records a manual increase to amount owed to a Factory — the mirror of `POST /api/factory-payments` in the other direction. Same gating as the payment endpoint (Owner + PIN, identical `requirePin` behavior and error codes), since this is an equally sensitive financial action, just moving `amountPayable` up instead of down. Exists specifically for real, pre-app debt that has no corresponding STOCK_IN transaction history in this system (05_BUSINESS_RULES.md rule 96) — without it, a factory in that position has no way to reach a correct `amountPayable`, since `totalOwed` would otherwise only ever reflect stock received *through the app*.
 
+`billNo` *(optional, added 2026-08-30)* is a **display-only reference tag** — the supplier's own bill/invoice number for this debit, so an owner can tie a recorded amount back to the paper document. Trimmed on save, max 50 characters (`400 VALIDATION_ERROR` beyond that); blank/whitespace stores `null`. It is never summed, never joined, and takes no part in `totalOwed`/`amountPayable` — recording one changes no figure anywhere. **Debits only:** `FactoryPayment` has no `billNo` and deliberately never will, because one payment routinely settles two or three bills at once, so a single bill reference on a payment row would be actively misleading.
+
 ### `PATCH /api/factory-debits/:id` 📌
-Identical shape and reasoning to `PATCH /api/factory-payments/:id` above, for the reverse-direction entity. `404 FACTORY_DEBIT_NOT_FOUND` if the id doesn't exist.
+Identical shape and reasoning to `PATCH /api/factory-payments/:id` above, for the reverse-direction entity. `404 FACTORY_DEBIT_NOT_FOUND` if the id doesn't exist. **Does not accept `billNo`** — see the dedicated endpoint below.
+
+### `PATCH /api/factory-debits/:id/bill-no` 👑
+Body: `{ billNo }` — a string, or `null` to clear it. *(Added 2026-08-30.)*
+
+Corrects the reference tag on an existing debit and nothing else. **OWNER only but deliberately NOT PIN-gated**, unlike every other write on this entity: the PIN guards actions that move money (rules 81/96), and this endpoint provably cannot — the update it issues contains exactly one field. Routing a typo fix through a PIN prompt would make the gate decorative.
+
+**Never sets `wasEdited`.** That flag means "the money on this entry was corrected" and is what makes the history row show an `edited` label warning that a figure isn't the original; a mistyped bill number says nothing about whether the amount can be trusted, so marking it would dilute a specific signal into a vague "someone touched this row". A real amount/date/note edit through the PATCH above still sets it, unchanged.
+
+Same trim/50-char validation as `POST`. Returns the updated debit. Errors: `400 VALIDATION_ERROR`, `403 FORBIDDEN_ROLE`, `404 FACTORY_DEBIT_NOT_FOUND`.
 
 ### `DELETE /api/factory-debits/:id` 📌
 Identical shape and reasoning to `DELETE /api/factory-payments/:id` above. `404 FACTORY_DEBIT_NOT_FOUND` if the id doesn't exist.
@@ -453,7 +464,7 @@ Response: full order, same shape as `GET /api/orders/:id`.
 Errors: `400 VALIDATION_ERROR`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PLACED`.
 
 ### `PATCH /api/orders/:id/bill` 👑
-Body *(added 2026-08-25, rule 101)*: `{ discountApplicable?, discountPercent?, gstApplicable?, gstPercent? }` — all optional, defaulting to no discount/no GST. `discountPercent`/`gstPercent` are plain numbers (percent, e.g. `5` for 5%), required and validated only when their own `*Applicable` flag is `true` — `discountPercent` bounded 0–100, `gstPercent` bounded 0–5. **No PIN** — gating matches billing's own existing weight exactly (OWNER-only, the existing heavy confirm modal, nothing new); this is not a cost/selling-price edit, so rule 71's PIN gate doesn't apply.
+Body *(added 2026-08-25, rule 101; `billNo` added 2026-08-30)*: `{ discountApplicable?, discountPercent?, gstApplicable?, gstPercent?, billNo? }` — all optional, defaulting to no discount/no GST. `discountPercent`/`gstPercent` are plain numbers (percent, e.g. `5` for 5%), required and validated only when their own `*Applicable` flag is `true` — `discountPercent` bounded 0–100, `gstPercent` bounded 0–5. **No PIN** — gating matches billing's own existing weight exactly (OWNER-only, the existing heavy confirm modal, nothing new); this is not a cost/selling-price edit, so rule 71's PIN gate doesn't apply.
 
 **OWNER only** — the one order transition that is not any-role. Rule 63 states plainly that `... → Billed` is owner-only and must never be offered to STAFF, and this is also where real inventory moves. Enforced by `requireRole('OWNER')` middleware, returning `403 FORBIDDEN_ROLE` for a STAFF caller.
 
@@ -473,8 +484,21 @@ Server-side logic:
 7. `Order.status` → `BILLED`, `billedAt` set to now. `discountApplicable`, `discountPercent`, `gstApplicable`, `gstPercent`, `preTaxAmount`, `finalAmount`, `actualPayable` are all written in this same update. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "PACKED"`, `newValue: "BILLED"`, `reason: null` — routine progress).
 8. All of the above happens atomically in one transaction.
 
+`billNo` *(optional)* is a **display-only reference tag** — the bill/invoice number this order was billed under. Trimmed on save, max 50 characters, blank stores `null`. It takes no part in any of the arithmetic above and never blocks billing. Unlike every money field here, it stays correctable afterwards (see the next endpoint) — rule 23 locks an order's money and contents, which a reference tag is neither.
+
 Response: full order, same shape as `GET /api/orders/:id` — now including `discountApplicable`/`discountPercent`/`gstApplicable`/`gstPercent`/`preTaxAmount`/`finalAmount`/`actualPayable` (all `null`/`false` for any order not yet `BILLED`).
 Errors: `400 VALIDATION_ERROR`, `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PACKED`, `409 INSUFFICIENT_STOCK`.
+
+### `PATCH /api/orders/:id/bill-no` 👑
+Body: `{ billNo }` — a string, or `null` to clear it. *(Added 2026-08-30.)*
+
+Corrects the reference tag on an already-billed order. **OWNER only, no PIN** (same reasoning as the factory-debit equivalent: this endpoint cannot change any amount). Writes **no `OrderAdjustment` row** — that table records changes to an order's real content and status, and a reference tag is neither, so logging one would push a non-event into the History feed.
+
+Rejects an order that hasn't been billed yet (`409 ORDER_NOT_BILLED`) rather than silently storing a tag that would sit invisibly on a `PLACED`/`PACKED` order.
+
+**`billNo` IS ROLE-GATED ON READ**, uniquely among Order fields. `GET /api/orders` and `GET /api/orders/:id` are any-role (STAFF's Pack and Dispatch worklists depend on them), so `billNo` is omitted from the Prisma `select` itself for a STAFF request — never fetched from Postgres at all, the same never-fetch-it approach `productSelect(role)` uses for `costPrice`, not a fetch-then-strip. A STAFF response simply has no `billNo` key.
+
+Response: full order, same shape as `GET /api/orders/:id`. Errors: `400 VALIDATION_ERROR`, `403 FORBIDDEN_ROLE`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_BILLED`.
 
 ### `PATCH /api/orders/:id/lines` 👑 — added 2026-08-21
 Body: `{ lineChanges?: [{ lineItemId, qtySetsRequested }], newLines?: [{ bundleId, qtySetsRequested }] }` — at least one of the two arrays must be present and non-empty. Supports changing an existing line's quantity and adding a brand-new line in the same request, since a real order edit is usually one event, not two API calls.

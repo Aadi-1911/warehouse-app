@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { CopyIcon, CheckCircleIcon } from '../../components/icons';
 import { listParties, getPartyRevenue, getPartyPayable } from '../../api/parties';
 import { createPartyPayment } from '../../api/partyPayments';
-import { listOrders } from '../../api/orders';
+import { listOrders, updateOrderBillNo } from '../../api/orders';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../utils/orderStatus';
+import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../../utils/billNo';
 import { copyToClipboard } from '../../utils/clipboard';
 import PinPrompt from '../../components/PinPrompt';
 
@@ -289,6 +290,47 @@ export default function Parties() {
   const [ordersStatus, setOrdersStatus] = useState('idle');
   const [ordersError, setOrdersError] = useState(null);
 
+  // --- Inline Bill No. correction on a billed order (2026-08-30). Same shape as the Factory
+  // Payables screen's equivalent: the id of the row being edited, plus a draft and its own
+  // saving/error state. Only ever offered on orders that have actually been billed — the server
+  // rejects a bill number on anything earlier (409 ORDER_NOT_BILLED), so offering it would be
+  // showing a control that cannot succeed.
+  const [billNoEditId, setBillNoEditId] = useState(null);
+  const [billNoDraft, setBillNoDraft] = useState('');
+  const [billNoSaving, setBillNoSaving] = useState(false);
+  const [billNoError, setBillNoError] = useState(null);
+
+  function startEditBillNo(order) {
+    setBillNoEditId(order.id);
+    setBillNoDraft(order.billNo ?? '');
+    setBillNoError(null);
+  }
+
+  function cancelEditBillNo() {
+    setBillNoEditId(null);
+    setBillNoDraft('');
+    setBillNoError(null);
+  }
+
+  async function handleSaveBillNo(orderId) {
+    setBillNoSaving(true);
+    setBillNoError(null);
+    try {
+      const trimmed = cleanBillNo(billNoDraft);
+      const updated = await updateOrderBillNo(orderId, trimmed === '' ? null : trimmed);
+      // Patched in place rather than re-fetching the whole list: unlike the Factory Payables
+      // screen (where the edit also has to refresh aggregate totals on the same screen), nothing
+      // here is derived from billNo — no total, no count, no sort — so the one row's own new
+      // value is the complete set of what changed.
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, billNo: updated.billNo } : o)));
+      cancelEditBillNo();
+    } catch (err) {
+      setBillNoError(err.message);
+    } finally {
+      setBillNoSaving(false);
+    }
+  }
+
   const [copiedGstin, setCopiedGstin] = useState(false);
   const [copyError, setCopyError] = useState(null);
 
@@ -399,6 +441,9 @@ export default function Parties() {
     setCustomTo('');
     setCopiedGstin(false);
     setCopyError(null);
+    // An open inline Bill No. edit belonged to a row from the previous party's order list, which
+    // is about to be replaced — same reasoning as every other per-party reset here.
+    cancelEditBillNo();
     setPaymentFormOpen(false);
     setPaymentAmount('');
     setPaymentDate(todayIso());
@@ -689,6 +734,54 @@ export default function Parties() {
                       <span className="badge badge-danger">Cancelled</span>
                     ) : (
                       <span className={`badge ${ORDER_STATUS_BADGE[o.status]}`}>{ORDER_STATUS_LABEL[o.status]}</span>
+                    )}
+                    {/* Bill No. beside the date/status, per this feature's spec. Only for orders
+                        that have actually been billed: `billedAt` is the same condition the
+                        server enforces, so the control is never offered where it would 409.
+                        A cancelled order is excluded too — it was never billed, and offering to
+                        tag it would suggest otherwise. */}
+                    {o.billedAt && !o.isCancelled && billNoEditId !== o.id && (
+                      <span className="dash-party-order-billno">
+                        {o.billNo && <span className="dash-party-order-billno-value">Bill No. {o.billNo}</span>}
+                        <button
+                          type="button"
+                          className="link-button dash-party-order-billno-edit"
+                          onClick={() => startEditBillNo(o)}
+                          disabled={billNoSaving}
+                        >
+                          {o.billNo ? 'Edit' : '+ Bill no.'}
+                        </button>
+                      </span>
+                    )}
+                    {billNoEditId === o.id && (
+                      <span className="dash-party-order-billno-form">
+                        <input
+                          type="text"
+                          value={billNoDraft}
+                          onChange={(e) => setBillNoDraft(e.target.value)}
+                          placeholder="e.g. INV-2291"
+                          aria-label="Bill No."
+                          maxLength={BILL_NO_MAX_LENGTH}
+                          disabled={billNoSaving}
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => handleSaveBillNo(o.id)}
+                          disabled={billNoSaving}
+                        >
+                          {billNoSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" className="link-button" onClick={cancelEditBillNo} disabled={billNoSaving}>
+                          Cancel
+                        </button>
+                        {billNoError && (
+                          <span className="dash-party-order-billno-error" role="alert">
+                            {billNoError}
+                          </span>
+                        )}
+                      </span>
                     )}
                     <span className="dash-party-order-value">{inr(o.totalValue)}</span>
                   </div>

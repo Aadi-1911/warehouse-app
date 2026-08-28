@@ -1645,6 +1645,17 @@ body {
   max-width: 120px;
 }
 
+/* Bill No. inside the billing confirm (2026-08-30). Deliberately NOT indented like
+   .bill-pricing-percent-field above — those are sub-answers to their checkbox, whereas this is a
+   top-level optional field that takes no part in the amount arithmetic. Separated from the total
+   line above it by a divider for the same reason: it belongs to the bill, not to the maths. */
+.bill-no-field {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+  max-width: 220px;
+}
+
 /* Negative top margin pulls this up against the percent field's own 14px .field margin-bottom,
    so the live amount reads as a direct consequence of what was just typed, not a floating line. */
 .bill-pricing-line {
@@ -1829,6 +1840,59 @@ body {
   color: var(--text-tertiary);
 }
 
+/* Bill No. (2026-08-30) — a reference tag shown beside the date on Owed rows. Styled like
+   .payment-history-edited above (muted, small, sitting inline after the date) rather than as a
+   badge, for the same reason: it's a factual annotation for locating paperwork, not a status
+   that needs to compete with the "+ Owed"/"− Paid" badge. Not italic, though — unlike "edited",
+   this is real transcribed data, and italicising a reference someone has to read character by
+   character against a paper bill would hurt legibility for no gain. */
+.payment-history-billno {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.payment-history-billno-edit {
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+
+/* The inline edit, replacing the tag in place rather than opening a form elsewhere on the row. */
+.payment-history-billno-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.payment-history-billno-form input {
+  /* Narrow on purpose — a bill number is short, and a full-width input here would imply this is
+     a major field rather than a small correction to one line of an existing row. */
+  width: 140px;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.payment-history-billno-form .link-button {
+  font-size: 11.5px;
+}
+
+.payment-history-billno-error {
+  font-size: 11px;
+  color: var(--danger-text);
+  /* Forces the message onto its own line below the input/buttons rather than squeezing into the
+     wrap gap beside them, where a long server message would fragment the row. */
+  flex-basis: 100%;
+}
+
 .payment-history-note {
   font-size: 11.5px;
   color: var(--text-secondary);
@@ -1892,6 +1956,15 @@ body {
 .sticky-action-row .btn-primary,
 .sticky-action-row .btn-secondary {
   flex: 1;
+  /* margin-top is neutralised here on purpose (fix, 2026-08-30). The two base classes carry
+     DIFFERENT top margins — .btn-primary 6px, .btn-secondary 16px — which is correct where they
+     stack vertically at the end of a form (the secondary wants more separation from the primary
+     above it). Side by side in this flex row it's actively wrong: the row stretches its children
+     to a common height, each MINUS its own top margin, so "Record payment" rendered 10px taller
+     than "Record amount owed" — same font, same padding, visibly different button sizes.
+     Zeroing both here fixes the pair without touching either base class, so every vertical
+     stacking use elsewhere in the app keeps its intended spacing. */
+  margin-top: 0;
 }
 
 .centered-empty-state {
@@ -3420,6 +3493,54 @@ body {
 
 .dash-party-order-date {
   flex: 1;
+}
+
+/* Bill No. on a billed order row (2026-08-30) — a reference tag, not a status, so it's muted and
+   sits inline between the status badge and the amount rather than becoming a badge of its own. */
+.dash-party-order-billno {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.dash-party-order-billno-value {
+  font-weight: 600;
+}
+
+.dash-party-order-billno-edit {
+  font-size: 11.5px;
+}
+
+.dash-party-order-billno-form {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dash-party-order-billno-form input {
+  /* Short field for a short value — see the Factory Payables equivalent for the same reasoning. */
+  width: 140px;
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.dash-party-order-billno-form .link-button {
+  font-size: 11.5px;
+}
+
+.dash-party-order-billno-error {
+  font-size: 11px;
+  color: var(--danger-text);
+  flex-basis: 100%;
 }
 
 /* Same "struck through, never hidden" convention as the Orders page's own cancelled rows
