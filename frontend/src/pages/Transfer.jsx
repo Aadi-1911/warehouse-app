@@ -45,6 +45,12 @@ import { createTransfer } from '../api/transfers';
 // transferable row set (see factoryOptions below), not from a separate factory list that could
 // offer a Factory with zero stock at this Location. A colour row nested three levels deep is
 // still exactly one Stock row, selected the same way a flat row always was — see LEARNING_LOG.md.
+//
+// The search-results list (2026-08-28) reuses this same "group by Article, select via chips"
+// shape for its own, unrelated reason: search results are a flat list that can span several
+// Articles (and, unlike the browsing view, several Factories) at once, so grouping by Article
+// first is what lets it stage several colours across different Articles in one search without a
+// second selection UI. See buildArticleGroups/searchArticleGroups and renderSearchGroupHeader.
 export default function Transfer() {
   const [locations, setLocations] = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(true);
@@ -74,25 +80,28 @@ export default function Transfer() {
   // (07_UI_DESIGN_BRIEF.md §5.9 amendment) — only one Factory's articles are ever on screen.
   const [expandedArticles, setExpandedArticles] = useState(new Set());
 
-  // The row currently being configured — kept whole rather than as a bare bundleId, same
-  // reasoning as before. Not yet staged; "+ Add to transfer" (or picking a different row) is
-  // what folds it into stagedLines. Used ONLY by the flat search-results list now (see
-  // renderStockRow) — the Factory→Article browsing view below uses checkedColors instead
-  // (2026-08-26, matching New Order's chip+stepper+"Add selected" pattern). Search keeps this
-  // older one-at-a-time mechanism unchanged: a search result is a flat list spanning any number
-  // of different Articles at once, so there's no single Article to scope a shared "Add selected"
-  // button to, the same reason New Order's own chip mechanism is scoped to one resolved product
-  // rather than a cross-article flat list.
-  const [selectedRow, setSelectedRow] = useState(null);
-  const [qtySets, setQtySets] = useState(0);
-  const [note, setNote] = useState('');
-
-  // { [bundleId]: { sets: number } } — present only for CHECKED colours within the Factory→
-  // Article browsing view, same shape as New Order's own checkedColors. Checking a chip reveals
-  // that colour's inline stepper; unchecking drops the entry and its in-progress quantity.
-  // bundleId (not colorId) is the key because that's this screen's own unique-selection-unit
-  // (see this file's own top-of-file note on why a Stock row, not an article+colour cascade, is
-  // what's selected here) — two different Articles can never collide on the same bundleId.
+  // { [bundleId]: { sets: number } } — present only for CHECKED colours, shared by BOTH the
+  // Factory→Article browsing view AND the search-results list (2026-08-28: search grouped by
+  // Article and switched onto this same mechanism — see buildArticleGroups/searchArticleGroups
+  // further down for how a flat, cross-Factory search result becomes the same per-Article shape
+  // this mechanism was already built around).
+  // Same shape as New Order's own checkedColors. Checking a chip reveals that colour's inline
+  // stepper; unchecking drops the entry and its in-progress quantity. bundleId (not colorId) is
+  // the key because that's this screen's own unique-selection-unit (see this file's own
+  // top-of-file note on why a Stock row, not an article+colour cascade, is what's selected here)
+  // — two different Articles, even across different Factories, can never collide on the same
+  // bundleId, which is exactly what lets one flat map serve both a Factory-scoped browsing view
+  // and a Factory-spanning search list with no cross-context ambiguity.
+  //
+  // Until 2026-08-28, search instead used a separate one-at-a-time mechanism (a kept-whole
+  // `selectedRow` + `qtySets` + an optional `note`, staged via an explicit "+ Add to transfer"
+  // button) — a real, since-fixed inconsistency: two different selection idioms on one screen,
+  // for no reason tied to what a Transfer actually is. That mechanism is gone entirely now, not
+  // just unused by search — it was ALREADY true (per its own comment) that nothing else on this
+  // screen used it, so retiring search onto checkedColors left no remaining caller. One concrete,
+  // disclosed consequence: the optional per-line note is gone too, since the chip/"Add selected"
+  // mechanism has no note concept anywhere (matching New Order) — confirmed as the intended
+  // tradeoff rather than an oversight before this was built.
   const [checkedColors, setCheckedColors] = useState({});
 
   // Every queued line, across any number of different articles/colours — mirrors Receive
@@ -172,9 +181,6 @@ export default function Transfer() {
     // they all currently match, since this is the only place that value ever changes) — so a
     // source switch wipes the whole staged batch rather than leaving lines that no longer
     // correspond to what's on screen.
-    setSelectedRow(null);
-    setQtySets(0);
-    setNote('');
     setSearch('');
     setStagedLines([]);
     // The Factory dropdown's own options are derived from THIS location's rows (see
@@ -183,33 +189,30 @@ export default function Transfer() {
     // carry over meaningfully.
     setFactoryId('');
     setExpandedArticles(new Set());
-    // checkedColors is exactly "any in-progress row selection" in the new chip mechanism's own
-    // terms — every checked colour's remaining-quantity cap is computed against THIS location's
-    // stock, so a location switch invalidates it the same way it invalidates selectedRow/qtySets
-    // above. stagedLines is still deliberately left alone (cleared just above, for its own
-    // separate reason: every staged line so far genuinely was built from the OLD location).
+    // checkedColors is exactly "any in-progress selection, browsing or search" in the chip
+    // mechanism's own terms — every checked colour's remaining-quantity cap is computed against
+    // THIS location's stock, so a location switch invalidates all of it unconditionally, the same
+    // way it invalidates the search box just above. stagedLines is still deliberately left alone
+    // (cleared just above, for its own separate reason: every staged line so far genuinely was
+    // built from the OLD location).
     setCheckedColors({});
     // Clearing a to-location that now equals the new from-location is what keeps the two
     // dropdowns from ever agreeing (the backend rejects it, but the UI shouldn't offer it).
     if (newId === toLocationId) setToLocationId('');
   }
 
-  // A new Factory means an entirely different set of Articles on screen — collapse everything
-  // and drop any in-progress row selection, the same reasoning handleFromLocationChange uses
-  // for a Location switch. stagedLines is deliberately left untouched: a staged line is tied to
-  // the source Location it was picked from (fromLocationId), not to which Factory is currently
-  // being BROWSED, so a line staged while looking at a different Factory stays perfectly valid
-  // and stays staged — this task's own instruction that staging is unaffected by the new picker.
+  // A new Factory means an entirely different set of Articles on screen — collapse everything and
+  // drop the whole in-progress checked-colour map unconditionally, the same reasoning
+  // handleFromLocationChange uses for a Location switch (and per this task's own explicit
+  // requirement: this reset must behave EXACTLY as it did before search shared the same map —
+  // it does not attempt to selectively preserve colours checked under a different Factory via
+  // search, only a full clear, matching prior behaviour). stagedLines is deliberately left
+  // untouched: a staged line is tied to the source Location it was picked from (fromLocationId),
+  // not to which Factory is currently being BROWSED, so a line staged while looking at a
+  // different Factory stays perfectly valid and stays staged.
   function handleFactoryChange(newFactoryId) {
     setFactoryId(newFactoryId);
     setExpandedArticles(new Set());
-    setSelectedRow(null);
-    setQtySets(0);
-    setNote('');
-    // Same "in-progress browsing selection, not staging" reasoning as handleFromLocationChange's
-    // own reset — a new Factory means an entirely different set of Articles and colour chips on
-    // screen, so whatever was checked under the previous Factory no longer corresponds to
-    // anything visible. stagedLines is untouched, per this task's own explicit requirement.
     setCheckedColors({});
   }
 
@@ -220,48 +223,6 @@ export default function Transfer() {
       else next.add(productId);
       return next;
     });
-  }
-
-  // Shared by row-switching and "Transfer stock": folds the currently active row (if it has a
-  // valid quantity + destination) into the staged list. Returns the resulting array so a caller
-  // that needs it immediately (handleOpenConfirm) isn't stuck waiting on the next render — same
-  // shape as Receive Stock's finalizeActiveColor.
-  function finalizeActiveLine(currentStaged) {
-    if (!selectedRow || qtySets <= 0 || !toLocationId) return currentStaged;
-    return [
-      ...currentStaged,
-      {
-        id: nextLineIdRef.current++,
-        bundleId: selectedRow.bundleId,
-        articleNo: selectedRow.productArticleNo,
-        colorName: selectedRow.colorName,
-        qtySets,
-        fromLocationId,
-        fromLocationName: locations.find((l) => l.id === fromLocationId)?.name ?? '',
-        toLocationId,
-        toLocationName: locations.find((l) => l.id === toLocationId)?.name ?? '',
-        note: note.trim() || undefined,
-      },
-    ];
-  }
-
-  // Picking a different row silently finalizes whatever was active before it — matching Receive
-  // Stock's colour-switch behaviour. The explicit "+ Add to transfer" button below exists for
-  // the same reason Receive Stock's "+ Add another colour" does: per the standing discoverability
-  // rule, a non-obvious interaction (switching rows quietly stages the old one) needs its own
-  // visible, explicit affordance too, not just a side effect someone has to already know about.
-  function handleSelectRow(row) {
-    setStagedLines((prev) => finalizeActiveLine(prev));
-    setSelectedRow(row);
-    setQtySets(0);
-    setNote('');
-  }
-
-  function handleStageAnother() {
-    setStagedLines((prev) => finalizeActiveLine(prev));
-    setSelectedRow(null);
-    setQtySets(0);
-    setNote('');
   }
 
   function handleRemoveStaged(lineId) {
@@ -295,9 +256,24 @@ export default function Transfer() {
   // New Order's handleAddSelected exactly, adapted for Transfer's flat (not per-article-grouped)
   // stagedLines shape: one line per colour, same as every other staged line on this screen.
   // Clears only THIS article's own bundleIds out of checkedColors afterward, not the whole map —
-  // unlike New Order (which only ever has one resolved article active at a time), this screen
-  // can have several different articles expanded and mid-selection simultaneously, and adding
-  // one of them must never discard progress checked under a different, still-open article.
+  // several different articles can be mid-selection simultaneously (several expanded in the
+  // browsing view, or several matched at once in a search), and adding one of them must never
+  // discard progress checked under a different one.
+  //
+  // Takes the same `{ productId, articleNo, rows }` shape regardless of which caller built it —
+  // the browsing view's Factory-filtered `articleGroups` or search's Factory-spanning
+  // `searchArticleGroups` (2026-08-28, see buildArticleGroups below) — because this function only
+  // ever reads `article.rows` and keys everything off each row's own `bundleId`, which is
+  // globally unique with no per-Factory scoping to get confused by. Confirmed by real testing,
+  // not just by this reasoning: checking colours under two DIFFERENT articles surfaced by the
+  // same search, then clicking "Add selected" on only one of them, leaves the other article's
+  // checked chips exactly as they were.
+  //
+  // No note field on this path — matching New Order's own chip mechanism, which has no note
+  // concept at all. A batch of several colours staged in one click has no single row to attach a
+  // free-text note to; the older search-based single-select flow used to offer one, but that
+  // mechanism is gone entirely as of 2026-08-28 (see the checkedColors state comment above) —
+  // dropping the note capability was a confirmed, deliberate tradeoff, not an oversight.
   function handleAddSelectedForArticle(article) {
     const toAdd = article.rows.filter((row) => (checkedColors[row.bundleId]?.sets ?? 0) > 0);
     if (toAdd.length === 0 || !toLocationId) return;
@@ -317,10 +293,6 @@ export default function Transfer() {
         fromLocationName,
         toLocationId,
         toLocationName,
-        // No note field on this path — matching New Order's own chip mechanism, which has no
-        // note concept at all. A batch of several colours staged in one click has no single row
-        // to attach a free-text note to; the older search-based single-select flow still offers
-        // one, unchanged, for the case where that matters.
         note: undefined,
       })),
     ]);
@@ -345,13 +317,12 @@ export default function Transfer() {
     return row.qtySets - staged;
   }
 
-  async function handleOpenConfirm() {
-    const finalLines = finalizeActiveLine(stagedLines);
-    if (finalLines.length === 0) return;
-    setStagedLines(finalLines);
-    setSelectedRow(null);
-    setQtySets(0);
-    setNote('');
+  // No finalizeActiveLine step any more — every line reaches stagedLines only through an explicit
+  // "Add selected" click (handleAddSelectedForArticle), never through an implicit "whatever's
+  // active right now" fold-in, since there's no single "active row" concept left on this screen
+  // once search adopted the same chip mechanism as browsing.
+  function handleOpenConfirm() {
+    if (stagedLines.length === 0) return;
     setSearch('');
     setConfirmOpen(true);
   }
@@ -393,11 +364,12 @@ export default function Transfer() {
     setSubmitProgress(null);
     // Only the lines that failed stay staged — a succeeded line is already a committed stock
     // change and must not reappear as something still waiting to be sent. Written as a merge
-    // against whatever's CURRENTLY in stagedLines, not a flat replace: staging is disabled
-    // while submitting (see canStage/the row buttons below), but this is the backstop in case
-    // that's ever bypassed — `lines` is a snapshot from the START of this submission, so
-    // anything in current state that wasn't part of that snapshot was staged mid-submit and
-    // must survive, not be silently clobbered by overwriting state with a stale plan.
+    // against whatever's CURRENTLY in stagedLines, not a flat replace: staging is disabled while
+    // submitting (every chip/stepper/"Add selected" control below passes disabled={submitting}),
+    // but this is the backstop in case that's ever bypassed — `lines` is a snapshot from the
+    // START of this submission, so anything in current state that wasn't part of that snapshot
+    // was staged mid-submit and must survive, not be silently clobbered by overwriting state with
+    // a stale plan.
     setStagedLines((prev) => {
       const submittedIds = new Set(lines.map((l) => l.id));
       const stagedMidSubmit = prev.filter((l) => !submittedIds.has(l.id));
@@ -421,12 +393,11 @@ export default function Transfer() {
   // same "remaining > 0, or currently being configured" filter the flat list has always applied
   // (requirement 6's staged-quantity cap), computed once so search results, Factory options, and
   // the Article groups are all derived from an identical, consistent set of rows. "currently
-  // being configured" now covers BOTH selection mechanisms on this screen: the search list's
-  // own selectedRow, and the browsing view's checkedColors (a colour checked down to its last
-  // available set must stay visible with its chip still checked, not vanish out from under an
-  // owner mid-selection).
+  // being configured" means checkedColors now, in either context (browsing or search) — a colour
+  // checked down to its last available set must stay visible with its chip still checked, not
+  // vanish out from under an owner mid-selection.
   const availableRows = sourceStock.filter(
-    (r) => remainingForRow(r) > 0 || r.bundleId === selectedRow?.bundleId || checkedColors[r.bundleId] !== undefined
+    (r) => remainingForRow(r) > 0 || checkedColors[r.bundleId] !== undefined
   );
 
   // A search term bypasses Factory/Article grouping entirely and searches across the WHOLE
@@ -450,37 +421,56 @@ export default function Transfer() {
     .map(([id, name]) => ({ id, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // Grouped by Article for the accordion (07_UI_DESIGN_BRIEF.md §5.9 amendment) — only the rows
-  // under the currently selected Factory. Array.from(Map.values()) preserves first-seen order;
-  // sorted by articleNo afterward for a stable, predictable list rather than raw fetch order.
-  const articleGroups = (() => {
-    if (!factoryId) return [];
+  // Groups any set of rows by Article — shared by the Factory→Article browsing view (only rows
+  // under the currently selected Factory) and, as of 2026-08-28, the search-results list (rows
+  // spanning any number of Factories at once, unfiltered). productId is the group key rather than
+  // articleNo because article numbers are only unique PER Factory (rule 54) — two different
+  // Factories can legitimately share an article number, and productId (a real, globally-unique
+  // row id) can never collide the way a raw articleNo string could across Factories. factoryId/
+  // factoryName ride along on every group unconditionally (not just when it's actually needed):
+  // the browsing view's caller already knows which Factory it filtered to and simply doesn't
+  // render them, while search's caller needs them to disambiguate two identically-numbered
+  // articles from different Factories in one flat, cross-Factory list — one function serving both
+  // shapes correctly is simpler than two near-identical ones that could drift.
+  // Array.from(Map.values()) preserves first-seen order; sorted by articleNo afterward for a
+  // stable, predictable list rather than raw fetch order.
+  function buildArticleGroups(rows) {
     const byProduct = new Map();
-    for (const row of availableRows) {
-      if (row.factoryId !== factoryId) continue;
+    for (const row of rows) {
       if (!byProduct.has(row.productId)) {
-        byProduct.set(row.productId, { productId: row.productId, articleNo: row.productArticleNo, rows: [] });
+        byProduct.set(row.productId, {
+          productId: row.productId,
+          articleNo: row.productArticleNo,
+          factoryId: row.factoryId,
+          factoryName: row.factoryName,
+          rows: [],
+        });
       }
       byProduct.get(row.productId).rows.push(row);
     }
     return Array.from(byProduct.values()).sort((a, b) => a.articleNo.localeCompare(b.articleNo));
-  })();
+  }
+
+  const articleGroups = factoryId ? buildArticleGroups(availableRows.filter((r) => r.factoryId === factoryId)) : [];
+
+  // Search's own Article grouping (2026-08-28) — the whole reason this task exists. A flat search
+  // can match rows across several different Articles (and, unlike the browsing view, several
+  // different Factories) at once; grouping by productId first lets each group render through the
+  // exact same renderArticleChips the browsing view already uses, rather than a second selection
+  // UI built just for search. Deliberately NOT filtered to any Factory — search already bypasses
+  // Factory scoping entirely (requirement 3), searching the whole Location regardless of which
+  // Factory is selected in the (hidden, while searching) dropdown.
+  const searchArticleGroups = searchText ? buildArticleGroups(searchResults) : [];
 
   // The source location is removed from the destination list entirely — the backend rejects a
   // same-location transfer with SAME_LOCATION, but an option that can only ever produce an
   // error shouldn't be offered in the first place.
   const destinationOptions = locations.filter((l) => l.id !== fromLocationId);
 
-  const maxQty = selectedRow ? remainingForRow(selectedRow) : 0;
-  // !submitting matters: without it, a line could be staged while a previous batch is still
-  // mid-flight, landing in the same stagedLines array handleConfirmedSubmit is about to
-  // overwrite at the end of its run — see the merge-not-replace comment there for the backstop
-  // this is the primary defense against.
-  const canStage = !!selectedRow && qtySets > 0 && qtySets <= maxQty && !!toLocationId && !submitting;
-  // Permissive the same way Receive Stock's canAddToReceipt is: a row picked and quantified but
-  // never explicitly staged must still count when opening the confirm step, not be silently
-  // dropped just because "+ Add to transfer" was never clicked.
-  const canOpenConfirm = (stagedLines.length > 0 || canStage) && !submitting;
+  // No "in-progress single row" concept left to fold in here — every line reaches stagedLines
+  // through an explicit "Add selected" click now, so opening the confirm step just needs
+  // something to confirm.
+  const canOpenConfirm = stagedLines.length > 0 && !submitting;
 
   const stagedTotalSets = stagedLines.reduce((sum, l) => sum + l.qtySets, 0);
   const stagedDestinations = new Set(stagedLines.map((l) => l.toLocationName));
@@ -494,30 +484,28 @@ export default function Transfer() {
     return null;
   }
 
-  // Used ONLY by the flat search-results list now (2026-08-26) — the Factory→Article browsing
-  // view below (both a single-colour article and a multi-colour one) uses renderArticleChips
-  // instead. Always shows the article number: search results span any number of different
-  // Articles at once, so there's no shared header to state it once the way the browsing view's
-  // accordion (or its single-colour flat render) does.
-  function renderStockRow(row) {
-    const selected = selectedRow?.bundleId === row.bundleId;
+  // Search's own group header (2026-08-28) — a plain, non-collapsible label above each Article's
+  // chips, styled with the same accordion-header-text/accordion-title-sm classes the browsing
+  // view's real (clickable) accordion header uses, but with no button/chevron: unlike browsing,
+  // where a Factory is already chosen and only a MULTI-colour Article gets a header at all (a
+  // single-colour one renders its chip directly, no header, since nothing needs disambiguating
+  // within an already-Factory-scoped list), search results have no such shared context — a search
+  // can surface rows from several different Factories at once, and article numbers are only
+  // unique PER Factory (rule 54), so even a single-colour match needs its own header naming BOTH
+  // the article and the factory, or two different Factories' identically-numbered articles would
+  // render as indistinguishable chip blocks. Not collapsible on purpose: a search result is
+  // already a narrowed, deliberately-sought-out list, so hiding it behind an extra click a person
+  // would have to already know to make would undercut the reason they searched in the first
+  // place — this is a considered UX choice, not a shortcut, and it's the one place search's
+  // grouped rendering visibly differs from the browsing view it reuses renderArticleChips from.
+  function renderSearchGroupHeader(article) {
     return (
-      <button
-        key={row.bundleId}
-        type="button"
-        className={`transfer-stock-row ${selected ? 'transfer-stock-row-selected' : ''}`}
-        onClick={() => handleSelectRow(row)}
-        aria-pressed={selected}
-        // Disabled while a batch is submitting — staging a new line here would land in the same
-        // stagedLines array handleConfirmedSubmit is mid-flight on.
-        disabled={submitting}
-      >
-        <span className="transfer-row-article">{row.productArticleNo}</span>
-        <span className="transfer-row-color">{row.colorName}</span>
-        <span className="transfer-row-qty">
-          {remainingForRow(row)} set{remainingForRow(row) === 1 ? '' : 's'}
-        </span>
-      </button>
+      <div className="accordion-header-text transfer-search-group-header">
+        <div className="accordion-title-sm">{article.articleNo}</div>
+        <div className="accordion-subtitle">
+          <span className="muted">{article.factoryName}</span>
+        </div>
+      </div>
     );
   }
 
@@ -741,11 +729,20 @@ export default function Transfer() {
         {stockListMessage() ? (
           <p className="muted centered-empty-state">{stockListMessage()}</p>
         ) : searchText ? (
-          // Flat search-result list — unchanged behavior, works across every Factory at once.
-          // Still the older one-at-a-time selection mechanism (see renderStockRow's own comment
-          // for why the new chip mechanism doesn't extend here).
+          // Search results, grouped by Article (2026-08-28) — same chip+stepper+"Add selected"
+          // mechanism as the browsing view below, via the shared renderArticleChips, so there is
+          // only ever ONE selection UI on this screen. Still works across every Factory at once,
+          // unchanged (requirement 3) — grouping is purely a rendering change, not a new filter.
+          // Every group gets its own header (see renderSearchGroupHeader) naming both the article
+          // and its Factory, since search can surface two different Factories' articles that
+          // happen to share a number (rule 54) side by side in one flat list.
           <div className="transfer-stock-list">
-            {searchResults.map((row) => renderStockRow(row))}
+            {searchArticleGroups.map((article) => (
+              <div key={article.productId} className="transfer-search-group">
+                {renderSearchGroupHeader(article)}
+                {renderArticleChips(article)}
+              </div>
+            ))}
           </div>
         ) : (
           // Factory → Article (collapsible) → Colour hierarchy (07_UI_DESIGN_BRIEF.md §5.9
@@ -794,65 +791,6 @@ export default function Transfer() {
             })}
           </div>
         )}
-
-        {selectedRow && (
-          <div className="field">
-            <span className="field-label">
-              Sets to move — {maxQty} available at{' '}
-              {locations.find((l) => l.id === fromLocationId)?.name}
-            </span>
-            <div className="stepper">
-              <button
-                type="button"
-                className="stepper-btn"
-                onClick={() => setQtySets((n) => Math.max(0, n - 1))}
-                disabled={qtySets === 0}
-                aria-label="Decrease sets"
-              >
-                −
-              </button>
-              <span className="stepper-value">{qtySets}</span>
-              {/* Capped at what's actually still available for this row (requirement 6) —
-                  raw stock minus whatever this same row already has staged. The backend's
-                  guarded UPDATE is the real enforcement (it's what makes two simultaneous
-                  transfers safe) — this cap just means the happy path never walks into that
-                  error on purpose. */}
-              <button
-                type="button"
-                className="stepper-btn"
-                onClick={() => setQtySets((n) => Math.min(maxQty, n + 1))}
-                disabled={qtySets >= maxQty}
-                aria-label="Increase sets"
-              >
-                +
-              </button>
-            </div>
-
-            <label className="field">
-              <span className="field-label">Note (optional)</span>
-              <input
-                type="text"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="e.g. sent with the Tuesday van"
-              />
-            </label>
-          </div>
-        )}
-
-        {/* Explicit, always-visible "stage more" step — distinct from "Transfer stock" below,
-            which commits the WHOLE staged batch. Disabled until there's an active row +
-            quantity + destination actually worth staging, same guard finalizeActiveLine itself
-            uses. Requires a destination up front since a staged line snapshots its own
-            toLocationId rather than reading it live at submit time. */}
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={handleStageAnother}
-          disabled={!canStage}
-        >
-          + Add to transfer
-        </button>
 
         {/* Staged lines — every queued line across any number of articles, removable
             individually before "Transfer stock" commits the whole batch. Destination is shown

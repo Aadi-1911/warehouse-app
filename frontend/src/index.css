@@ -2050,6 +2050,28 @@ body {
   border-bottom: none;
 }
 
+/* Search results, grouped by Article (2026-08-28) — one wrapper per Article, holding a plain
+   non-collapsible header (.transfer-search-group-header) plus that Article's own
+   .transfer-article-chips block. The divider lives HERE rather than relying on
+   .transfer-article-chips' own border-bottom: that rule removes itself on :last-child, but
+   inside this wrapper .transfer-article-chips is always the wrapper's own last (and only other)
+   child regardless of how many search groups follow it — so without this rule, every group's
+   divider would vanish, not just the final one. */
+.transfer-search-group {
+  border-bottom: 1px solid var(--divider);
+}
+
+.transfer-search-group:last-child {
+  border-bottom: none;
+}
+
+/* Matches .transfer-article-chips' own horizontal padding so the header and its chips below
+   read as one aligned block; top-padding only since the chips block's own padding handles the
+   bottom. */
+.transfer-search-group-header {
+  padding: 10px 8px 0;
+}
+
 /* --- New Order: Party picker --- */
 .party-picker-summary {
   display: flex;
