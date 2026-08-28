@@ -7,6 +7,14 @@ import { listProducts, getValidColors } from '../../api/products';
 import { createTransactionCorrection } from '../../api/transactionCorrections';
 import { createTransferCorrection } from '../../api/transferCorrections';
 import PinPrompt from '../../components/PinPrompt';
+import {
+  GROUP_MODES,
+  articleGroupFor,
+  locationGroupFor,
+  buildGroups,
+  buildPersonGroups,
+  buildDayGroups,
+} from '../../utils/historyGrouping';
 
 // Owner Dashboard — History (07_UI_DESIGN_BRIEF.md §8's "History page" section, rules 58 and 70).
 //
@@ -17,6 +25,19 @@ import PinPrompt from '../../components/PinPrompt';
 // /api/history is unfiltered and already returns every entry with no pagination (04_API_SPEC.md),
 // so this page adds no query params — it renders the full feed, whereas Overview's own activity
 // widget deliberately only shows a recent slice.
+//
+// "Group by" (2026-08-28) — the same Person/Article/Location/Chronological re-presentation shipped
+// on the mobile screen first, applied here unchanged in RULE (which bucket an entry falls into
+// under which mode lives in utils/historyGrouping.js, imported by both screens so the rules can
+// never drift apart) but different in RENDERING: this screen's rows carry the Correct affordance
+// (below) wired to a pile of top-level component state (correctingId/draft/etc, keyed off
+// entry.transactionId or entry.transferId), which mobile's read-only rows don't have. Duplicating
+// that correction JSX once per grouping mode would risk exactly the kind of drift this whole
+// feature is designed to avoid, so it's factored into renderEntry()/renderSection() below —
+// closures over this component's state, called from all four grouping branches — rather than a
+// separate exported component the way mobile's HistoryEntryRow/HistorySection are. The Correct
+// button and its form work identically regardless of which mode is active, since renderEntry
+// doesn't know or care which bucket produced the entry it's given.
 //
 // Transfer Corrections (added 2026-08-21, same day as Transaction Corrections) — the deferred
 // follow-up. Same principle (never edit in place, atomic reversal + reapplication), no PIN branch
@@ -77,20 +98,6 @@ function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 }
 
-function formatDayHeading(iso) {
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  const sameDay = (a, b) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  if (sameDay(d, today)) return 'Today';
-  if (sameDay(d, yesterday)) return 'Yesterday';
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
 export default function History() {
   const [entries, setEntries] = useState([]);
   const [status, setStatus] = useState('idle');
@@ -148,6 +155,12 @@ export default function History() {
   const [transferFormError, setTransferFormError] = useState(null);
   const [transferDraft, setTransferDraft] = useState(null);
   const [transferConfirmSubmitting, setTransferConfirmSubmitting] = useState(false);
+
+  // 'chronological' is the default, matching mobile's own default — the other three modes
+  // re-bucket the SAME `entries` array client-side; switching between them never re-fetches and
+  // never touches correction state (correctingId/draft/etc are keyed off the entry itself, not
+  // off which bucket it's currently rendered under).
+  const [groupMode, setGroupMode] = useState('chronological');
 
   function loadHistory() {
     setStatus('loading');
@@ -419,18 +432,415 @@ export default function History() {
     }
   }
 
-  // Same "insert a heading only when the calendar day changes" grouping as staff's screen —
-  // the server already sorts newest-first, this never re-sorts.
-  const days = [];
-  entries.forEach((entry) => {
-    const heading = formatDayHeading(entry.timestamp);
-    const last = days[days.length - 1];
-    if (!last || last.heading !== heading) {
-      days.push({ heading, entries: [entry] });
-    } else {
-      last.entries.push(entry);
-    }
-  });
+  // Grouping computed for whichever mode is active — logic shared with mobile's History.jsx via
+  // utils/historyGrouping.js (see this file's header comment for why the RULES are shared but the
+  // rendering below isn't). Cheap to compute all branches unconditionally since `entries` is at
+  // most a few hundred rows and only one branch's OUTPUT is ever used per render.
+  const dayGroups = buildDayGroups(entries);
+  const personGroups = buildPersonGroups(entries);
+  const articleGroups = buildGroups(entries, articleGroupFor);
+  const locationGroups = buildGroups(entries, locationGroupFor);
+
+  // One entry's row + its Correct affordance and (when open) correction form — extracted so every
+  // "Group by" mode renders an IDENTICAL row rather than four hand-copied versions. Stays a plain
+  // function (not a separate component) because it closes over this component's own correction
+  // state (correctingId, draft, touchPrice, ...) and handlers rather than receiving them as props —
+  // there's only ever one of these forms open at a time across the whole page, keyed by the
+  // entry's own transactionId/transferId, so which grouping bucket the entry currently renders
+  // under is irrelevant to whether its form is open.
+  function renderEntry(entry) {
+    const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
+    const actorColor = actorBadgeColorFor(entry.actorName);
+    const isReceipt = entry.type === 'RECEIPT';
+    const correcting = isReceipt && correctingId === entry.transactionId;
+    const isTransfer = entry.type === 'TRANSFER';
+    const correctingTransfer = isTransfer && correctingTransferId === entry.transferId;
+    return (
+      <div key={entry.id} className="history-row">
+        <div className="history-row-top">
+          <span className={`badge ${badgeClass}`}>{entry.label ?? FALLBACK_LABEL}</span>
+          <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
+        </div>
+        <p className="history-row-description">{entry.description}</p>
+        <p className="history-row-actor">
+          <span
+            className="badge history-actor-badge"
+            style={{ background: actorColor.bg, color: actorColor.text }}
+          >
+            {entry.actorName}
+          </span>
+          {entry.partyName ? <span className="muted">· {entry.partyName}</span> : null}
+        </p>
+
+        {isReceipt && !entry.corrected && !correcting && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => handleStartCorrect(entry)}
+          >
+            Correct
+          </button>
+        )}
+        {isReceipt && entry.corrected && (
+          <span className="muted history-row-corrected-note">Already corrected</span>
+        )}
+
+        {correcting && (
+          <div className="dash-history-correction">
+            {!draft ? (
+              <form onSubmit={handleContinueCorrection}>
+                <label className="field">
+                  <span className="field-label">Quantity (sets)</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={qtySets}
+                    onChange={(e) => setQtySets(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field-label">Location</span>
+                  <select value={locationId} onChange={(e) => setLocationId(e.target.value)} required>
+                    {locations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="field">
+                  <span className="field-label">Article / colour</span>
+                  {!changingArticle ? (
+                    <div className="lookup-banner lookup-banner-success">
+                      <p>{articleDisplay}</p>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => {
+                          setChangingArticle(true);
+                          resetArticleSearch();
+                        }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="article-lookup-row">
+                        <input
+                          type="text"
+                          value={articleNoInput}
+                          onChange={(e) => setArticleNoInput(e.target.value)}
+                          disabled={!!resolvedProduct}
+                          placeholder="e.g. A101"
+                          autoCapitalize="characters"
+                        />
+                        {!resolvedProduct && (
+                          <button
+                            type="button"
+                            className="btn-primary btn-inline"
+                            onClick={handleSearchArticle}
+                            disabled={searching}
+                          >
+                            {searching ? 'Searching…' : 'Search'}
+                          </button>
+                        )}
+                      </div>
+
+                      {searchError && (
+                        <p className="error-banner" role="alert">
+                          {searchError}
+                        </p>
+                      )}
+
+                      {disambiguationOptions && (
+                        <div className="chip-row">
+                          {disambiguationOptions.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className="chip"
+                              onClick={() => {
+                                setResolvedProduct(p);
+                                setDisambiguationOptions(null);
+                              }}
+                            >
+                              {p.name} — {factoryName(p.factoryId)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {resolvedProduct && (
+                        <>
+                          <div className="lookup-banner lookup-banner-success">
+                            <p>
+                              <strong>{resolvedProduct.articleNo}</strong> — {resolvedProduct.name}
+                            </p>
+                            <button type="button" className="link-button" onClick={resetArticleSearch}>
+                              Change
+                            </button>
+                          </div>
+
+                          {colorsError && (
+                            <p className="error-banner" role="alert">
+                              Could not load colors: {colorsError}
+                            </p>
+                          )}
+
+                          {colorsStatus === 'loaded' && colors.length > 0 && (
+                            <div className="chip-row">
+                              {colors.map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  className="chip"
+                                  onClick={() => handlePickColor(c)}
+                                >
+                                  {c.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <label className="field checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={touchPrice}
+                    onChange={(e) => setTouchPrice(e.target.checked)}
+                  />
+                  <span>Cost price was also wrong</span>
+                </label>
+                {touchPrice && (
+                  <label className="field">
+                    <span className="field-label">Corrected cost price (per piece)</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="0.01"
+                      value={costPrice}
+                      onChange={(e) => setCostPrice(e.target.value)}
+                      required
+                    />
+                  </label>
+                )}
+
+                <label className="field">
+                  <span className="field-label">Reason</span>
+                  <select value={reason} onChange={(e) => setReason(e.target.value)} required>
+                    <option value="" disabled>
+                      Select a reason
+                    </option>
+                    {CORRECTION_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">Note {reason === 'OTHER' ? '' : '(optional)'}</span>
+                  <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
+                </label>
+
+                {formError && (
+                  <p className="error-banner" role="alert">
+                    {formError}
+                  </p>
+                )}
+
+                <button type="submit" className="btn-primary">
+                  Continue
+                </button>
+                <button type="button" className="btn-secondary" onClick={handleCancelCorrect}>
+                  Cancel
+                </button>
+              </form>
+            ) : touchPrice ? (
+              <div>
+                <p className="muted">Cost price is changing — enter your PIN to confirm this correction.</p>
+                <PinPrompt
+                  submitLabel="Confirm correction"
+                  submittingLabel="Correcting…"
+                  autoFocus
+                  onSubmit={handleConfirmWithPin}
+                />
+                <button type="button" className="link-button" onClick={() => setDraft(null)}>
+                  Change details
+                </button>
+              </div>
+            ) : (
+              <div>
+                {formError && (
+                  <p className="error-banner" role="alert">
+                    {formError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleConfirmNoPin}
+                  disabled={confirmSubmitting}
+                >
+                  {confirmSubmitting ? 'Correcting…' : 'Confirm correction'}
+                </button>
+                <button type="button" className="link-button" onClick={() => setDraft(null)}>
+                  Change details
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isTransfer && !entry.corrected && !correctingTransfer && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => handleStartCorrectTransfer(entry)}
+          >
+            Correct
+          </button>
+        )}
+        {isTransfer && entry.corrected && (
+          <span className="muted history-row-corrected-note">Already corrected</span>
+        )}
+
+        {correctingTransfer && (
+          <div className="dash-history-correction">
+            {!transferDraft ? (
+              <form onSubmit={handleContinueCorrectTransfer}>
+                <label className="field">
+                  <span className="field-label">Quantity (sets)</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={transferQtySets}
+                    onChange={(e) => setTransferQtySets(e.target.value)}
+                    required
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field-label">From location</span>
+                  <select
+                    value={transferFromLocationId}
+                    onChange={(e) => setTransferFromLocationId(e.target.value)}
+                    required
+                  >
+                    {locations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">To location</span>
+                  <select
+                    value={transferToLocationId}
+                    onChange={(e) => setTransferToLocationId(e.target.value)}
+                    required
+                  >
+                    {locations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span className="field-label">Reason</span>
+                  <select
+                    value={transferReason}
+                    onChange={(e) => setTransferReason(e.target.value)}
+                    required
+                  >
+                    <option value="" disabled>
+                      Select a reason
+                    </option>
+                    {TRANSFER_CORRECTION_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">
+                    Note {transferReason === 'OTHER' ? '' : '(optional)'}
+                  </span>
+                  <input
+                    type="text"
+                    value={transferNote}
+                    onChange={(e) => setTransferNote(e.target.value)}
+                  />
+                </label>
+
+                {transferFormError && (
+                  <p className="error-banner" role="alert">
+                    {transferFormError}
+                  </p>
+                )}
+
+                <button type="submit" className="btn-primary">
+                  Continue
+                </button>
+                <button type="button" className="btn-secondary" onClick={handleCancelCorrectTransfer}>
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <div>
+                {transferFormError && (
+                  <p className="error-banner" role="alert">
+                    {transferFormError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleConfirmTransferCorrection}
+                  disabled={transferConfirmSubmitting}
+                >
+                  {transferConfirmSubmitting ? 'Correcting…' : 'Confirm correction'}
+                </button>
+                <button type="button" className="link-button" onClick={() => setTransferDraft(null)}>
+                  Change details
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // One labelled section (a heading plus a card of rows) — reused for a day heading AND for every
+  // "Group by" section, same as mobile's HistorySection. `heading` is a node, not a string, so
+  // Person grouping can pass the actual coloured actor badge (reusing history-actor-badge, the
+  // exact same pill each row's own actor line already renders) instead of plain text.
+  function renderSection(key, heading, sectionEntries) {
+    return (
+      <div key={key} className="history-day">
+        <div className="eyebrow history-day-heading">{heading}</div>
+        <div className="dash-card history-day-card">{sectionEntries.map((entry) => renderEntry(entry))}</div>
+      </div>
+    );
+  }
 
   if (status !== 'loaded') {
     return (
@@ -454,396 +864,43 @@ export default function History() {
       )}
       {correctionSuccess && <p className="dash-party-payment-success">{correctionSuccess}</p>}
 
+      {/* Same control as mobile's History.jsx, same default. Always rendered once loaded, even on
+          an empty feed, so the chosen mode doesn't silently reset underneath someone. */}
+      <label className="field">
+        <span className="field-label">Group by</span>
+        <select value={groupMode} onChange={(e) => setGroupMode(e.target.value)}>
+          {GROUP_MODES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
       {entries.length === 0 ? (
         <p className="muted dash-empty">Nothing recorded yet.</p>
+      ) : groupMode === 'chronological' ? (
+        dayGroups.map((day) => renderSection(day.heading, day.heading, day.entries))
+      ) : groupMode === 'person' ? (
+        personGroups.map((group) =>
+          renderSection(
+            group.actorName,
+            <span
+              className="badge history-actor-badge"
+              style={{
+                background: actorBadgeColorFor(group.actorName).bg,
+                color: actorBadgeColorFor(group.actorName).text,
+              }}
+            >
+              {group.actorName}
+            </span>,
+            group.entries
+          )
+        )
+      ) : groupMode === 'article' ? (
+        articleGroups.map((group) => renderSection(group.key, group.label, group.entries))
       ) : (
-        days.map((day) => (
-          <div key={day.heading} className="history-day">
-            <div className="eyebrow history-day-heading">{day.heading}</div>
-            <div className="dash-card history-day-card">
-              {day.entries.map((entry) => {
-                const badgeClass = TYPE_BADGE_CLASSES[entry.type] ?? FALLBACK_BADGE_CLASS;
-                const actorColor = actorBadgeColorFor(entry.actorName);
-                const isReceipt = entry.type === 'RECEIPT';
-                const correcting = isReceipt && correctingId === entry.transactionId;
-                const isTransfer = entry.type === 'TRANSFER';
-                const correctingTransfer = isTransfer && correctingTransferId === entry.transferId;
-                return (
-                  <div key={entry.id} className="history-row">
-                    <div className="history-row-top">
-                      <span className={`badge ${badgeClass}`}>{entry.label ?? FALLBACK_LABEL}</span>
-                      <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
-                    </div>
-                    <p className="history-row-description">{entry.description}</p>
-                    <p className="history-row-actor">
-                      <span
-                        className="badge history-actor-badge"
-                        style={{ background: actorColor.bg, color: actorColor.text }}
-                      >
-                        {entry.actorName}
-                      </span>
-                      {entry.partyName ? <span className="muted">· {entry.partyName}</span> : null}
-                    </p>
-
-                    {isReceipt && !entry.corrected && !correcting && (
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() => handleStartCorrect(entry)}
-                      >
-                        Correct
-                      </button>
-                    )}
-                    {isReceipt && entry.corrected && (
-                      <span className="muted history-row-corrected-note">Already corrected</span>
-                    )}
-
-                    {correcting && (
-                      <div className="dash-history-correction">
-                        {!draft ? (
-                          <form onSubmit={handleContinueCorrection}>
-                            <label className="field">
-                              <span className="field-label">Quantity (sets)</span>
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min="1"
-                                step="1"
-                                value={qtySets}
-                                onChange={(e) => setQtySets(e.target.value)}
-                                required
-                              />
-                            </label>
-
-                            <label className="field">
-                              <span className="field-label">Location</span>
-                              <select value={locationId} onChange={(e) => setLocationId(e.target.value)} required>
-                                {locations.map((l) => (
-                                  <option key={l.id} value={l.id}>
-                                    {l.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <div className="field">
-                              <span className="field-label">Article / colour</span>
-                              {!changingArticle ? (
-                                <div className="lookup-banner lookup-banner-success">
-                                  <p>{articleDisplay}</p>
-                                  <button
-                                    type="button"
-                                    className="link-button"
-                                    onClick={() => {
-                                      setChangingArticle(true);
-                                      resetArticleSearch();
-                                    }}
-                                  >
-                                    Change
-                                  </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="article-lookup-row">
-                                    <input
-                                      type="text"
-                                      value={articleNoInput}
-                                      onChange={(e) => setArticleNoInput(e.target.value)}
-                                      disabled={!!resolvedProduct}
-                                      placeholder="e.g. A101"
-                                      autoCapitalize="characters"
-                                    />
-                                    {!resolvedProduct && (
-                                      <button
-                                        type="button"
-                                        className="btn-primary btn-inline"
-                                        onClick={handleSearchArticle}
-                                        disabled={searching}
-                                      >
-                                        {searching ? 'Searching…' : 'Search'}
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  {searchError && (
-                                    <p className="error-banner" role="alert">
-                                      {searchError}
-                                    </p>
-                                  )}
-
-                                  {disambiguationOptions && (
-                                    <div className="chip-row">
-                                      {disambiguationOptions.map((p) => (
-                                        <button
-                                          key={p.id}
-                                          type="button"
-                                          className="chip"
-                                          onClick={() => {
-                                            setResolvedProduct(p);
-                                            setDisambiguationOptions(null);
-                                          }}
-                                        >
-                                          {p.name} — {factoryName(p.factoryId)}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  {resolvedProduct && (
-                                    <>
-                                      <div className="lookup-banner lookup-banner-success">
-                                        <p>
-                                          <strong>{resolvedProduct.articleNo}</strong> — {resolvedProduct.name}
-                                        </p>
-                                        <button type="button" className="link-button" onClick={resetArticleSearch}>
-                                          Change
-                                        </button>
-                                      </div>
-
-                                      {colorsError && (
-                                        <p className="error-banner" role="alert">
-                                          Could not load colors: {colorsError}
-                                        </p>
-                                      )}
-
-                                      {colorsStatus === 'loaded' && colors.length > 0 && (
-                                        <div className="chip-row">
-                                          {colors.map((c) => (
-                                            <button
-                                              key={c.id}
-                                              type="button"
-                                              className="chip"
-                                              onClick={() => handlePickColor(c)}
-                                            >
-                                              {c.name}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </>
-                                  )}
-                                </>
-                              )}
-                            </div>
-
-                            <label className="field checkbox-field">
-                              <input
-                                type="checkbox"
-                                checked={touchPrice}
-                                onChange={(e) => setTouchPrice(e.target.checked)}
-                              />
-                              <span>Cost price was also wrong</span>
-                            </label>
-                            {touchPrice && (
-                              <label className="field">
-                                <span className="field-label">Corrected cost price (per piece)</span>
-                                <input
-                                  type="number"
-                                  inputMode="decimal"
-                                  min="0"
-                                  step="0.01"
-                                  value={costPrice}
-                                  onChange={(e) => setCostPrice(e.target.value)}
-                                  required
-                                />
-                              </label>
-                            )}
-
-                            <label className="field">
-                              <span className="field-label">Reason</span>
-                              <select value={reason} onChange={(e) => setReason(e.target.value)} required>
-                                <option value="" disabled>
-                                  Select a reason
-                                </option>
-                                {CORRECTION_REASONS.map((r) => (
-                                  <option key={r.value} value={r.value}>
-                                    {r.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="field">
-                              <span className="field-label">Note {reason === 'OTHER' ? '' : '(optional)'}</span>
-                              <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
-                            </label>
-
-                            {formError && (
-                              <p className="error-banner" role="alert">
-                                {formError}
-                              </p>
-                            )}
-
-                            <button type="submit" className="btn-primary">
-                              Continue
-                            </button>
-                            <button type="button" className="btn-secondary" onClick={handleCancelCorrect}>
-                              Cancel
-                            </button>
-                          </form>
-                        ) : touchPrice ? (
-                          <div>
-                            <p className="muted">Cost price is changing — enter your PIN to confirm this correction.</p>
-                            <PinPrompt
-                              submitLabel="Confirm correction"
-                              submittingLabel="Correcting…"
-                              autoFocus
-                              onSubmit={handleConfirmWithPin}
-                            />
-                            <button type="button" className="link-button" onClick={() => setDraft(null)}>
-                              Change details
-                            </button>
-                          </div>
-                        ) : (
-                          <div>
-                            {formError && (
-                              <p className="error-banner" role="alert">
-                                {formError}
-                              </p>
-                            )}
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              onClick={handleConfirmNoPin}
-                              disabled={confirmSubmitting}
-                            >
-                              {confirmSubmitting ? 'Correcting…' : 'Confirm correction'}
-                            </button>
-                            <button type="button" className="link-button" onClick={() => setDraft(null)}>
-                              Change details
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {isTransfer && !entry.corrected && !correctingTransfer && (
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() => handleStartCorrectTransfer(entry)}
-                      >
-                        Correct
-                      </button>
-                    )}
-                    {isTransfer && entry.corrected && (
-                      <span className="muted history-row-corrected-note">Already corrected</span>
-                    )}
-
-                    {correctingTransfer && (
-                      <div className="dash-history-correction">
-                        {!transferDraft ? (
-                          <form onSubmit={handleContinueCorrectTransfer}>
-                            <label className="field">
-                              <span className="field-label">Quantity (sets)</span>
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min="1"
-                                step="1"
-                                value={transferQtySets}
-                                onChange={(e) => setTransferQtySets(e.target.value)}
-                                required
-                              />
-                            </label>
-
-                            <label className="field">
-                              <span className="field-label">From location</span>
-                              <select
-                                value={transferFromLocationId}
-                                onChange={(e) => setTransferFromLocationId(e.target.value)}
-                                required
-                              >
-                                {locations.map((l) => (
-                                  <option key={l.id} value={l.id}>
-                                    {l.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="field">
-                              <span className="field-label">To location</span>
-                              <select
-                                value={transferToLocationId}
-                                onChange={(e) => setTransferToLocationId(e.target.value)}
-                                required
-                              >
-                                {locations.map((l) => (
-                                  <option key={l.id} value={l.id}>
-                                    {l.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label className="field">
-                              <span className="field-label">Reason</span>
-                              <select
-                                value={transferReason}
-                                onChange={(e) => setTransferReason(e.target.value)}
-                                required
-                              >
-                                <option value="" disabled>
-                                  Select a reason
-                                </option>
-                                {TRANSFER_CORRECTION_REASONS.map((r) => (
-                                  <option key={r.value} value={r.value}>
-                                    {r.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="field">
-                              <span className="field-label">
-                                Note {transferReason === 'OTHER' ? '' : '(optional)'}
-                              </span>
-                              <input
-                                type="text"
-                                value={transferNote}
-                                onChange={(e) => setTransferNote(e.target.value)}
-                              />
-                            </label>
-
-                            {transferFormError && (
-                              <p className="error-banner" role="alert">
-                                {transferFormError}
-                              </p>
-                            )}
-
-                            <button type="submit" className="btn-primary">
-                              Continue
-                            </button>
-                            <button type="button" className="btn-secondary" onClick={handleCancelCorrectTransfer}>
-                              Cancel
-                            </button>
-                          </form>
-                        ) : (
-                          <div>
-                            {transferFormError && (
-                              <p className="error-banner" role="alert">
-                                {transferFormError}
-                              </p>
-                            )}
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              onClick={handleConfirmTransferCorrection}
-                              disabled={transferConfirmSubmitting}
-                            >
-                              {transferConfirmSubmitting ? 'Correcting…' : 'Confirm correction'}
-                            </button>
-                            <button type="button" className="link-button" onClick={() => setTransferDraft(null)}>
-                              Change details
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))
+        locationGroups.map((group) => renderSection(group.key, group.label, group.entries))
       )}
     </>
   );

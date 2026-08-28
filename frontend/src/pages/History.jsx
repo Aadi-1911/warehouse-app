@@ -3,6 +3,14 @@ import { HistoryIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listHistory } from '../api/history';
 import { actorBadgeColorFor } from '../utils/avatar';
+import {
+  GROUP_MODES,
+  articleGroupFor,
+  locationGroupFor,
+  buildGroups,
+  buildPersonGroups,
+  buildDayGroups,
+} from '../utils/historyGrouping';
 
 // History — a unified, read-only feed of what's happened across Orders, Transfers and Good
 // Returns, newest first. Reachable by both roles, and both see the identical feed (GET /api/history applies no
@@ -19,7 +27,8 @@ import { actorBadgeColorFor } from '../utils/avatar';
 // renders correctly here, just with the fallback tag styling, rather than silently showing a
 // blank row until the frontend is taught about it.
 //
-// === GROUPING (2026-08-28) ===
+// === GROUPING (2026-08-28, bucketing rules extracted to utils/historyGrouping.js 2026-08-28
+// when dashboard/History.jsx gained the same feature) ===
 //
 // A pure re-presentation of `entries`, entirely client-side — no new fetch, no change to what
 // GET /api/history returns or to rule 104's actor-based filtering (that filtering already
@@ -29,94 +38,11 @@ import { actorBadgeColorFor } from '../utils/avatar';
 // newest-first from the server, so "newest-first inside each section" falls out for free rather
 // than needing a second sort.
 //
-// Investigated before building rather than assumed: only TRANSFER and RECEIPT entries carry a
-// structured `articleNo`/location field today (confirmed by reading every `entries.push(...)` in
-// historyController.js directly). ORDER_PLACED/ORDER_STATUS/ORDER_ADJUSTMENT, GOOD_RETURN,
-// RECEIPT_CORRECTION and TRANSFER_CORRECTION all mention an article or location only INSIDE their
-// pre-built `description` string — never as a field on the entry object. Parsing that string back
-// out to recover structured data would be exactly the kind of event-copy-building this component
-// deliberately avoids (see the header comment above), and brittle besides — a future wording
-// change to the description would silently break grouping with no error. So those types fall into
-// a named fallback bucket for Article/Location grouping instead of being mis-grouped or dropped.
-// Exposing those fields server-side is a small, worthwhile follow-up if finer-grained grouping for
-// them turns out to matter in practice — not done here, since this task is scoped to re-presenting
-// what's already fetched, not changing what's fetched.
-const GROUP_MODES = [
-  { value: 'chronological', label: 'Chronological' },
-  { value: 'person', label: 'Person' },
-  { value: 'article', label: 'Article' },
-  { value: 'location', label: 'Location' },
-];
-
-// Order-level entries can legitimately span several articles at once (an order has many line
-// items) — bucketing them under any ONE article would either duplicate the entry across every
-// article it touches (which the task explicitly rules out, and which would make the same order
-// placement appear to happen several times) or arbitrarily pick just one and hide the others. So
-// these three types get their own named bucket instead, distinct from the generic fallback below
-// — "Order events" is an accurate description of what they are, not a concession for missing data.
-const ORDER_LEVEL_TYPES = new Set(['ORDER_PLACED', 'ORDER_STATUS', 'ORDER_ADJUSTMENT']);
-
-// The fallback bucket for a type with no structured article/location field, for a reason OTHER
-// than being order-level (GOOD_RETURN, RECEIPT_CORRECTION, TRANSFER_CORRECTION today) — kept
-// separate from ORDER_EVENTS_KEY so "Order events" stays literally accurate rather than becoming
-// a catch-all that also holds an unrelated Good Return.
-const OTHER_KEY = '__OTHER__';
-const ORDER_EVENTS_KEY = '__ORDER_EVENTS__';
-
-// Which article a given entry belongs to, for Article grouping. Returns a { key, label } pair
-// rather than a bare string so a fallback bucket's key (stable, for Map lookups) and its display
-// label (human-readable) can differ.
-function articleGroupFor(entry) {
-  if (entry.articleNo) return { key: entry.articleNo, label: entry.articleNo };
-  if (ORDER_LEVEL_TYPES.has(entry.type)) return { key: ORDER_EVENTS_KEY, label: 'Order events' };
-  return { key: OTHER_KEY, label: 'Other' };
-}
-
-// Which location a given entry belongs to, for Location grouping.
-//
-// TRANSFER is the one type with two real locations (from and to), and this bucketing picks the
-// DESTINATION deliberately, not arbitrarily: a Transfer's arrival leg is the same kind of event a
-// RECEIPT already represents for this purpose — stock becoming newly present at a location — so
-// picking the destination keeps one consistent rule across both stock-movement types ("Group by
-// Location" shows what a location received). The origin leg isn't lost from the feed, only from
-// this one bucket; it's still fully visible under Chronological, Person, or Article grouping, and
-// in the entry's own description text ("Gurgaon → Delhi") wherever it's shown. This is a judgment
-// call where an equally defensible case exists for the origin instead — flagging it explicitly
-// rather than presenting it as the only possible answer.
-function locationGroupFor(entry) {
-  if (entry.type === 'RECEIPT') return { key: entry.locationName, label: entry.locationName };
-  if (entry.type === 'TRANSFER') return { key: entry.toLocationName, label: entry.toLocationName };
-  return { key: OTHER_KEY, label: 'Other' };
-}
-
-// Shared by Article and Location grouping (Person needs no fallback — every entry type already
-// carries actorName, confirmed by reading every entries.push(...) in historyController.js, so
-// there's nothing to fall back from). Buckets in first-seen order (which is newest-first, since
-// that's `entries`' own order), then sorts real buckets alphabetically by label with any fallback
-// bucket(s) pinned after them — a fallback is a "didn't fit elsewhere" catch-all, not a place name
-// or article number, so alphabetical position among real ones would be meaningless at best and
-// misleading at worst (e.g. "Order events" sorting before "AK Knitwear" purely because "O" > "A"
-// says nothing about actual relevance).
-function buildGroups(entries, groupFor) {
-  const buckets = new Map();
-  entries.forEach((entry) => {
-    const { key, label } = groupFor(entry);
-    if (!buckets.has(key)) buckets.set(key, { key, label, entries: [] });
-    buckets.get(key).entries.push(entry);
-  });
-
-  const isFallback = (key) => key === OTHER_KEY || key === ORDER_EVENTS_KEY;
-  return [...buckets.values()].sort((a, b) => {
-    if (isFallback(a.key) !== isFallback(b.key)) return isFallback(a.key) ? 1 : -1;
-    if (isFallback(a.key) && isFallback(b.key)) {
-      // Fixed relative order between the two possible fallbacks, not alphabetical (which would
-      // put "Order events" before "Other" only by coincidence of spelling) — Order events reads
-      // as the more substantial category of the two, so it comes first among fallbacks.
-      return a.key === ORDER_EVENTS_KEY ? -1 : 1;
-    }
-    return a.label.localeCompare(b.label);
-  });
-}
+// The actual bucketing RULES (which entry goes in which bucket, under which mode — including the
+// investigation into which entry types carry a real articleNo/location field, and the Transfer
+// destination-bucketing judgment call) now live in utils/historyGrouping.js, shared with
+// dashboard/History.jsx so the two screens' rules can't quietly drift apart. See that file's own
+// comments for the full reasoning. This screen only imports them and handles its own rendering.
 
 // Badge COLOUR per type. Colours follow 07_UI_DESIGN_BRIEF.md §3.4's own semantic role table
 // rather than being picked freely: Order = purple, forward progress = success/green, a
@@ -152,20 +78,6 @@ const FALLBACK_LABEL = 'Event';
 
 function formatTime(iso) {
   return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
-}
-
-function formatDayHeading(iso) {
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  const sameDay = (a, b) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  if (sameDay(d, today)) return 'Today';
-  if (sameDay(d, yesterday)) return 'Yesterday';
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 // One entry's row markup — extracted so the default day-grouped view and every "Group by" mode
@@ -250,39 +162,16 @@ export default function History() {
     };
   }, []);
 
-  // Group into day sections purely for display. The server already sorted everything newest-first,
-  // so this preserves that order rather than re-sorting — it only inserts a heading whenever the
-  // calendar day changes from the previous entry. Only built/used when groupMode is
-  // 'chronological' — the default and only mode with a genuinely different SHAPE of grouping
-  // (nested under a calendar boundary, not a single flat bucket list).
-  const days = [];
-  entries.forEach((entry) => {
-    const heading = formatDayHeading(entry.timestamp);
-    const last = days[days.length - 1];
-    if (!last || last.heading !== heading) {
-      days.push({ heading, entries: [entry] });
-    } else {
-      last.entries.push(entry);
-    }
-  });
+  // Group into day sections purely for display — logic lives in utils/historyGrouping.js,
+  // shared with dashboard/History.jsx. Only built/used when groupMode is 'chronological' — the
+  // default and only mode with a genuinely different SHAPE of grouping (nested under a calendar
+  // boundary, not a single flat bucket list).
+  const days = groupMode === 'chronological' ? buildDayGroups(entries) : [];
 
   // Person grouping needs no fallback bucket (every entry type already carries actorName) and no
   // article/location-style key/label split — the actor's own NAME is both, and the heading is the
-  // coloured badge itself rather than plain text (built inline below, not via buildGroups, since
-  // buildGroups' fallback-pinning logic has nothing to do here).
-  const personGroups =
-    groupMode === 'person'
-      ? (() => {
-          const buckets = new Map();
-          entries.forEach((entry) => {
-            if (!buckets.has(entry.actorName)) buckets.set(entry.actorName, []);
-            buckets.get(entry.actorName).push(entry);
-          });
-          return [...buckets.entries()]
-            .map(([actorName, entryList]) => ({ actorName, entries: entryList }))
-            .sort((a, b) => a.actorName.localeCompare(b.actorName));
-        })()
-      : [];
+  // coloured badge itself rather than plain text.
+  const personGroups = groupMode === 'person' ? buildPersonGroups(entries) : [];
 
   const articleGroups = groupMode === 'article' ? buildGroups(entries, articleGroupFor) : [];
   const locationGroups = groupMode === 'location' ? buildGroups(entries, locationGroupFor) : [];
