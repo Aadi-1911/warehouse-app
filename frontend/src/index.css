@@ -267,6 +267,61 @@
   --tile-grey-bg: #E6E8E9;
   --tile-grey-text: #3C4142;
 
+  /* SUPERSEDED same day (2026-08-28) — kept for the record, not deleted, matching this file's own
+     convention (see the 2026-08-27 rename block above). This --tile-yellow-* token and its
+     .tile-yellow class WERE Transfer Stock's fix for the real Indigo/Purple collision documented
+     below, and shipped briefly, but Aadi then explicitly chose — fully informed, not a reversal
+     of the collision finding itself — to have Transfer Stock share Article Pricing's EXACT
+     --tile-gold-* token and .tile-gold class instead, deliberately accepting Gold's below-floor 4.38:1 contrast
+     (below WCAG AA too) on this one tile as a knowing exception. See LEARNING_LOG.md. This token
+     and its .tile-yellow class are now fully orphaned (confirmed by a whole-frontend grep for the
+     raw variable name and the class name, same discipline as every other retirement in this
+     file) and have been removed from :root and from the class rules below — the derivation
+     reasoning stays here only as history, exactly as the 2026-08-27 palette rename comment above
+     stays after ITS tokens were renamed away.
+     Original comment, unchanged: Added 2026-08-28: STAFF's Transfer Stock tile moves off Indigo
+     onto this new yellow token — confirmed real by the math, not just the screenshot. Indigo's
+     border/fill/text sit only
+     11.3-15.3° from Tile Purple (New Order) in HSL hue, and at the fill tint specifically —
+     the one that dominates a tile's visible area — the LIGHTNESS gap between them is just 1.0pt
+     (Indigo fill L=95.5 vs Purple fill L=96.5), so the two are separated almost entirely by
+     saturation alone. That is a materially worse setup than every knowingly-close pair this app
+     has already shipped (Pink/Rose: 8.3-8.8° hue but 6.7-13pt lightness gaps at every step;
+     Gold/Orange: 15.1° hue with real gaps too) — Indigo/Purple is close in BOTH hue and
+     lightness with only saturation holding them apart, which is exactly what a screenshot would
+     show as a collision. Indigo itself is NOT retired — a whole-frontend grep for the raw
+     `--indigo-` variable name (not just `.tile-indigo`, per this file's own Rust-token lesson
+     above about checking variables directly, not just derived classes) found it's still consumed
+     directly by utils/avatar.js for Harsh Arora's History actor badge, so it stays live for that.
+     Derived with the same fraction-of-remaining-OKLCH-lightness method as this file's other
+     lightened tiles (fill f=0.774, border f=0.469, mean of the confirmed 7-tile sample above),
+     NOT the older denser style Indigo/Teal/Live Stock/Ship Order used. Base #C2C200 (HSL
+     60°/100%/38% — canonical yellow hue, not Gold's more orange-shifted ~46°) was chosen after
+     rejecting a brighter/lighter base (e.g. #FFEB00): a pure light-lightness yellow inherits the
+     same structural problem already documented above for Gold/Cyan — max-chroma yellow sits at
+     very high OKLCH lightness regardless of exact hue, so the fixed fraction formula pushes fill
+     into near-white and collapses text/fill contrast. Darkening the base's HSL lightness to 38%
+     lowers its OKLCH L enough to recover real contrast without leaving the yellow hue family or
+     drifting into an olive/green read (checked: pushing HUE further from Gold instead, e.g. 65-70°
+     at high saturation, reads as muddy olive-green in the actual rendered swatch, not yellow —
+     hue was kept at the canonical 60° and lightness tuned instead). Text uses this file's one
+     fixed rule (base mixed 50/50 with near-black #151412, round-half-up per channel, verified
+     against the known-correct tiles above under both rounding conventions first).
+     Result: fill #F0F2D2, border #DDE096, text #6C6B09.
+     FULL conflict check (HSL hue distance, run against every token this task named): vs Tile
+     Purple 174.4-179.6° (the original collision, now about as far apart as two hues can be) and
+     vs Indigo 166.3-172.6° — both resolved with wide margins, not just nudged. Vs all other 7
+     OWNER tile tokens, Teal, Rose, and History's 4 entry-type badge colours (purple/success/
+     warning/accent): closest is Warning at 18.6-21.8°, still clear. The ONE pair under 15° is
+     Tile Gold's text ink specifically, at 12.7° — flagged rather than adjusted, per this file's
+     own established practice, with real compensating gaps (17.9pt saturation, 8.8pt lightness);
+     Gold's border/fill sit at 16.1-17.2°, already clear. CONTRAST: text/fill measures 4.90:1 —
+     clears BOTH this app's own 4.85:1 floor and the WCAG AA 4.5:1 minimum, better than every
+     other light-hue tile token in this file (Gold 4.38, the old Cyan 3.99, Pack Order's Pink
+     4.79), because the darker base lightness chosen above bought real contrast headroom that
+     those tiles' fixed-formula derivations didn't have.
+     Tokens removed 2026-08-28 (same day) once orphaned — see SUPERSEDED note above. */
+
   --card-border: #E4E2DE;
   --card-bg: #fff;
   --text-primary: #1C1B19;
@@ -1221,7 +1276,13 @@ body {
 
 /* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. Not part
    of the 2026-08-27 palette replacement above — Transfer isn't one of the 8 OWNER tiles, and
-   Indigo was explicitly confirmed to stay as-is. */
+   Indigo was explicitly confirmed to stay as-is.
+   As of 2026-08-28, Transfer Stock moved off Indigo — briefly onto a new `.tile-yellow` (now
+   removed, see the SUPERSEDED --tile-yellow-* comment above), then same-day onto `.tile-gold`
+   (shared directly with Article Pricing, per Aadi's explicit choice — see LEARNING_LOG.md) — so
+   no tile currently applies this class. Kept rather than deleted, since the underlying
+   --indigo-* variables it reads are still live (utils/avatar.js, Harsh Arora's actor badge),
+   confirmed by a whole-frontend grep for the raw variable name before deciding what to retire. */
 .tile-indigo {
   background: var(--indigo-bg);
   border-color: var(--indigo-border);

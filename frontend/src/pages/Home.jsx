@@ -103,14 +103,25 @@ import {
 // itself was never affected by that retirement, since Transfer never used either of those tones.
 // Appended at the end of the array (no explicit order was specified) — same "append, don't
 // renumber" precedent Locations/Article Pricing already established elsewhere in this app.
+// Reordered 2026-08-28 to match the real workflow left-to-right/top-to-bottom (Receive -> New
+// Order -> Pack -> Dispatch -> Live Stock -> Transfer) — a deliberate, explicit reorder confirmed
+// by Aadi that overrides this file's own "append, don't renumber" precedent for THIS array only;
+// that precedent still governs OWNER_TILES and everywhere else. Live Stock moved from position 2
+// to position 5; nothing else about any entry (tone, icon, route) changed, only array order.
 const STAFF_TILES = [
   { to: '/receive', label: 'Receive Stock', tone: 'green', Icon: TruckIcon },
-  { to: '/live-stock', label: 'Live Stock', tone: 'blue', Icon: ListIcon },
   { to: '/new-order', label: 'New Order', tone: 'purple', Icon: ShoppingBagIcon },
   { to: '/pack-orders', label: 'Pack Order', tone: 'pink', Icon: PackageIcon },
   // Any role, rule 63 — staff mark orders shipped, same reasoning as Pack Order above.
   { to: '/ship-orders', label: 'Dispatch Order', tone: 'orange', Icon: SendIcon },
-  { to: '/transfer', label: 'Transfer Stock', tone: 'indigo', Icon: TransferIcon },
+  { to: '/live-stock', label: 'Live Stock', tone: 'blue', Icon: ListIcon },
+  // Tone changed from 'indigo' to 'yellow' 2026-08-28 (see index.css's SUPERSEDED --tile-yellow-*
+  // comment for the hue-collision math against New Order's purple that justified retiring indigo
+  // here), then same-day changed AGAIN from 'yellow' to 'gold' — Aadi's own explicit, informed
+  // decision to have this tile share Article Pricing's exact --tile-gold-*/.tile-gold, knowingly
+  // accepting Gold's below-floor 4.38:1 contrast (also below WCAG AA) for this one tile. Not a
+  // mistake to fix later — see LEARNING_LOG.md. Indigo itself stays live elsewhere (avatar.js).
+  { to: '/transfer', label: 'Transfer Stock', tone: 'gold', Icon: TransferIcon },
 ];
 
 // OWNER's tile grid — reorganised 2026-08-22: Article Pricing and History promoted here from
