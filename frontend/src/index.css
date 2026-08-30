@@ -3820,6 +3820,81 @@ body {
   max-width: 280px;
 }
 
+/* --- Bills (added 2026-08-30) — same 15px desktop type scale as .dash-pricing-table above (see
+   that class's own comment for why the dashboard gets a larger scale than mobile's .pricing-table),
+   but its OWN class rather than reused directly: this table has no inline-editing state at all, so
+   its alternating stripe is plain CSS :nth-child(even) — .dash-pricing-table deliberately avoids
+   that (row-index-driven from JS instead) only because ITS <tbody> can contain conditionally-
+   inserted extra rows that :nth-child would misread; this one never does. */
+.dash-bills-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.dash-bills-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-bills-table td {
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-bills-table tr:last-child > td {
+  border-bottom: none;
+}
+
+.dash-bills-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
+}
+
+/* th+td compound selector, not a bare .dash-bills-num class rule — `.dash-bills-table th` above
+   is a class+element selector (specificity 0,1,1), which beats a bare `.dash-bills-num` class
+   rule (0,1,0) on the header cell alone, so the header would stay force-left-aligned regardless
+   of what this rule said. Matching th/td explicitly (0,2,1 each) is what actually wins the
+   cascade for both, which is the header/value misalignment this was fixed for (2026-08-30) —
+   centered, not right-aligned, per that fix. */
+.dash-bills-table th.dash-bills-num,
+.dash-bills-table td.dash-bills-num {
+  text-align: center;
+}
+
+.dash-bills-sno {
+  color: var(--text-tertiary);
+}
+
+/* Lays the Date text and the 15+ days flag (added 2026-08-30) side by side without the flag
+   wrapping onto its own line at a narrower viewport width. */
+.dash-bills-date-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Controls row above the table (View toggle, and Month mode's Year/Month steps) — same `.field`
+   label/select markup every other dashboard control uses, just laid out inline rather than
+   stacked, since these are short selects sitting above a wide table rather than a tall form. */
+.dash-bills-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.dash-bills-controls .field {
+  min-width: 160px;
+  margin-bottom: 0;
+}
+
 /* The rail collapses to icons on narrow windows rather than disappearing — §8 is explicit that
    this is a desktop surface and mobile needs its own design pass, so this is a graceful floor for
    a small laptop window, not a phone layout. */

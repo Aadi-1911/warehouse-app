@@ -13,6 +13,7 @@ import {
   LocationPinIcon,
   TagIcon,
   WalletIcon,
+  InvoiceIcon,
   LockIcon,
 } from '../../components/icons';
 
@@ -81,6 +82,9 @@ const NAV_ITEMS = [
   // Parties, History) an owner opens far more often. Same WalletIcon the mobile Factory Payables
   // screen already uses, matching how Article Pricing reuses its own mobile TagIcon.
   { to: '/dashboard/factory-payables', label: 'Factory Payables', Icon: WalletIcon },
+  // Added 2026-08-30, same "append at the end, never renumber" precedent as every addition
+  // above. Same InvoiceIcon the mobile Bill Order screens already use for the same concept.
+  { to: '/dashboard/bills', label: 'Bills', Icon: InvoiceIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -94,6 +98,7 @@ const PAGE_META = {
   '/dashboard/locations': ['Revenue and profit by location', 'Locations'],
   '/dashboard/article-pricing': ['Cost and selling price by article', 'Article Pricing'],
   '/dashboard/factory-payables': ['What we owe each factory', 'Factory Payables'],
+  '/dashboard/bills': ['Every billed order, chronologically', 'Bills'],
 };
 
 function initialsOf(name) {

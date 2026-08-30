@@ -30,6 +30,7 @@ import DashboardLowStock from './pages/dashboard/LowStock';
 import DashboardParties from './pages/dashboard/Parties';
 import DashboardLocations from './pages/dashboard/Locations';
 import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
+import DashboardBills from './pages/dashboard/Bills';
 
 export default function App() {
   return (
@@ -241,6 +242,11 @@ export default function App() {
                 /dashboard route covers it, and the endpoints it calls are independently
                 OWNER+PIN gated server-side. */}
             <Route path="factory-payables" element={<FactoryPayables inDashboard />} />
+            {/* Added 2026-08-30. Read-only — GET /api/orders and GET /api/parties are the only
+                calls this page makes, both any-role at the API, safe here for the same reason
+                Parties/History already are: the OWNER gate on the parent route covers it, and
+                there is no write path on this screen at all. */}
+            <Route path="bills" element={<DashboardBills />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
