@@ -33,6 +33,13 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 - Short, direct, imperative summary line (e.g. "Add Prisma schema for Phase 1 entities", not "This commit implements..." or a bullet list of every file touched).
 - Only add a body beyond the summary line if there's a genuinely non-obvious reason behind the change worth recording — not a recap of what the diff already shows.
 - Commit after each reviewed task, not just once at the start of the project.
+- Push after every commit (`git push`) — don't leave commits sitting ahead of `origin` between sessions.
+
+## Documentation maintenance (for any AI agent working on this project, Claude Code or otherwise)
+- Whenever a task changes what's true about a phase's status — a screen goes from placeholder to built, a "not yet committed" note becomes committed, a documented bug gets fixed — update the relevant status line(s) in `06_ROADMAP.md` in the SAME commit as the code change. Don't defer it to a later cleanup pass; that's exactly how this doc went nine commits stale.
+- Treat every claim in `06_ROADMAP.md`, `SESSION_HANDOVER.md`/`CONTEXT_HANDOVER.md` (if present), or any other continuity/handoff doc as unverified until checked against real `git log`/`git show`/`grep`/file contents. Never repeat a doc's claim into a new doc, a task summary, or a code comment without independently confirming it first — especially claims phrased as "still missing," "placeholder," "not yet committed," or "unfixed."
+- If a task's own investigation surfaces a stale or wrong claim elsewhere in the docs — even one unrelated to the task at hand — flag it in the task summary rather than silently ignoring it or working around it.
+- `LEARNING_LOG.md`'s Mistakes & Fixes entries are written for other AI agents and future sessions, not just Aadi — assume the reader has no memory of this conversation and needs the full story to avoid repeating the mistake.
 
 ## Comments & teaching (I'm learning full-stack dev from zero — backend AND frontend both need the same depth of explanation, nothing gets skipped because it's "just frontend" or "just styling")
 - Comment **why**, not just what — applies equally everywhere: Express routes and Prisma queries get the same explanatory treatment as React components, state management, and hooks.
