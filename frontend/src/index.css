@@ -2544,14 +2544,64 @@ body {
    editing .btn-primary/.btn-danger themselves, which BillOrderDetail.jsx and presumably other
    screens also use; touching those directly would have silently changed every one of them. */
 
-/* Mark as packed stays the one deliberately bold thing on the screen — it's the real, frequent,
-   primary action, and last round's own guidance said keep the boldness here. Only the exact shade
-   softens, a hair off the raw --accent-text token via color-mix, so it reads as considered rather
-   than a flat heavy wall of colour now that everything above it is quiet — not "less bold," just
-   less inky. */
-.pack-mark-packed-btn {
-  background: color-mix(in srgb, var(--accent-text) 85%, white);
-  border-color: color-mix(in srgb, var(--accent-text) 85%, white);
+/* Mark as packed — swipe-to-confirm (added 2026-09-02, replacing the flat solid-fill button this
+   comment used to describe). KEEPS .btn-primary in its className for the same shared LAYOUT this
+   file's own header comment already states (width/min-height/radius/type scale) — only colour
+   AND now structure (position/overflow/padding, for the thumb to lay out inside it) are
+   overridden here, via this more-specific class declared after .btn-primary in source order,
+   same override mechanism .pack-mark-packed-btn relied on before it. Neutral track (--section-
+   fill), not a bold fill — the track itself no longer carries the "primary action" signal alone;
+   the dark thumb + its own drag affordance now do that job instead. */
+.pack-swipe-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--section-fill);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  padding: 0;
+  /* A few px past .btn-primary's own 44px floor, so the 40px thumb (below) still clears it with
+     a small margin inside the track rather than touching edge to edge. */
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pack-swipe-label {
+  font-size: 14px;
+  font-weight: 700;
+  /* The label never receives pointer events itself — dragging only ever starts on the thumb
+     (see PackOrderDetail.jsx's handleThumbPointerDown), and a plain tap anywhere, label included,
+     is meant to bubble up to the track <button>'s own onClick exactly like tapping bare track
+     background does. */
+  pointer-events: none;
+}
+
+/* The draggable thumb — absolutely positioned so its CSS `transform: translateX(...)` (set
+   inline, from PackOrderDetail.jsx's live drag state) moves it WITHOUT shifting any layout
+   property, per this task's own requirement. Dark fill, same --text-primary token (#1C1B19)
+   every other deliberate dark-neutral accent in this app already uses (e.g. the focus rings a
+   few rules above), not a new colour invented for this one control. */
+.pack-swipe-thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--text-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.pack-swipe-thumb-icon {
+  display: inline-flex;
+  /* ChevronIcon points down by default (the accordion caret shape) — rotated to point right,
+     matching the direction this thumb actually travels. */
+  transform: rotate(-90deg);
 }
 
 /* Cancel this order: same "quiet by default, full weight only on real interaction" principle as
@@ -2575,7 +2625,7 @@ body {
 
 /* Same neutral deliberate focus ring as the per-line controls above, not the browser's default
    blue box — see .pack-line-tap:focus-visible's comment for the full reasoning. */
-.pack-mark-packed-btn:focus-visible,
+.pack-swipe-track:focus-visible,
 .pack-order-cancel-btn:focus-visible {
   outline: 2px solid var(--text-primary);
   outline-offset: 2px;
