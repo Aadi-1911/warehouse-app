@@ -41,6 +41,20 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 - If a task's own investigation surfaces a stale or wrong claim elsewhere in the docs — even one unrelated to the task at hand — flag it in the task summary rather than silently ignoring it or working around it.
 - `LEARNING_LOG.md`'s Mistakes & Fixes entries are written for other AI agents and future sessions, not just Aadi — assume the reader has no memory of this conversation and needs the full story to avoid repeating the mistake.
 
+## Data Wipe Checklist (any task that deletes real rows from the live database, not just test fixtures)
+1. Scope every table explicitly, by name — never act on a vague phrase like "clean up test data" or "wipe the rest." If a table isn't named, it isn't in scope.
+2. Verify test-vs-real against actual row content (dates, quantities, factory/party match, transaction notes) — never from `isActive`/naming-pattern flags alone. A flag can be wrong or stale; the data itself isn't.
+3. Map every FK relationship via `information_schema` directly, in **both** directions — including from any table that's supposed to stay untouched **into** the wipe scope, not just the direction the wipe scope points outward.
+4. Specifically hunt for `SET NULL` relations, separately from `RESTRICT`/`CASCADE` — `SET NULL` changes data silently without changing row counts, so a count-only check is structurally blind to it.
+5. Derive deletion order from the FK map — never guess it or assume it matches the order tables were mentioned in.
+6. Confirm a real safety net (a backup, or a platform's own auto-restore/point-in-time window) exists before anything irreversible runs. Don't proceed on "it's probably fine."
+7. Take a full pre-deletion snapshot (every row, not just counts) AND verify the write succeeded by reading it back and comparing — don't assume a `console.log` saying "saved" means the file reached disk.
+8. Execute inside one atomic transaction, with a hard assert on every single step's affected-row count against what was expected — abort and roll back the whole thing on any mismatch, never proceed partway.
+9. Verify keep-scope tables field-by-field wherever any `SET NULL` relation could have touched them — a stable row count is not proof nothing changed.
+10. Run real application code/endpoints against the emptied tables, not just direct queries — an empty result set can break a query that assumes at least one row exists (an average, a `.find()`, a bare array index) in a way a raw count check would never surface.
+11. The human independently re-verifies with their own script — never close out a wipe on the agent's summary alone.
+12. Document what was wiped and why in `LEARNING_LOG.md`, then commit.
+
 ## Comments & teaching (I'm learning full-stack dev from zero — backend AND frontend both need the same depth of explanation, nothing gets skipped because it's "just frontend" or "just styling")
 - Comment **why**, not just what — applies equally everywhere: Express routes and Prisma queries get the same explanatory treatment as React components, state management, and hooks.
 - `LEARNING_LOG.md` has three sections: **Decisions & Reasoning**, **Mistakes & Fixes**, and **Concepts**. Update all three continuously as things happen, not batched at the end of a task.
