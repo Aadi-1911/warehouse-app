@@ -31,10 +31,11 @@ import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils
 // Parties page became a second dashboard surface needing the identical status→colour mapping.
 
 // Month toggle (added 2026-08-20): the page splits into two sections.
-//   1. "Open orders" — PLACED + PACKED, non-cancelled (utils/orderStatus.js's isOpenOrder,
-//      mirroring dashboardController.js's own openOrders definition exactly). Always shown in
-//      full, never month-filtered — an open order doesn't stop being open because its createdAt
-//      falls outside whatever month happens to be selected below.
+//   1. "Open orders" — PLACED + PACKED, non-cancelled (utils/orderStatus.js's isOpenOrder — see
+//      that file's own comment for why this is no longer tied to anything in
+//      dashboardController.js). Always shown in full, never month-filtered — an open order
+//      doesn't stop being open because its createdAt falls outside whatever month happens to be
+//      selected below.
 //   2. Everything else — BILLED, SHIPPED, and cancelled orders (any status) — filtered to one
 //      selected month at a time via a dropdown, defaulting to the current calendar month.
 // These two sets are exhaustive and non-overlapping by construction: rule 23 only allows

@@ -9,10 +9,20 @@ import { listHistory } from '../../api/history';
 // load — there is no caching anywhere in the chain (rules 60, 81, 96, 98 all establish this for
 // the project's other computed money figures).
 //
-// The card COLOURS are not decorative. §3.4's semantic role table assigns them, and §8 names each
-// one specifically: Stock value blue (a computed financial figure, same accent the Factory
-// Payables hero uses), Open orders purple (Party/Order), Low stock red (danger), Revenue green
-// (success/positive). Sets and Pieces are neutral because they're counts, not money.
+// The card COLOURS are not decorative. §3.4's semantic role table assigns Stock value blue (a
+// computed financial figure, same accent the Factory Payables hero uses), Low stock red (danger),
+// Revenue green (success/positive); Sets and Pieces are neutral because they're counts, not money.
+// The three pipeline/volume cards added 2026-09-01 (Awaiting billing, Awaiting dispatch, Orders
+// this week — labels renamed 2026-09-01 from Packed not billed / Billed not shipped, display text
+// only, the underlying data fields are unchanged) sit outside the original brief's palette — see
+// index.css's own comment beside --fuchsia-* for the real hue-distance numbers behind picking
+// Indigo/Purple/Fuchsia for them.
+//
+// Card ORDER (2026-09-01): fixed at Stock value / Sets in stock / Pieces in stock / Revenue on row
+// 1, Low stock / Awaiting dispatch / Awaiting billing / Orders this week on row 2 — a deliberate
+// choice, not the order these cards were originally built in, so don't infer meaning from the JSX
+// declaration order elsewhere in this file (there isn't any left; the elements below are declared
+// in this exact visual order, not reordered via CSS).
 //
 // The design's three "extras" widgets (top parties, stock value by location, low-stock preview)
 // are deliberately absent — explicitly deferred by this task's scope.
@@ -163,29 +173,7 @@ export default function Overview() {
           </div>
         </div>
 
-        <div className="dash-kpi dash-kpi-purple">
-          <div className="dash-kpi-label">Open orders</div>
-          <div className="dash-kpi-value">{formatCount(data.openOrdersCount)}</div>
-          <div className="dash-kpi-sub">
-            {inrShort(data.openOrdersValue)} in the pipe · placed + packed
-          </div>
-        </div>
-
-        {/* 5. Low stock — red, and a real link. Rule 56's ≤1 threshold, counted server-side so this
-            card and Live Stock can't drift apart on what "low" means. The destination is still a
-            placeholder for now, which is fine: the card's job is to point somewhere true. */}
-        <Link to="/dashboard/low-stock" className="dash-kpi dash-kpi-danger dash-kpi-link">
-          <div className="dash-kpi-label">Low stock</div>
-          <div className="dash-kpi-value">{formatCount(data.lowStockCount)}</div>
-          <div className="dash-kpi-sub">
-            {/* Plural-aware since the threshold is no longer hardcoded at a plural value (it was
-                always "2 sets" before 2026-08-26; now it's genuinely 1) — found by actually
-                reading the rendered KPI after lowering the threshold, not assumed safe. */}
-            lines at or below {data.lowStockThreshold} set{data.lowStockThreshold === 1 ? '' : 's'} →
-          </div>
-        </Link>
-
-        {/* 6. Revenue — green. sellingPrice basis, Billed + Shipped only (rules 69 and 98).
+        {/* 4. Revenue — green. sellingPrice basis, Billed + Shipped only (rules 69 and 98).
             Changing the selector re-requests the figure from the server rather than switching
             between values fetched earlier, so it genuinely recomputes. */}
         <div className={`dash-kpi dash-kpi-success${revenueBusy ? ' dash-kpi-busy' : ''}`}>
@@ -206,6 +194,56 @@ export default function Overview() {
           </div>
           <div className="dash-kpi-value">{inrShort(data.revenue)}</div>
           <div className="dash-kpi-sub">billed + dispatched · {data.revenueLabel}</div>
+        </div>
+
+        {/* 5. Low stock — red, and a real link. Rule 56's ≤1 threshold, counted server-side so this
+            card and Live Stock can't drift apart on what "low" means. The destination is still a
+            placeholder for now, which is fine: the card's job is to point somewhere true. */}
+        <Link to="/dashboard/low-stock" className="dash-kpi dash-kpi-danger dash-kpi-link">
+          <div className="dash-kpi-label">Low stock</div>
+          <div className="dash-kpi-value">{formatCount(data.lowStockCount)}</div>
+          <div className="dash-kpi-sub">
+            {/* Plural-aware since the threshold is no longer hardcoded at a plural value (it was
+                always "2 sets" before 2026-08-26; now it's genuinely 1) — found by actually
+                reading the rendered KPI after lowering the threshold, not assumed safe. */}
+            lines at or below {data.lowStockThreshold} set{data.lowStockThreshold === 1 ? '' : 's'} →
+          </div>
+        </Link>
+
+        {/* 6. Awaiting dispatch — purple, reused from the retired Open Orders card (2026-09-01):
+            a real conflict check against the final 8-card set found it still clears every other
+            card's colour by a comfortable margin (see index.css's --fuchsia-* comment). Money
+            already claimed at billing, sitting in the pipe until it goes out the door. Label
+            renamed 2026-09-01 from "Billed not shipped" — display text only, still backed by
+            data.billedNotShippedCount/Value (backend field names unchanged). */}
+        <div className="dash-kpi dash-kpi-purple">
+          <div className="dash-kpi-label">Awaiting dispatch</div>
+          <div className="dash-kpi-value">{formatCount(data.billedNotShippedCount)}</div>
+          <div className="dash-kpi-sub">{inrShort(data.billedNotShippedValue)} billed, awaiting dispatch</div>
+        </div>
+
+        {/* 7. Awaiting billing — indigo. Stock already deducted at packing, payment not yet
+            claimed. Same actualPayable-preferred basis as every other order-value figure on this
+            screen (rule 103), though every order reachable here is pre-billing so the preference
+            always takes the live line-item fallback in practice (dashboardController.js's own
+            comment says as much). Label renamed 2026-09-01 from "Packed not billed" — display
+            text only, still backed by data.packedNotBilledCount/Value (backend field names
+            unchanged). */}
+        <div className="dash-kpi dash-kpi-indigo">
+          <div className="dash-kpi-label">Awaiting billing</div>
+          <div className="dash-kpi-value">{formatCount(data.packedNotBilledCount)}</div>
+          <div className="dash-kpi-sub">{inrShort(data.packedNotBilledValue)} packed, not yet billed</div>
+        </div>
+
+        {/* 8. Orders this week — fuchsia, a new dedicated token (index.css). Plain volume count,
+            no value: Monday-start calendar week, includes cancelled orders on purpose — this is a
+            general/reporting count, not an actionable worklist, matching the same distinction
+            orderController.js's listOrders already draws between an unfiltered query (returns
+            everything, cancelled included) and a status-scoped worklist (excludes cancelled). */}
+        <div className="dash-kpi dash-kpi-fuchsia">
+          <div className="dash-kpi-label">Orders this week</div>
+          <div className="dash-kpi-value">{formatCount(data.ordersThisWeek)}</div>
+          <div className="dash-kpi-sub">since Monday</div>
         </div>
       </div>
 

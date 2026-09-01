@@ -22,13 +22,15 @@ export const ORDER_STATUS_BADGE = {
 };
 
 // "Open order" — added 2026-08-20 for the Owner Dashboard Orders page's month-toggle split
-// (Open orders section vs. a month-filtered section for everything else). MUST mirror
-// dashboardController.js's own openOrders query exactly: `where: { isCancelled: false, status: {
-// in: ['PLACED', 'PACKED'] } }` — that's the Overview KPI's "openOrdersCount" definition, and this
-// predicate exists so the Orders page doesn't quietly redefine "open" a second, possibly
-// drifting way. Frontend and backend are separate runtimes with no shared code today, so this
-// can't literally import that where-clause — if it ever changes, this needs the matching change,
-// and dashboardController.js's own comment on that query points back here for the same reason.
+// (Open orders section vs. a month-filtered section for everything else): PLACED/PACKED,
+// excluding cancelled. This used to also mirror the Overview KPI grid's own "Open orders" card,
+// which read the identical `{ isCancelled: false, status: { in: ['PLACED', 'PACKED'] } }` shape
+// server-side (dashboardController.js) — that card was retired 2026-09-01 (replaced by what are
+// now the Awaiting dispatch / Awaiting billing / Orders this week cards), so this predicate is
+// now this file's own, standalone definition, not a mirror of anything in dashboardController.js.
+// Kept as a named
+// export regardless: the Orders page still needs this exact split, independent of what the
+// Overview KPIs show.
 export const OPEN_ORDER_STATUSES = ['PLACED', 'PACKED'];
 export function isOpenOrder(order) {
   return !order.isCancelled && OPEN_ORDER_STATUSES.includes(order.status);

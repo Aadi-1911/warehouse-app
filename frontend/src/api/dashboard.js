@@ -1,8 +1,8 @@
 import { apiFetch } from './client';
 
 // GET /api/dashboard/overview -> { stockValue, setsInStock, bundlesWithStock, piecesInStock,
-// openOrdersCount, openOrdersValue, lowStockCount, lowStockThreshold, revenue, revenuePeriod,
-// revenueLabel }
+// billedNotShippedCount, billedNotShippedValue, packedNotBilledCount, packedNotBilledValue,
+// ordersThisWeek, lowStockCount, lowStockThreshold, revenue, revenuePeriod, revenueLabel }
 //
 // OWNER only — the response is derived from costPrice, so a STAFF token gets a real 403 from the
 // server, not just a hidden screen.

@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { revenueForPeriod, VALID_PERIODS } = require('../utils/revenue');
+const { orderValueOf } = require('../utils/orderValue');
 
 const prisma = new PrismaClient();
 
@@ -71,49 +72,77 @@ async function getOverview(req, res) {
     bundlesWithStock.add(row.bundleId);
   }
 
-  // Open orders: Placed + Packed, excluding cancelled. Its secondary figure is the value still in
-  // the pipe, on the same per-piece selling basis as Revenue — the two numbers sit on the same
-  // screen, so they must be the same kind of number.
-  //
-  // This is the canonical "open order" definition — the Owner Dashboard's Orders page (added
-  // 2026-08-20) mirrors it exactly via frontend/src/utils/orderStatus.js's isOpenOrder(), to
-  // split its own order list into an "Open orders" section and a month-filtered section for
-  // everything else. That predicate can't literally import this where-clause (frontend/backend
-  // are separate runtimes with no shared code today), so if this where-clause ever changes,
-  // isOpenOrder() needs the matching change too — it says as much in its own comment.
-  const openOrders = await prisma.order.findMany({
-    where: { isCancelled: false, status: { in: ['PLACED', 'PACKED'] } },
-    select: {
-      lineItems: {
-        where: { isCancelled: false },
-        select: {
-          qtySetsRequested: true,
-          priceAtOrder: true,
-          bundle: {
-            select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
-          },
+  // Shared select/reduce shape for the two status-scoped money KPIs below — same fields
+  // revenue.js's REVENUE_ORDER_SELECT uses, and the same fallback shape orderController.js's
+  // listOrders totalValue uses (qtySetsRequested x piecesPerSet x priceAtOrder, cancelled line
+  // items excluded). `orderValueOf` (rule 103) prefers the real actualPayable snapshot when one
+  // exists and falls back to this live sum otherwise.
+  const MONEY_ORDER_SELECT = {
+    actualPayable: true,
+    lineItems: {
+      where: { isCancelled: false },
+      select: {
+        qtySetsRequested: true,
+        priceAtOrder: true,
+        bundle: {
+          select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
         },
       },
     },
-  });
+  };
 
-  // Deliberately NOT routed through orderValueOf (rule 103), and this is structural rather than
-  // an oversight: the query above is scoped to PLACED/PACKED — the two statuses that exist BEFORE
-  // billing — and actualPayable is only ever written at the moment an order is billed. So every
-  // order reachable here has a null snapshot by construction, and the line-item sum below is
-  // already the correct and only available answer. Adding the preference here would select a
-  // column that is guaranteed null and imply billed orders can appear in this KPI, which they
-  // cannot. "Open orders" means unbilled by definition.
-  const openOrdersValue = openOrders.reduce(
-    (total, o) =>
-      total +
-      o.lineItems.reduce(
-        (sum, li) =>
-          sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
-        0
-      ),
-    0
-  );
+  function sumOrderValue(orders) {
+    return orders.reduce(
+      (total, o) =>
+        total +
+        orderValueOf(
+          o,
+          o.lineItems.reduce(
+            (sum, li) => sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
+            0
+          )
+        ),
+      0
+    );
+  }
+
+  // Billed not shipped: money already claimed (billed) but not yet out the door. Same isCancelled
+  // exclusion the old Open Orders KPI used (`isCancelled: false` on the order itself, plus
+  // cancelled line items excluded inside MONEY_ORDER_SELECT) — a cancelled order can't be BILLED
+  // anyway (rule 23 locks a billed order before cancellation could apply), so this is belt-and-
+  // braces consistency with every other status-scoped query here, not a real-world case.
+  const billedNotShipped = await prisma.order.findMany({
+    where: { isCancelled: false, status: 'BILLED' },
+    select: MONEY_ORDER_SELECT,
+  });
+  const billedNotShippedValue = sumOrderValue(billedNotShipped);
+
+  // Packed not billed: stock already deducted (packing does that), payment not yet claimed. Every
+  // order reachable here is pre-billing, so actualPayable is null by construction and orderValueOf
+  // always takes the live line-item fallback — routed through the same shared helper as
+  // billedNotShipped anyway, so both cards stay on one calculation path (rule 103's own framing:
+  // the preference is decided per order, never assumed per screen).
+  const packedNotBilled = await prisma.order.findMany({
+    where: { isCancelled: false, status: 'PACKED' },
+    select: MONEY_ORDER_SELECT,
+  });
+  const packedNotBilledValue = sumOrderValue(packedNotBilled);
+
+  // Orders this week: a plain volume count, Monday-start calendar week, computed in local server
+  // time (matching revenue.js's periodToRange, which also builds boundaries with the local
+  // `new Date(year, month, day, ...)` constructor rather than UTC). Deliberately NOT filtered by
+  // isCancelled: an unfiltered order query is a general/reporting count in this codebase, not a
+  // worklist — orderController.js's listOrders only excludes cancelled orders when a `status`
+  // filter scopes the query to an actionable worklist (its own comment: "an unfiltered GET
+  // /api/orders is a general query (History, reporting) and still returns everything"), and this
+  // KPI is exactly that kind of general count, not a to-do list.
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sunday ... 6 = Saturday
+  const daysSinceMonday = (dayOfWeek + 6) % 7; // Mon->0, Tue->1, ..., Sun->6
+  const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday, 0, 0, 0, 0);
+  const ordersThisWeek = await prisma.order.count({
+    where: { createdAt: { gte: weekStart } },
+  });
 
   // Counted in the database rather than by filtering the rows already fetched above: this is the
   // one KPI whose definition is a shared business rule (56), and expressing it as a real query
@@ -139,8 +168,11 @@ async function getOverview(req, res) {
     setsInStock,
     bundlesWithStock: bundlesWithStock.size,
     piecesInStock,
-    openOrdersCount: openOrders.length,
-    openOrdersValue,
+    billedNotShippedCount: billedNotShipped.length,
+    billedNotShippedValue,
+    packedNotBilledCount: packedNotBilled.length,
+    packedNotBilledValue,
+    ordersThisWeek,
     lowStockCount,
     lowStockThreshold: LOW_STOCK_THRESHOLD,
     revenue: revenue.revenue,

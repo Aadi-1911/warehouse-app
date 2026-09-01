@@ -283,10 +283,11 @@ async function listOrders(req, res) {
       },
       lineItems: {
         // A cancelled line is never billed and has no business inflating either figure below —
-        // same filter revenue.js and the dashboard's openOrdersValue already apply, and the same
-        // "tally live lines only" convention every order detail screen (Pack/Bill) already uses
-        // for its own counts. Filtering here means lineItemCount and totalValue both come from
-        // this one already-correct array, rather than each needing its own exclusion logic.
+        // same filter revenue.js and the dashboard's billedNotShipped/packedNotBilled KPIs already
+        // apply, and the same "tally live lines only" convention every order detail screen
+        // (Pack/Bill) already uses for its own counts. Filtering here means lineItemCount and
+        // totalValue both come from this one already-correct array, rather than each needing its
+        // own exclusion logic.
         where: { isCancelled: false },
         select: {
           qtySetsRequested: true,
