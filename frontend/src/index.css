@@ -3720,6 +3720,22 @@ body {
 }
 
 /* --- Owner Dashboard: Locations page (added 2026-08-20) --- */
+/* Location + Period side by side (added 2026-09-02) — gap matches --space-6, the same token
+   .dash-content already uses for the vertical gap between this page's top-level stacked
+   sections, so the row's own internal spacing reads as consistent with the rest of the page
+   rather than introducing a second, different rhythm. flex-wrap is a narrow-viewport safety net
+   only — this page is desktop-only per rule 15, so wrapping is never expected to actually fire. */
+.dash-location-period-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.dash-location-period-row > .dash-card {
+  flex: 1;
+  min-width: 220px;
+}
+
 .dash-location-toggle-row {
   display: flex;
   flex-wrap: wrap;

@@ -167,35 +167,40 @@ export default function Locations() {
         <p className="muted dash-empty">No active locations yet.</p>
       ) : (
         <>
-          <div className="dash-card">
-            <h2 className="dash-section-title">Location</h2>
-            <div className="dash-location-toggle-row">
-              {activeLocations.map((loc) => (
-                <button
-                  key={loc.id}
-                  type="button"
-                  className={`chip${loc.id === selectedLocationId ? ' chip-selected' : ''}`}
-                  onClick={() => handleSelectLocation(loc.id)}
-                >
-                  {loc.name}
-                </button>
-              ))}
+          {/* Location + Period side by side, added 2026-09-02 — each keeps its own label and
+              chip-row markup exactly as before, just placed in a shared flex row instead of two
+              stacked dash-cards. */}
+          <div className="dash-location-period-row">
+            <div className="dash-card">
+              <h2 className="dash-section-title">Location</h2>
+              <div className="dash-location-toggle-row">
+                {activeLocations.map((loc) => (
+                  <button
+                    key={loc.id}
+                    type="button"
+                    className={`chip${loc.id === selectedLocationId ? ' chip-selected' : ''}`}
+                    onClick={() => handleSelectLocation(loc.id)}
+                  >
+                    {loc.name}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="dash-card">
-            <h2 className="dash-section-title">Period</h2>
-            <div className="dash-location-toggle-row">
-              {PERIOD_CHIPS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  className={`chip${period === c.value ? ' chip-selected' : ''}`}
-                  onClick={() => setPeriod(c.value)}
-                >
-                  {c.label}
-                </button>
-              ))}
+            <div className="dash-card">
+              <h2 className="dash-section-title">Period</h2>
+              <div className="dash-location-toggle-row">
+                {PERIOD_CHIPS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    className={`chip${period === c.value ? ' chip-selected' : ''}`}
+                    onClick={() => setPeriod(c.value)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -209,26 +214,8 @@ export default function Locations() {
             <p className="muted dash-empty">Loading…</p>
           ) : (
             <>
-              <div className="dash-kpi-grid">
-                <div className="dash-kpi dash-kpi-accent">
-                  <div className="dash-kpi-label">Stock value</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.stockValue)}</div>
-                  <div className="dash-kpi-sub">{inr(selectedLocationData.stockValue)} at cost, right now</div>
-                </div>
-                <div className="dash-kpi dash-kpi-success">
-                  <div className="dash-kpi-label">Revenue</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.revenue)}</div>
-                  <div className="dash-kpi-sub">billed + dispatched · {revenueData.label}</div>
-                </div>
-                <div className="dash-kpi dash-kpi-purple">
-                  <div className="dash-kpi-label">Profit</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.profit)}</div>
-                  <div className="dash-kpi-sub">
-                    {selectedLocationData.profitSharePercent}% share · {revenueData.label}
-                  </div>
-                </div>
-              </div>
-
+              {/* Profit share moved above the KPI grid, 2026-09-02 (layout only — same content/
+                  logic as before, just relocated). */}
               <div className="dash-card">
                 <h2 className="dash-section-title">Profit share — {selectedLocationData.locationName}</h2>
                 <p className="muted">
@@ -262,6 +249,26 @@ export default function Locations() {
                     {profitShareError}
                   </p>
                 )}
+              </div>
+
+              <div className="dash-kpi-grid">
+                <div className="dash-kpi dash-kpi-accent">
+                  <div className="dash-kpi-label">Stock value</div>
+                  <div className="dash-kpi-value">{inrShort(selectedLocationData.stockValue)}</div>
+                  <div className="dash-kpi-sub">{inr(selectedLocationData.stockValue)} at cost, right now</div>
+                </div>
+                <div className="dash-kpi dash-kpi-success">
+                  <div className="dash-kpi-label">Revenue</div>
+                  <div className="dash-kpi-value">{inrShort(selectedLocationData.revenue)}</div>
+                  <div className="dash-kpi-sub">billed + dispatched · {revenueData.label}</div>
+                </div>
+                <div className="dash-kpi dash-kpi-purple">
+                  <div className="dash-kpi-label">Profit</div>
+                  <div className="dash-kpi-value">{inrShort(selectedLocationData.profit)}</div>
+                  <div className="dash-kpi-sub">
+                    {selectedLocationData.profitSharePercent}% share · {revenueData.label}
+                  </div>
+                </div>
               </div>
             </>
           )}
