@@ -19,6 +19,16 @@ export function createParty({ name, shopName, location, address, contact, gstNo 
   return apiFetch('/api/parties', { method: 'POST', body: { name, shopName, location, address, contact, gstNo } });
 }
 
+// PATCH /api/parties/:id -> the updated party. OWNER only, no PIN — editing name/contact/address
+// is administrative, not the pricing-adjacent action rule 71's PIN gate exists to protect (Party
+// carries no costPrice/sellingPrice at all). Mirrors api/factories.js's updateFactory exactly.
+export function updateParty(id, { name, shopName, location, address, contact, gstNo }) {
+  return apiFetch(`/api/parties/${id}`, {
+    method: 'PATCH',
+    body: { name, shopName, location, address, contact, gstNo },
+  });
+}
+
 // PATCH /api/parties/:id/deactivate -> the updated party. No PIN — archiving isn't a price
 // action, same rule as every other archive/reactivate action in this app.
 export function deactivateParty(id) {

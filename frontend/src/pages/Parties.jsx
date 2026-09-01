@@ -3,10 +3,22 @@ import { PartyIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
-import { listParties, createParty, deactivateParty, reactivateParty } from '../api/parties';
+import { listParties, createParty, updateParty, deactivateParty, reactivateParty } from '../api/parties';
 
 // Party List — list-first: form collapsed by default, "Add new party" opens it, Delete/
 // Reactivate per row.
+//
+// Edit (added 2026-09-02, PATCH /api/parties/:id) — OWNER only, no PIN, same reasoning
+// Delete/Reactivate already document below: editing a Party's own details is administrative, not
+// a price action (rule 71's PIN gate is specifically about costPrice/sellingPrice, neither of
+// which exists on this model). Placed inside the same expanded accordion body the read-only
+// detail rows already occupy — editing swaps that body over to a form (Name/Shop name/Location/
+// Address/Contact/GSTIN, same six fields and same shape as "Add new party" above), rather than
+// opening a second form elsewhere, so there's exactly one place on screen a party's fields are
+// ever shown or changed. Only one party can be mid-edit at a time (editingId is a single value,
+// not a Set) — same single-active-edit discipline Article Pricing's dashboard table already
+// established for its own row edits, for the same reason: two simultaneously-open edit forms
+// invite exactly the "which one did I mean to save" confusion that discipline exists to prevent.
 //
 // Reachable by BOTH roles as of 2026-08-18 (App.jsx). Viewing and creating are open: New Order
 // picks a Party on every order, so staff need to find customers and add new ones on the spot.
@@ -68,6 +80,20 @@ export default function Parties() {
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [actionError, setActionError] = useState(null);
+
+  // Edit — deliberately separate from confirmTarget/the create form above: this is neither an
+  // archive-style confirm-then-mutate action nor the always-visible create form, but a third,
+  // per-row exclusive mode. editingId is a single value, not a Set, for the same reason the
+  // dashboard's ArticlePricing table's editingId/renamingId are.
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editShopName, setEditShopName] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editContact, setEditContact] = useState('');
+  const [editGstNo, setEditGstNo] = useState('');
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +177,60 @@ export default function Parties() {
       setConfirmTarget(null);
     } finally {
       setActionInFlight(false);
+    }
+  }
+
+  function handleStartEdit(party) {
+    setEditingId(party.id);
+    // Pre-filled with the party's CURRENT values, not blank — an edit is almost always a small
+    // correction to what's already on file, same reasoning Article Pricing's own
+    // handleStartRename gives. Empty/null fields become an empty string to type into.
+    setEditName(party.name);
+    setEditShopName(party.shopName ?? '');
+    setEditLocation(party.location ?? '');
+    setEditAddress(party.address ?? '');
+    setEditContact(party.contact ?? '');
+    setEditGstNo(party.gstNo ?? '');
+    setEditError(null);
+    // Editing a party makes sense with its detail body open — expand it if it wasn't already,
+    // rather than requiring a separate click to reveal the very fields being edited.
+    setExpandedPartyIds((prev) => new Set(prev).add(party.id));
+  }
+
+  function handleCancelEdit() {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  function handleEditContactChange(event) {
+    // Rule 99: digits only, max 10 — same stripping handleContactChange uses for the create form
+    // above, applied here to the separate edit-draft state.
+    setEditContact(event.target.value.replace(/\D/g, '').slice(0, 10));
+  }
+
+  async function handleSaveEdit(party) {
+    setEditError(null);
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setEditError('Enter a name.');
+      return;
+    }
+    setEditSubmitting(true);
+    try {
+      const updated = await updateParty(party.id, {
+        name: trimmedName,
+        shopName: editShopName,
+        location: editLocation,
+        address: editAddress,
+        contact: editContact,
+        gstNo: editGstNo,
+      });
+      setParties((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setEditingId(null);
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditSubmitting(false);
     }
   }
 
@@ -300,6 +380,10 @@ export default function Parties() {
               const expanded = expandedPartyIds.has(p.id);
               const subtitle = [p.shopName, p.location].filter(Boolean).join(' · ');
               const hasDetails = p.address || p.contact || p.gstNo;
+              const isEditingThis = editingId === p.id;
+              // Any OTHER party mid-edit disables starting a new edit here — same single-active-
+              // edit discipline the file header comment explains.
+              const anyOtherPartyEditing = editingId !== null && editingId !== p.id;
               return (
                 <div key={p.id} className="accordion-section nested">
                   <button
@@ -322,7 +406,99 @@ export default function Parties() {
                     <ChevronIcon className={expanded ? 'chevron chevron-open' : 'chevron'} />
                   </button>
 
-                  {expanded && (
+                  {expanded && isEditingThis && (
+                    <div className="accordion-body nested">
+                      <label className="field">
+                        <span className="field-label">Name</span>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          autoFocus
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field-label">Shop name</span>
+                        <input
+                          type="text"
+                          value={editShopName}
+                          onChange={(e) => setEditShopName(e.target.value)}
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field-label">Location</span>
+                        <input
+                          type="text"
+                          value={editLocation}
+                          onChange={(e) => setEditLocation(e.target.value)}
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field-label">Address</span>
+                        <input
+                          type="text"
+                          value={editAddress}
+                          onChange={(e) => setEditAddress(e.target.value)}
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field-label">Contact</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={editContact}
+                          onChange={handleEditContactChange}
+                          maxLength={10}
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field-label">GSTIN</span>
+                        <input
+                          type="text"
+                          value={editGstNo}
+                          onChange={(e) => setEditGstNo(e.target.value)}
+                          disabled={editSubmitting}
+                        />
+                      </label>
+
+                      {editError && (
+                        <p className="error-banner" role="alert">
+                          {editError}
+                        </p>
+                      )}
+
+                      <div className="party-detail-actions">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => handleSaveEdit(p)}
+                          disabled={editSubmitting}
+                        >
+                          {editSubmitting ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={handleCancelEdit}
+                          disabled={editSubmitting}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {expanded && !isEditingThis && (
                     <div className="accordion-body nested">
                       {p.address && (
                         <div className="party-detail-row">
@@ -346,6 +522,14 @@ export default function Parties() {
 
                       {isOwner && (
                         <div className="party-detail-actions">
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => handleStartEdit(p)}
+                            disabled={anyOtherPartyEditing}
+                          >
+                            Edit
+                          </button>
                           {p.isActive ? (
                             // Labeled "Delete" per Aadi's confirmed framing, but this is still
                             // the same deactivate endpoint as every other archive action in this
@@ -358,7 +542,7 @@ export default function Parties() {
                               type="button"
                               className="link-button danger-text"
                               onClick={() => handleStartArchiveAction(p, 'archive')}
-                              disabled={actionInFlight}
+                              disabled={actionInFlight || anyOtherPartyEditing}
                             >
                               Delete
                             </button>
@@ -367,7 +551,7 @@ export default function Parties() {
                               type="button"
                               className="link-button"
                               onClick={() => handleStartArchiveAction(p, 'reactivate')}
-                              disabled={actionInFlight}
+                              disabled={actionInFlight || anyOtherPartyEditing}
                             >
                               Reactivate
                             </button>

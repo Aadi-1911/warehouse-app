@@ -3880,6 +3880,71 @@ body {
   max-width: 280px;
 }
 
+/* --- Factories (added 2026-09-02) — same 14px desktop table scale as .dash-pricing-table above,
+   own class rather than reused directly for the same reason .dash-bills-table already states:
+   this table's <tbody> can contain a conditionally-inserted error row directly beneath whichever
+   factory row is mid-edit, so it needs the same row-index-driven stripe .dash-pricing-table uses
+   (see that class's own comment), not .dash-bills-table's plain :nth-child(even). */
+.dash-factories-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.dash-factories-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-factories-table td {
+  padding: var(--space-3) 14px var(--space-3) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-factories-table tr:last-child > td {
+  border-bottom: none;
+}
+
+.dash-factories-row-alt > td {
+  background: var(--row-stripe-fill);
+}
+
+.dash-factories-action {
+  text-align: right;
+  padding-right: 0;
+}
+
+.dash-factories-action .link-button + .link-button {
+  margin-left: 14px;
+}
+
+.dash-factories-row-editing > td {
+  background: var(--section-fill);
+}
+
+.dash-factories-inline-input,
+.dash-factories-name-input {
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.dash-factories-error-row > td {
+  padding: var(--space-3) 14px;
+  background: var(--section-fill);
+}
+
 /* --- Bills (added 2026-08-30) — same 15px desktop type scale as .dash-pricing-table above (see
    that class's own comment for why the dashboard gets a larger scale than mobile's .pricing-table),
    but its OWN class rather than reused directly: this table has no inline-editing state at all, so

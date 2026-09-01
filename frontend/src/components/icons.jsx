@@ -343,3 +343,19 @@ export function EyeOffIcon({ size = 18 }) {
     </svg>
   );
 }
+
+// A factory silhouette (sawtooth roofline + chimney) — Owner Dashboard nav for the new Factories
+// page (added 2026-09-02). Distinct from every other rail icon (none of the existing set
+// represents "a supplier/place of manufacture"), matching size/weight to GridIcon/ClipboardIcon/
+// LocationPinIcon so it reads as one coherent set at 17px alongside them.
+export function FactoryIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <path d="M3 21V11l6 4v-4l6 4v-4l6 4v6H3z" />
+      <path d="M7 21v-4" />
+      <path d="M13 21v-4" />
+      <path d="M17 8V4" />
+      <path d="M15 4h4" />
+    </svg>
+  );
+}

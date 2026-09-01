@@ -31,6 +31,7 @@ import DashboardParties from './pages/dashboard/Parties';
 import DashboardLocations from './pages/dashboard/Locations';
 import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
 import DashboardBills from './pages/dashboard/Bills';
+import DashboardFactories from './pages/dashboard/Factories';
 
 export default function App() {
   return (
@@ -247,6 +248,10 @@ export default function App() {
                 Parties/History already are: the OWNER gate on the parent route covers it, and
                 there is no write path on this screen at all. */}
             <Route path="bills" element={<DashboardBills />} />
+            {/* Added 2026-09-02. Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and PATCH /api/factories/:id is independently
+                OWNER-gated server-side (no PIN — see that endpoint's own comment). */}
+            <Route path="factories" element={<DashboardFactories />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />

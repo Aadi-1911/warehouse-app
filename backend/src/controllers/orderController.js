@@ -44,6 +44,7 @@ function orderDetailSelect(role) {
     id: true,
     partyId: true,
     party: { select: { name: true } },
+    partyNameSnapshot: true,
     status: true,
     createdById: true,
     createdBy: { select: { name: true } },
@@ -99,7 +100,9 @@ function orderDetailToResponse(o, role) {
   return {
     id: o.id,
     partyId: o.partyId,
-    partyName: o.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // Order.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: o.partyNameSnapshot ?? o.party.name,
     status: o.status,
     createdById: o.createdById,
     createdByName: o.createdBy.name,
@@ -199,6 +202,10 @@ async function createOrder(req, res) {
       data: {
         partyId,
         createdById: req.user.id,
+        // Captured from the same `party` read already used for the isActive check above, at
+        // this exact instant — never from the request body, same principle as
+        // resolvedLineItems' own priceAtOrder/productNameSnapshot immediately above.
+        partyNameSnapshot: party.name,
         lineItems: { create: resolvedLineItems },
       },
     });
@@ -245,6 +252,7 @@ async function listOrders(req, res) {
       id: true,
       partyId: true,
       party: { select: { name: true } },
+      partyNameSnapshot: true,
       status: true,
       // Selected (though excluded from the status-filtered worklist queries above) so an
       // unfiltered caller — e.g. the Owner Dashboard's Orders page, which intentionally shows
@@ -303,7 +311,9 @@ async function listOrders(req, res) {
   const response = orders.map((o) => ({
     id: o.id,
     partyId: o.partyId,
-    partyName: o.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // Order.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: o.partyNameSnapshot ?? o.party.name,
     status: o.status,
     isCancelled: o.isCancelled,
     createdAt: o.createdAt,

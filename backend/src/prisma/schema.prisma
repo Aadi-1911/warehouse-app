@@ -540,6 +540,12 @@ model PartyStockReturn {
   // A return is explicitly "a simple event log" (see this model's own header), so like every
   // other logged event here it must keep reading as it did when it happened.
   productNameSnapshot String?
+  // Snapshots Party.name at return time (added 2026-09-02), same reasoning as
+  // productNameSnapshot immediately above, extended to the party side: this event log must keep
+  // reading as it did when it happened, regardless of a later Party rename. Same nullable/
+  // fallback shape — pre-2026-09-02 rows have no recorded name and fall back to the live
+  // Party.name at read time.
+  partyNameSnapshot   String?
   createdAt     DateTime      @default(now())
 
   transactions  Transaction[]
@@ -602,6 +608,18 @@ model Order {
   // changing after the fact. A reference tag is neither — correcting a mistyped bill number
   // changes nothing about what is owed.
   billNo             String?
+
+  // Snapshots Party.name at order-creation time (added 2026-09-02, alongside the Party edit
+  // feature). Same reasoning and same nullable/fallback shape as OrderLineItem.productNameSnapshot
+  // — a Party rename must not retroactively rewrite which customer an already-placed order reads
+  // as belonging to. Lives on Order itself, not OrderLineItem: partyId is an order-level field
+  // (one Party per Order, not per line), so the snapshot belongs at that same grain.
+  //
+  // NULLABLE, deliberately: every order created before this field existed has no recorded name
+  // and no way to recover one, so those rows stay null and fall back to the live Party.name at
+  // read time — a disclosed limitation for pre-2026-09-02 rows only, matching
+  // productNameSnapshot's own precedent exactly.
+  partyNameSnapshot  String?
 
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]

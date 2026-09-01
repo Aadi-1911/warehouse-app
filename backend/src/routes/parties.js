@@ -4,6 +4,7 @@ const requireRole = require('../middleware/requireRole');
 const {
   listParties,
   createParty,
+  updateParty,
   deactivateParty,
   reactivateParty,
   getPartyRevenue,
@@ -19,6 +20,11 @@ router.get('/', requireAuth, listParties);
 // member with a real new customer in front of them was blocked until an owner was available.
 // This puts Party in line with Factory/Color/Category, which have always been any-role.
 router.post('/', requireAuth, createParty);
+// OWNER only, no PIN — mirrors updateFactory's exact gating (routes/factories.js). Editing a
+// Party's own details (name, contact, address, tier) is administrative, not the pricing-adjacent
+// action the PIN gate exists to protect; rule 71's PIN is reserved for costPrice/sellingPrice,
+// neither of which exists on this model. Added 2026-09-02.
+router.patch('/:id', requireAuth, requireRole('OWNER'), updateParty);
 // Archive/reactivate stay OWNER-only, deliberately: creating a record is additive and low-risk,
 // whereas archiving removes an existing customer from everyone else's pickers. Different blast
 // radius, so a different gate — this is not an oversight left behind by the change above.

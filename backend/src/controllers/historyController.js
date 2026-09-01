@@ -183,6 +183,7 @@ async function listHistory(req, res) {
         // backstop filter at the end of this function checks each built entry against.
         createdBy: { select: { id: true, name: true, role: true } },
         party: { select: { name: true } },
+        partyNameSnapshot: true,
         // _count rather than pulling every line item just to length them — the feed only ever
         // shows the count for a creation entry.
         _count: { select: { lineItems: true } },
@@ -199,7 +200,7 @@ async function listHistory(req, res) {
         newValue: true,
         reason: true,
         changedBy: { select: { id: true, name: true, role: true } },
-        order: { select: { party: { select: { name: true } } } },
+        order: { select: { party: { select: { name: true } }, partyNameSnapshot: true } },
         // Null for order-level changes (a status transition); populated for line-level ones,
         // which is what lets the description name the specific article/colour.
         lineItem: {
@@ -258,6 +259,7 @@ async function listHistory(req, res) {
         reason: true,
         user: { select: { id: true, name: true, role: true } },
         party: { select: { name: true } },
+        partyNameSnapshot: true,
         bundle: {
           select: {
             product: { select: { articleNo: true } },
@@ -388,6 +390,9 @@ async function listHistory(req, res) {
   // record CHANGES to an order that already exists), so this is pulled from Order directly.
   for (const o of orders) {
     const lines = o._count.lineItems;
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // Order.partyNameSnapshot's schema comment for the full reasoning.
+    const partyName = o.partyNameSnapshot ?? o.party.name;
     entries.push({
       id: `ORDER_PLACED:${o.id}`,
       type: 'ORDER_PLACED',
@@ -396,14 +401,14 @@ async function listHistory(req, res) {
       actorId: o.createdBy.id,
       actorName: o.createdBy.name,
       actorRole: o.createdBy.role,
-      partyName: o.party.name,
-      description: `${o.party.name} order placed — ${lines} line${lines === 1 ? '' : 's'}`,
+      partyName,
+      description: `${partyName} order placed — ${lines} line${lines === 1 ? '' : 's'}`,
     });
   }
 
   // --- Order adjustments: status transitions, quantity changes, short-packs.
   for (const a of adjustments) {
-    const partyName = a.order.party.name;
+    const partyName = a.order.partyNameSnapshot ?? a.order.party.name;
     const reasonLabel = a.reason ? REASON_LABELS[a.reason] ?? a.reason : null;
 
     if (a.field === 'status') {
@@ -517,6 +522,9 @@ async function listHistory(req, res) {
   for (const r of returns) {
     const article = `${r.bundle.product.articleNo} ${r.bundle.color.name}`;
     const reasonLabel = RETURN_REASON_LABELS[r.reason] ?? r.reason;
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // PartyStockReturn.partyNameSnapshot's schema comment for the full reasoning.
+    const partyName = r.partyNameSnapshot ?? r.party.name;
     entries.push({
       id: `GOOD_RETURN:${r.id}`,
       type: 'GOOD_RETURN',
@@ -525,10 +533,10 @@ async function listHistory(req, res) {
       actorId: r.user.id,
       actorName: r.user.name,
       actorRole: r.user.role,
-      partyName: r.party.name,
+      partyName,
       // The reason is the whole point of a return entry — what came back matters less than why,
       // so it's in the sentence itself rather than a parenthetical afterthought.
-      description: `${r.party.name} returned ${r.qtySets} set${r.qtySets === 1 ? '' : 's'} of ${article} into ${r.location.name} — ${reasonLabel}`,
+      description: `${partyName} returned ${r.qtySets} set${r.qtySets === 1 ? '' : 's'} of ${article} into ${r.location.name} — ${reasonLabel}`,
     });
   }
 

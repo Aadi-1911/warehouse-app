@@ -14,6 +14,7 @@ import {
   TagIcon,
   WalletIcon,
   InvoiceIcon,
+  FactoryIcon,
   LockIcon,
 } from '../../components/icons';
 
@@ -85,6 +86,11 @@ const NAV_ITEMS = [
   // Added 2026-08-30, same "append at the end, never renumber" precedent as every addition
   // above. Same InvoiceIcon the mobile Bill Order screens already use for the same concept.
   { to: '/dashboard/bills', label: 'Bills', Icon: InvoiceIcon },
+  // Added 2026-09-02, same "append at the end, never renumber" precedent as every addition
+  // above. Unlike every other page in this list, Factories has no mobile equivalent to borrow an
+  // icon from — Factory never had its own list/management screen anywhere before this page — so
+  // FactoryIcon is a new glyph drawn specifically for this nav entry (see icons.jsx).
+  { to: '/dashboard/factories', label: 'Factories', Icon: FactoryIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -99,6 +105,7 @@ const PAGE_META = {
   '/dashboard/article-pricing': ['Cost and selling price by article', 'Article Pricing'],
   '/dashboard/factory-payables': ['What we owe each factory', 'Factory Payables'],
   '/dashboard/bills': ['Every billed order, chronologically', 'Bills'],
+  '/dashboard/factories': ['Supplier details, editable', 'Factories'],
 };
 
 function initialsOf(name) {

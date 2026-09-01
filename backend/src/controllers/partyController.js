@@ -5,9 +5,12 @@ const { piecesPerSetFor } = require('../utils/piecesPerSet');
 
 const prisma = new PrismaClient();
 
-// Every scalar field on Party (03_DATABASE_SCHEMA.md's minimal Phase 1 form) except createdAt —
-// matches the shape Factory/Color/Location's own SELECTs use (public fields + isActive), same
-// convention even though Party has no create/list endpoint yet to establish one independently.
+// Every scalar field on Party (03_DATABASE_SCHEMA.md's minimal Phase 1 form) except createdAt
+// and runningDueBalance (a computed figure, never a direct field a caller reads off this
+// record — see getPartyPayable/computeRevenue) — matches the shape Factory/Color/Location's own
+// SELECTs use (public fields + isActive), same convention even though Party has no create/list
+// endpoint yet to establish one independently. tier added 2026-09-02 alongside updateParty below
+// — until now nothing read or wrote it, so it had never been selected anywhere.
 const SELECT = {
   id: true,
   name: true,
@@ -16,6 +19,7 @@ const SELECT = {
   address: true,
   contact: true,
   gstNo: true,
+  tier: true,
   isActive: true,
 };
 
@@ -73,6 +77,84 @@ async function createParty(req, res) {
   } catch (err) {
     if (err.code === 'P2002') {
       return sendError(res, 409, 'DUPLICATE_PARTY', `Party "${trimmed}" already exists`);
+    }
+    throw err;
+  }
+}
+
+// Mirrors GoodReturnReason/TransactionCorrectionReason's own "kept as a plain array, not
+// imported from Prisma's generated enum" convention (returnController.js) — a bad `tier`
+// produces a clean 400 with the valid values listed, instead of a raw Prisma error surfacing as
+// a 500.
+const VALID_TIERS = ['REGULAR', 'ONE_OFF'];
+
+// PATCH /api/parties/:id — OWNER only (👑), no PIN — mirrors updateFactory's exact gating and
+// shape (factoryController.js): editing a Party's own details (name, contact, address, tier) is
+// administrative, not the pricing-adjacent action the PIN gate exists to protect (rule 71 is
+// about costPrice/sellingPrice specifically, which don't exist on this model at all).
+//
+// Editable fields are every scalar on Party except the three the application computes/derives
+// rather than a person typing them in: id, isActive (owns its own deactivate/reactivate
+// endpoints below, a different action with a different blast radius — same split
+// updateFactory/deactivateFactory already draw), runningDueBalance (computed from Order history,
+// never a direct write), and createdAt.
+//
+// Case-insensitive duplicate-name pre-check, same as updateFactory — but unlike Factory.name,
+// Party.name carries NO DB-level @unique index (flagged explicitly in createParty's own comment
+// above), so the P2002 catch below is kept only as defense-in-depth for whenever that index is
+// eventually added; today, the pre-check is genuinely the only defense that exists, and two
+// concurrent renames to the same name could both still succeed in the same race window.
+async function updateParty(req, res) {
+  const { id } = req.params;
+  const body = req.body;
+
+  const data = {};
+  if ('name' in body) data.name = body.name;
+  if ('shopName' in body) data.shopName = body.shopName;
+  if ('location' in body) data.location = body.location;
+  if ('address' in body) data.address = body.address;
+  if ('contact' in body) data.contact = body.contact;
+  if ('gstNo' in body) data.gstNo = body.gstNo;
+  if ('tier' in body) data.tier = body.tier;
+
+  if (Object.keys(data).length === 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'No editable fields provided');
+  }
+  if ('name' in data && (!data.name || !String(data.name).trim())) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+  }
+  if ('tier' in data && data.tier !== null && !VALID_TIERS.includes(data.tier)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `tier must be one of: ${VALID_TIERS.join(', ')}, or null`);
+  }
+
+  const existing = await prisma.party.findUnique({ where: { id } });
+  if (!existing) {
+    return sendError(res, 404, 'PARTY_NOT_FOUND', `No party with id ${id}`);
+  }
+
+  if ('name' in data) {
+    data.name = String(data.name).trim();
+    const nameClash = await prisma.party.findFirst({
+      where: { name: { equals: data.name, mode: 'insensitive' }, id: { not: id } },
+    });
+    if (nameClash) {
+      return sendError(res, 409, 'DUPLICATE_PARTY', `Party "${nameClash.name}" already exists`);
+    }
+  }
+  // Optional text fields: trimmed, and an empty string normalised to null so "not provided" and
+  // "cleared" both end up as the same value — same convention createParty already uses.
+  if ('shopName' in data) data.shopName = data.shopName?.trim() || null;
+  if ('location' in data) data.location = data.location?.trim() || null;
+  if ('address' in data) data.address = data.address?.trim() || null;
+  if ('contact' in data) data.contact = data.contact?.trim() || null;
+  if ('gstNo' in data) data.gstNo = data.gstNo?.trim() || null;
+
+  try {
+    const updated = await prisma.party.update({ where: { id }, data, select: SELECT });
+    res.json(updated);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_PARTY', `Party "${data.name}" already exists`);
     }
     throw err;
   }
@@ -232,6 +314,7 @@ async function getPartyPayable(req, res) {
 module.exports = {
   listParties,
   createParty,
+  updateParty,
   deactivateParty,
   reactivateParty,
   getPartyRevenue,

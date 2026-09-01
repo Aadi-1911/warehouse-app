@@ -36,6 +36,7 @@ const RETURN_SELECT = {
   id: true,
   partyId: true,
   party: { select: { name: true } },
+  partyNameSnapshot: true,
   bundleId: true,
   bundle: {
     select: {
@@ -59,7 +60,9 @@ function toResponse(r) {
   return {
     id: r.id,
     partyId: r.partyId,
-    partyName: r.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // PartyStockReturn.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: r.partyNameSnapshot ?? r.party.name,
     bundleId: r.bundleId,
     productId: r.bundle.product.id,
     productArticleNo: r.bundle.product.articleNo,
@@ -220,6 +223,10 @@ async function createReturns(req, res) {
           note: line.note,
           userId: req.user.id,
           productNameSnapshot: line.productNameSnapshot,
+          // Captured from the same `party` read already used for the isActive check above, at
+          // this exact instant — never from the request body, same principle as
+          // line.productNameSnapshot immediately above.
+          partyNameSnapshot: party.name,
         },
       });
 
