@@ -3851,6 +3851,21 @@ body {
   text-align: right;
 }
 
+/* Rename's own input (2026-09-01) — same border/radius/font as .dash-pricing-inline-input above,
+   but a Name column needs to actually fit a name ("LS KNITS U PKT"), not the fixed 100px/
+   right-aligned shape that column reuses for the two money fields. A separate class rather than
+   overriding those two properties on the shared one, so a future change to the price inputs'
+   shared look can't accidentally widen/left-align them too. */
+.dash-pricing-name-input {
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
 .dash-pricing-error-row > td,
 .dash-pricing-pin-row > td {
   padding: var(--space-3) 14px;

@@ -61,6 +61,26 @@ import PinPrompt from '../../components/PinPrompt';
 // lock's privacy-only role) — see DashboardLayout.jsx's own PIN LOCK note. The lock hides the
 // screen from a shoulder-surfer; nothing about it substitutes for the price-edit PIN gate, which
 // still runs on every single edit here exactly as it does on mobile.
+//
+// Rename (added here 2026-09-01, reusing mobile's ArticlePricing.jsx rename feature from
+// 3ab28d1 exactly at the API layer) — same PATCH /api/products/:id, same { name } body, same
+// updateProduct() client function, no new endpoint. No PIN, on purpose, matching mobile: rule
+// 71's PIN gate is specifically about money, and `name` sits with categoryId/isKids as an
+// ordinary OWNER-only attribute edit (routes/products.js's requirePinForPriceEdits only inspects
+// the body for costPrice/sellingPrice, so a name-only PATCH never triggers it). OWNER enforcement
+// itself is NOT something this page adds or could bypass even if it wanted to — it's already
+// double-covered independently of anything here: the /dashboard route tree's own requireRole
+// gate (App.jsx) keeps a STAFF session off this screen entirely, and routes/products.js's
+// requireRole('OWNER') on the PATCH route runs server-side unconditionally regardless of what any
+// client sends. Reusing the exact same endpoint/client function the price form already calls
+// means rename inherits both of those for free — there is no separate write path to gate.
+//
+// UI shape adapted to THIS page's existing row-based editing convention rather than mobile's
+// separate card-below-the-table form: mobile has no per-row inline state to conflict with (one
+// flat form, one row at a time by construction), but this page already enforces "only one row
+// mid-edit at once" for price edits, so rename gets its own equally-exclusive per-row state
+// (renamingId) rather than a second, independent form that could be open at the same time as a
+// price edit on a different row.
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -101,6 +121,13 @@ export default function DashboardArticlePricing() {
   // paymentDraft and History.jsx's correction drafts already use.
   const [priceDraft, setPriceDraft] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+
+  // Rename state — deliberately separate from editingId/priceDraft above (see the file header
+  // comment for why merging the two forms would be wrong, not just messier).
+  const [renamingId, setRenamingId] = useState(null);
+  const [newName, setNewName] = useState('');
+  const [renameError, setRenameError] = useState(null);
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,6 +214,64 @@ export default function DashboardArticlePricing() {
     setProducts(fresh);
     setStatus('loaded');
     setTimeout(() => setSuccessMessage(null), 3000);
+  }
+
+  function handleStartRename(product) {
+    setRenamingId(product.id);
+    // Pre-filled with the CURRENT name, not blank — same reasoning mobile's own
+    // handleStartRename gives: a rename is almost always a small correction to an existing name,
+    // not a fresh entry.
+    setNewName(product.name);
+    setRenameError(null);
+  }
+
+  function handleCancelRename() {
+    setRenamingId(null);
+    setNewName('');
+    setRenameError(null);
+  }
+
+  async function handleSubmitRename(product) {
+    setRenameError(null);
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setRenameError('Enter a name.');
+      return;
+    }
+    // Nothing to save, and the server would reject a no-op PATCH as "no editable fields" anyway
+    // — caught here for a plain-language reason instead of a validation error, same as mobile.
+    if (trimmed === product.name) {
+      setRenameError('That is already the current name.');
+      return;
+    }
+
+    setRenameSubmitting(true);
+    try {
+      // No `pin` in this body, on purpose — see the file header comment.
+      await updateProduct(product.id, { name: trimmed });
+      setSuccessMessage(
+        `${product.articleNo} renamed to "${trimmed}". Orders, transfers and returns recorded before now keep showing the old name.`
+      );
+      handleCancelRename();
+      // Re-fetch so the table shows the new name rather than the one just replaced — never
+      // patched optimistically, same discipline every other mutation on this page follows.
+      setStatus('loading');
+      const fresh = await listProducts();
+      setProducts(fresh);
+      setStatus('loaded');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      setRenameError(err.message);
+    } finally {
+      setRenameSubmitting(false);
+    }
+  }
+
+  function handleRenameEnterKey(event, product) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleSubmitRename(product);
+    }
   }
 
   const factoryNameById = new Map(factories.map((f) => [f.id, f.name]));
@@ -325,6 +410,13 @@ export default function DashboardArticlePricing() {
                           const pending = isPending(product);
                           const isEditing = editingId === product.id;
                           const isStaged = isEditing && !!priceDraft;
+                          const isRenaming = renamingId === product.id;
+                          // Only one row total may be mid-edit OR mid-rename at once — the same
+                          // single-active-edit discipline this page already enforces for price
+                          // edits, extended to cover rename as a second exclusive mode.
+                          const anyOtherRowBusy =
+                            (editingId !== null && editingId !== product.id) ||
+                            (renamingId !== null && renamingId !== product.id);
 
                           return (
                             <Fragment key={product.id}>
@@ -337,14 +429,28 @@ export default function DashboardArticlePricing() {
                                   cascade order, not string order, decides that — see index.css). */}
                               <tr
                                 className={[
-                                  isEditing ? 'dash-pricing-row-editing' : '',
+                                  isEditing || isRenaming ? 'dash-pricing-row-editing' : '',
                                   rowIndex % 2 === 1 ? 'dash-pricing-row-alt' : '',
                                 ]
                                   .filter(Boolean)
                                   .join(' ')}
                               >
                                 <td>{product.articleNo}</td>
-                                <td>{product.name}</td>
+                                <td>
+                                  {isRenaming ? (
+                                    <input
+                                      type="text"
+                                      className="dash-pricing-name-input"
+                                      value={newName}
+                                      onChange={(e) => setNewName(e.target.value)}
+                                      onKeyDown={(e) => handleRenameEnterKey(e, product)}
+                                      autoFocus
+                                      disabled={renameSubmitting}
+                                    />
+                                  ) : (
+                                    product.name
+                                  )}
+                                </td>
                                 {isEditing && !isStaged ? (
                                   <>
                                     <td className="dash-pricing-num">
@@ -417,15 +523,48 @@ export default function DashboardArticlePricing() {
                                         </button>
                                       </>
                                     )
+                                  ) : isRenaming ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => handleSubmitRename(product)}
+                                        disabled={renameSubmitting}
+                                      >
+                                        {renameSubmitting ? 'Saving…' : 'Save'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={handleCancelRename}
+                                        disabled={renameSubmitting}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => handleStartEdit(product)}
-                                      disabled={!user.hasPinSet || (editingId !== null && editingId !== product.id)}
-                                    >
-                                      Edit
-                                    </button>
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => handleStartEdit(product)}
+                                        disabled={!user.hasPinSet || anyOtherRowBusy}
+                                      >
+                                        Edit
+                                      </button>
+                                      {/* Deliberately NOT gated on user.hasPinSet, unlike Edit
+                                          above — mirrors mobile's own rename button exactly: a
+                                          rename needs no PIN, so an owner who has never set one
+                                          can still fix a typo in an article's name. */}
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => handleStartRename(product)}
+                                        disabled={anyOtherRowBusy}
+                                      >
+                                        Rename
+                                      </button>
+                                    </>
                                   )}
                                 </td>
                               </tr>
@@ -435,6 +574,23 @@ export default function DashboardArticlePricing() {
                                     <p className="error-banner" role="alert">
                                       {formError}
                                     </p>
+                                  </td>
+                                </tr>
+                              )}
+                              {isRenaming && (
+                                <tr className="dash-pricing-pin-row">
+                                  <td colSpan={TABLE_COLUMN_COUNT}>
+                                    <p className="muted">
+                                      This renames the whole article, including all {product.articleNo}'s
+                                      colours. Orders, transfers and returns recorded before now keep
+                                      showing the old name — renaming only affects what's created from
+                                      here on.
+                                    </p>
+                                    {renameError && (
+                                      <p className="error-banner" role="alert">
+                                        {renameError}
+                                      </p>
+                                    )}
                                   </td>
                                 </tr>
                               )}
