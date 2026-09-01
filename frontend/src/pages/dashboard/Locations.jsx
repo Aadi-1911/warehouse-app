@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '../../api/locations';
+import { PercentIcon } from '../../components/icons';
 
 // Owner Dashboard — Locations (added 2026-08-20, beyond 07_UI_DESIGN_BRIEF.md §8's original nav —
 // the location-attributed revenue/profit split calculation task's own dashboard consumer).
@@ -25,6 +26,26 @@ import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '.
 // GET /api/locations/revenue returns EVERY location's figures in one call (see that endpoint's
 // own comment for why) — toggling location is instant client-side, no refetch. Only a period
 // change triggers a real request.
+//
+// Profit share AS A POPOVER (added 2026-09-02, presentation-only — no data/logic changes).
+// Investigated first, per the task: DashboardLayout.jsx's <header> has no per-page action slot
+// (dash-header-right is hardcoded to just the date + lock button, not exposed to child pages via
+// children/context/an outlet prop), so there was no existing header slot to plug into — this
+// page's own content is where the trigger button lives instead. Originally its own standalone
+// row above Location/Period; moved into .dash-location-period-row itself as a third flex item
+// (same day) so it reads as one coherent header-ish row instead of two stacked ones. For the
+// popover's click-outside-to-close behaviour, this codebase already has an established, if
+// uncentralized, pattern: Combobox.jsx and dashboard/Parties.jsx's own search box both close on
+// an outside click via a containerRef + a `mousedown` document listener (checking
+// `!containerRef.current.contains(e.target)`), each with its own inline copy rather than a
+// shared hook. Followed here exactly rather than introducing a new shared hook, which would be
+// its own separate refactor.
+//
+// profitShareDraft/profitShareSaving/profitShareError/profitShareSaved and
+// handleSaveProfitShare below are completely UNTOUCHED by this — the popover only wraps their
+// existing JSX in open/closed visibility. The "closes automatically after a successful save"
+// requirement is met by a NEW, separate effect watching profitShareSaved (see below), not by
+// editing handleSaveProfitShare itself — that function has no idea a popover exists.
 
 const PERIOD_CHIPS = [
   { value: 'month', label: 'This month' },
@@ -63,6 +84,33 @@ export default function Locations() {
   const [profitShareSaving, setProfitShareSaving] = useState(false);
   const [profitShareError, setProfitShareError] = useState(null);
   const [profitShareSaved, setProfitShareSaved] = useState(false);
+
+  // Popover open/closed state — entirely separate from the profit-share fields above, which know
+  // nothing about it. Closed by default (rule: no popover ever starts open).
+  const [profitSharePopoverOpen, setProfitSharePopoverOpen] = useState(false);
+  const profitSharePopoverRef = useRef(null);
+
+  // Click-outside-to-close — same containerRef + `mousedown` pattern Combobox.jsx/dashboard/
+  // Parties.jsx's search box already use (see the file header comment). The ref wraps BOTH the
+  // trigger button and the panel, so a click on the trigger itself never double-fires as an
+  // "outside" click — the button's own onClick is what toggles it.
+  useEffect(() => {
+    if (!profitSharePopoverOpen) return;
+    function handlePointerDown(e) {
+      if (profitSharePopoverRef.current && !profitSharePopoverRef.current.contains(e.target)) {
+        setProfitSharePopoverOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [profitSharePopoverOpen]);
+
+  // Auto-close on a successful save. Watches profitShareSaved rather than being called FROM
+  // handleSaveProfitShare, so that function stays exactly as it was before this task — it has no
+  // idea a popover exists, and doesn't need to.
+  useEffect(() => {
+    if (profitShareSaved) setProfitSharePopoverOpen(false);
+  }, [profitShareSaved]);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,7 +217,11 @@ export default function Locations() {
         <>
           {/* Location + Period side by side, added 2026-09-02 — each keeps its own label and
               chip-row markup exactly as before, just placed in a shared flex row instead of two
-              stacked dash-cards. */}
+              stacked dash-cards. Profit share's popover trigger joined this row 2026-09-02 too
+              (moved out of its own standalone .dash-page-actions row above this one) — a third
+              flex item, right-aligned, sized to its own content rather than sharing the row's
+              space with the two dash-cards (see .dash-location-period-row's own CSS comment for
+              why it needs its own flex-basis rule to avoid stretching). */}
           <div className="dash-location-period-row">
             <div className="dash-card">
               <h2 className="dash-section-title">Location</h2>
@@ -202,6 +254,69 @@ export default function Locations() {
                 ))}
               </div>
             </div>
+
+            {/* Profit share popover trigger — page-local stand-in for a header action slot
+                DashboardLayout.jsx's shared header doesn't expose (see the file header comment).
+                position: relative here is deliberately scoped to JUST this wrapper, not the row
+                (.dash-location-period-row itself stays position: static) — the popover panel
+                below anchors to THIS element specifically, so its position: absolute must resolve
+                against this wrapper's own box, not against the row (which would let the panel
+                stretch to the row's full width or drift to the row's own top-left corner instead
+                of sitting directly under the button). Disabled until a location's revenue data
+                has actually loaded — nothing here can be edited before selectedLocationData
+                exists anyway. */}
+            <div className="dash-profit-share-popover-wrap" ref={profitSharePopoverRef}>
+              <button
+                type="button"
+                className="dash-profit-share-trigger"
+                onClick={() => setProfitSharePopoverOpen((v) => !v)}
+                aria-label="Profit share settings"
+                aria-expanded={profitSharePopoverOpen}
+                disabled={!selectedLocationData}
+              >
+                <PercentIcon size={18} />
+              </button>
+
+              {/* Exact same content that used to sit in a standalone dash-card between the
+                  Location/Period row and the KPI grid (two tasks ago) — only the wrapper and its
+                  open/closed visibility changed, nothing inside it. */}
+              {profitSharePopoverOpen && selectedLocationData && (
+                <div className="dash-profit-share-popover">
+                  <h2 className="dash-section-title">Profit share — {selectedLocationData.locationName}</h2>
+                  <p className="muted">
+                    What share of {selectedLocationData.locationName}'s profit actually belongs to the
+                    business. Cost price is the same everywhere — only this percentage changes.
+                  </p>
+                  <div className="dash-location-profit-row">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="dash-location-profit-input"
+                      value={displayedProfitShare}
+                      onChange={(e) => setProfitShareDraft(e.target.value)}
+                      disabled={profitShareSaving}
+                    />
+                    <span className="muted">%</span>
+                    <button
+                      type="button"
+                      className="btn-primary btn-inline"
+                      onClick={handleSaveProfitShare}
+                      disabled={profitShareSaving}
+                    >
+                      {profitShareSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    {profitShareSaved && <span className="dash-location-profit-saved">Saved</span>}
+                  </div>
+                  {profitShareError && (
+                    <p className="error-banner" role="alert">
+                      {profitShareError}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {revenueError && (
@@ -213,64 +328,25 @@ export default function Locations() {
           {revenueStatus !== 'loaded' || !selectedLocationData ? (
             <p className="muted dash-empty">Loading…</p>
           ) : (
-            <>
-              {/* Profit share moved above the KPI grid, 2026-09-02 (layout only — same content/
-                  logic as before, just relocated). */}
-              <div className="dash-card">
-                <h2 className="dash-section-title">Profit share — {selectedLocationData.locationName}</h2>
-                <p className="muted">
-                  What share of {selectedLocationData.locationName}'s profit actually belongs to the business.
-                  Cost price is the same everywhere — only this percentage changes.
-                </p>
-                <div className="dash-location-profit-row">
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    className="dash-location-profit-input"
-                    value={displayedProfitShare}
-                    onChange={(e) => setProfitShareDraft(e.target.value)}
-                    disabled={profitShareSaving}
-                  />
-                  <span className="muted">%</span>
-                  <button
-                    type="button"
-                    className="btn-primary btn-inline"
-                    onClick={handleSaveProfitShare}
-                    disabled={profitShareSaving}
-                  >
-                    {profitShareSaving ? 'Saving…' : 'Save'}
-                  </button>
-                  {profitShareSaved && <span className="dash-location-profit-saved">Saved</span>}
-                </div>
-                {profitShareError && (
-                  <p className="error-banner" role="alert">
-                    {profitShareError}
-                  </p>
-                )}
+            <div className="dash-kpi-grid">
+              <div className="dash-kpi dash-kpi-accent">
+                <div className="dash-kpi-label">Stock value</div>
+                <div className="dash-kpi-value">{inrShort(selectedLocationData.stockValue)}</div>
+                <div className="dash-kpi-sub">{inr(selectedLocationData.stockValue)} at cost, right now</div>
               </div>
-
-              <div className="dash-kpi-grid">
-                <div className="dash-kpi dash-kpi-accent">
-                  <div className="dash-kpi-label">Stock value</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.stockValue)}</div>
-                  <div className="dash-kpi-sub">{inr(selectedLocationData.stockValue)} at cost, right now</div>
-                </div>
-                <div className="dash-kpi dash-kpi-success">
-                  <div className="dash-kpi-label">Revenue</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.revenue)}</div>
-                  <div className="dash-kpi-sub">billed + dispatched · {revenueData.label}</div>
-                </div>
-                <div className="dash-kpi dash-kpi-purple">
-                  <div className="dash-kpi-label">Profit</div>
-                  <div className="dash-kpi-value">{inrShort(selectedLocationData.profit)}</div>
-                  <div className="dash-kpi-sub">
-                    {selectedLocationData.profitSharePercent}% share · {revenueData.label}
-                  </div>
+              <div className="dash-kpi dash-kpi-success">
+                <div className="dash-kpi-label">Revenue</div>
+                <div className="dash-kpi-value">{inrShort(selectedLocationData.revenue)}</div>
+                <div className="dash-kpi-sub">billed + dispatched · {revenueData.label}</div>
+              </div>
+              <div className="dash-kpi dash-kpi-purple">
+                <div className="dash-kpi-label">Profit</div>
+                <div className="dash-kpi-value">{inrShort(selectedLocationData.profit)}</div>
+                <div className="dash-kpi-sub">
+                  {selectedLocationData.profitSharePercent}% share · {revenueData.label}
                 </div>
               </div>
-            </>
+            </div>
           )}
         </>
       )}

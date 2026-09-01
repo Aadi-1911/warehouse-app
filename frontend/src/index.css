@@ -3736,6 +3736,70 @@ body {
   min-width: 220px;
 }
 
+/* Profit share's popover trigger, third item in this row (moved here 2026-09-02 from its own
+   standalone .dash-page-actions row — see Locations.jsx's own file header comment). Two rules
+   that both matter for the popover to anchor correctly, not just cosmetics:
+     - flex: 0 0 auto — the two .dash-card siblings get flex: 1 above and share the row's width;
+       this wrapper must NOT join that (a bare `flex: 1` default of 0 1 auto already wouldn't
+       grow, but stating it explicitly here documents that it's deliberate, not an oversight).
+     - align-self: center — .dash-location-period-row has no align-items of its own, so the
+       default (stretch) would otherwise stretch THIS WRAPPER to match the taller .dash-card
+       siblings' height. That matters beyond appearance: the popover panel below anchors via
+       `position: absolute; top: 100%` against ITS OWN nearest `position: relative` ancestor,
+       which is this wrapper. A stretched wrapper means "100% of the wrapper's height" is no
+       longer "just past the 34px button" — it becomes "just past the full card height," landing
+       the panel well below the button with a large visible gap. Centring the wrapper on its own
+       natural (button) height keeps position: relative scoped tightly to the button, exactly as
+       required — never promoted to the row's own positioning context.
+   The trigger button/popover panel rules themselves (.dash-profit-share-trigger/-popover) are
+   unchanged by this move. */
+.dash-profit-share-popover-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+/* Same plain icon-button treatment as .dash-party-copy-btn (border-free, tinted on hover), just
+   sized for a standalone control rather than one sitting inline next to text. */
+.dash-profit-share-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dash-profit-share-trigger:hover:not(:disabled) {
+  background: var(--section-fill);
+  color: var(--text-primary);
+}
+
+.dash-profit-share-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The popover panel — same visual weight as .dash-card (same bg/border/radius/shadow), but
+   absolutely positioned below the trigger rather than sitting inline in the page flow, and given
+   a fixed width so its content (title, description, input row) doesn't reflow the page under it. */
+.dash-profit-share-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(28, 27, 25, 0.12);
+  padding: var(--space-4);
+}
+
 .dash-location-toggle-row {
   display: flex;
   flex-wrap: wrap;

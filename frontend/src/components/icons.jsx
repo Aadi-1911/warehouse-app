@@ -359,3 +359,18 @@ export function FactoryIcon({ size = 17 }) {
     </svg>
   );
 }
+
+// A plain "%" glyph — the Owner Dashboard Locations page's Profit share popover trigger (added
+// 2026-09-02). Percent, not a gear/settings glyph: the control opens exactly one thing (the
+// profit-share percentage for the selected location), so an icon that names the actual value
+// being set reads more honestly than a generic "settings" symbol would for a single-purpose
+// control. Sized like CopyIcon/EyeIcon (an inline icon-only button), not the 17px rail set.
+export function PercentIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.8}>
+      <line x1="19" y1="5" x2="5" y2="19" />
+      <circle cx="6.5" cy="6.5" r="2.5" />
+      <circle cx="17.5" cy="17.5" r="2.5" />
+    </svg>
+  );
+}
