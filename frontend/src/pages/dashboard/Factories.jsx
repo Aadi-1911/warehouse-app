@@ -232,35 +232,37 @@ export default function DashboardFactories() {
                           )}
                         </td>
                         <td className="dash-factories-action">
-                          {isEditing ? (
-                            <>
+                          <div className="dash-table-action-row">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  onClick={() => handleSaveEdit(factory)}
+                                  disabled={submitting}
+                                >
+                                  {submitting ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  onClick={handleCancelEdit}
+                                  disabled={submitting}
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 type="button"
                                 className="link-button"
-                                onClick={() => handleSaveEdit(factory)}
-                                disabled={submitting}
+                                onClick={() => handleStartEdit(factory)}
+                                disabled={anyOtherRowBusy}
                               >
-                                {submitting ? 'Saving…' : 'Save'}
+                                Edit
                               </button>
-                              <button
-                                type="button"
-                                className="link-button"
-                                onClick={handleCancelEdit}
-                                disabled={submitting}
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="link-button"
-                              onClick={() => handleStartEdit(factory)}
-                              disabled={anyOtherRowBusy}
-                            >
-                              Edit
-                            </button>
-                          )}
+                            )}
+                          </div>
                         </td>
                       </tr>
                       {isEditing && formError && (

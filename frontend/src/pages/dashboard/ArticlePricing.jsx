@@ -512,60 +512,62 @@ export default function DashboardArticlePricing() {
                                   </>
                                 )}
                                 <td className="dash-pricing-action">
-                                  {isEditing ? (
-                                    isStaged ? null : (
+                                  <div className="dash-table-action-row">
+                                    {isEditing ? (
+                                      isStaged ? null : (
+                                        <>
+                                          <button type="button" className="link-button" onClick={handleContinueToPin}>
+                                            Continue
+                                          </button>
+                                          <button type="button" className="link-button" onClick={handleCancelEdit}>
+                                            Cancel
+                                          </button>
+                                        </>
+                                      )
+                                    ) : isRenaming ? (
                                       <>
-                                        <button type="button" className="link-button" onClick={handleContinueToPin}>
-                                          Continue
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => handleSubmitRename(product)}
+                                          disabled={renameSubmitting}
+                                        >
+                                          {renameSubmitting ? 'Saving…' : 'Save'}
                                         </button>
-                                        <button type="button" className="link-button" onClick={handleCancelEdit}>
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={handleCancelRename}
+                                          disabled={renameSubmitting}
+                                        >
                                           Cancel
                                         </button>
                                       </>
-                                    )
-                                  ) : isRenaming ? (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => handleSubmitRename(product)}
-                                        disabled={renameSubmitting}
-                                      >
-                                        {renameSubmitting ? 'Saving…' : 'Save'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={handleCancelRename}
-                                        disabled={renameSubmitting}
-                                      >
-                                        Cancel
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => handleStartEdit(product)}
-                                        disabled={!user.hasPinSet || anyOtherRowBusy}
-                                      >
-                                        Edit
-                                      </button>
-                                      {/* Deliberately NOT gated on user.hasPinSet, unlike Edit
-                                          above — mirrors mobile's own rename button exactly: a
-                                          rename needs no PIN, so an owner who has never set one
-                                          can still fix a typo in an article's name. */}
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => handleStartRename(product)}
-                                        disabled={anyOtherRowBusy}
-                                      >
-                                        Rename
-                                      </button>
-                                    </>
-                                  )}
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => handleStartEdit(product)}
+                                          disabled={!user.hasPinSet || anyOtherRowBusy}
+                                        >
+                                          Edit
+                                        </button>
+                                        {/* Deliberately NOT gated on user.hasPinSet, unlike Edit
+                                            above — mirrors mobile's own rename button exactly: a
+                                            rename needs no PIN, so an owner who has never set one
+                                            can still fix a typo in an article's name. */}
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => handleStartRename(product)}
+                                          disabled={anyOtherRowBusy}
+                                        >
+                                          Rename
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                               {isEditing && !isStaged && formError && (

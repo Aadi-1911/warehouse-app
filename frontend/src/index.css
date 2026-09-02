@@ -3953,15 +3953,28 @@ body {
   background: var(--row-stripe-fill);
 }
 
-.dash-pricing-num {
-  text-align: right;
+/* Compound selector (beats .dash-pricing-table th's own text-align:left outright, regardless of
+   source order) — a bare .dash-pricing-num class alone lost that fight for header cells while
+   still winning it for data cells (which have no competing text-align rule), so headers rendered
+   left-aligned while their own column's values rendered right-aligned. See LEARNING_LOG.md. */
+.dash-pricing-table th.dash-pricing-num,
+.dash-pricing-table td.dash-pricing-num {
+  text-align: center;
 }
 
 .dash-pricing-action {
+  text-align: right;
+}
+
+/* Shared by every dashboard table's action column (.dash-pricing-action, .dash-factories-action,
+   ...): the <td> itself must stay a plain table-cell so it stretches to match the row's real
+   height like its siblings — display:flex directly on a <td> was measured to break that stretch
+   (LEARNING_LOG.md), sizing the cell to its own content instead of the row. This inner wrapper
+   carries the flex/gap layout for the button(s) instead, leaving the <td> untouched. */
+.dash-table-action-row {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-4);
-  text-align: right;
 }
 
 /* A row mid-edit gets a quiet neutral tint — same whisper-tint restraint Pack Order's own tone
@@ -3978,7 +3991,7 @@ body {
   border-radius: 8px;
   font-size: 14px;
   font-family: inherit;
-  text-align: right;
+  text-align: center;
 }
 
 /* Rename's own input (2026-09-01) — same border/radius/font as .dash-pricing-inline-input above,
@@ -4047,9 +4060,6 @@ body {
 }
 
 .dash-factories-action {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-4);
   text-align: right;
 }
 
