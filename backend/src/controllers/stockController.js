@@ -32,6 +32,7 @@ async function listStock(req, res) {
               name: true,
               factoryId: true,
               isActive: true,
+              sellingPrice: true,
               factory: { select: { name: true } },
             },
           },
@@ -76,12 +77,18 @@ async function listStock(req, res) {
   // row already carries the `product` prefix (productId, productArticleNo, productName), and a
   // bare `isActive` here would read as a property of the Stock row itself, which has no such
   // concept.
+  //
+  // productSellingPrice rides along too (2026-09-02), for the Owner Dashboard's Live Stock page —
+  // OWNER-only route, so no STAFF-visibility question to weigh (unlike costPrice, which this
+  // endpoint must never select regardless of caller, since GET /api/stock is any-role). Nullable,
+  // same as on Product itself ("pending price" until the owner sets one).
   const response = stock.map((s) => ({
     bundleId: s.bundleId,
     productId: s.bundle.product.id,
     productArticleNo: s.bundle.product.articleNo,
     productName: s.bundle.product.name,
     productIsActive: s.bundle.product.isActive,
+    productSellingPrice: s.bundle.product.sellingPrice,
     factoryId: s.bundle.product.factoryId,
     factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,

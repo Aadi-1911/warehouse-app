@@ -32,6 +32,10 @@ import DashboardLocations from './pages/dashboard/Locations';
 import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
 import DashboardBills from './pages/dashboard/Bills';
 import DashboardFactories from './pages/dashboard/Factories';
+import DashboardLiveStock from './pages/dashboard/LiveStock';
+// TEMPORARY — delete this import and its route below after Aadi confirms the swipe gesture
+// feels right. See pages/dev/SwipePreview.jsx's own header comment for details.
+import SwipePreview from './pages/dev/SwipePreview';
 
 export default function App() {
   return (
@@ -42,6 +46,9 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* TEMPORARY — delete after Aadi confirms the swipe gesture feels right. Not linked
+              from any nav/menu, not gated behind auth — reachable only by typing the URL. */}
+          <Route path="/dev/swipe-preview" element={<SwipePreview />} />
           <Route
             path="/"
             element={
@@ -252,6 +259,12 @@ export default function App() {
                 /dashboard route covers it, and PATCH /api/factories/:id is independently
                 OWNER-gated server-side (no PIN — see that endpoint's own comment). */}
             <Route path="factories" element={<DashboardFactories />} />
+            {/* Added 2026-09-02, same "append at the end, never renumber" precedent as every
+                addition above. Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and GET /api/stock is independently any-role at the
+                API (safe here for the same reason History/Parties are — read-only, no write
+                path on this screen at all). */}
+            <Route path="live-stock" element={<DashboardLiveStock />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />

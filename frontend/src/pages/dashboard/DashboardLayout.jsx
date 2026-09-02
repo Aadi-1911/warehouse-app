@@ -15,6 +15,7 @@ import {
   WalletIcon,
   InvoiceIcon,
   FactoryIcon,
+  ListIcon,
   LockIcon,
 } from '../../components/icons';
 
@@ -91,6 +92,9 @@ const NAV_ITEMS = [
   // icon from — Factory never had its own list/management screen anywhere before this page — so
   // FactoryIcon is a new glyph drawn specifically for this nav entry (see icons.jsx).
   { to: '/dashboard/factories', label: 'Factories', Icon: FactoryIcon },
+  // Added 2026-09-02, same "append at the end, never renumber" precedent as every addition
+  // above. Same ListIcon the mobile Live Stock screen already uses.
+  { to: '/dashboard/live-stock', label: 'Live Stock', Icon: ListIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -106,6 +110,7 @@ const PAGE_META = {
   '/dashboard/factory-payables': ['What we owe each factory', 'Factory Payables'],
   '/dashboard/bills': ['Every billed order, chronologically', 'Bills'],
   '/dashboard/factories': ['Supplier details, editable', 'Factories'],
+  '/dashboard/live-stock': ['Stock on hand, by factory and article', 'Live Stock'],
 };
 
 function initialsOf(name) {
