@@ -101,6 +101,26 @@
   --fuchsia-bg: #FBEAF0;
   --fuchsia-text: #962C4F;
 
+  /* DonutChart slice colours (2026-09-02, first caller: Locations.jsx's stock-value-by-location
+     donut). Checked against the FULL live conflict set before picking either — every semantic
+     token above, every OWNER Home tile token, AND Overview's own Fuchsia KPI (which sits at almost
+     exactly hue 340°, the spot a first draft of --chart-crimson very nearly collided with —
+     caught by computing hue distance rather than eyeballing it).
+     --chart-lime sits at hue 90.5° (yellow-green), the single largest open gap on the wheel
+     (Tile Gold at 46.7° to Success at 134.3°, 87.6° wide) — nearest conflict 43.8° away
+     (Tile Gold/Success tied), comfortably clear of everything including this app's own semantic
+     green (Success) despite being a green-family hue itself.
+     --chart-violet sits at hue 295° — nearest conflict 13.8° from Tile Pink, a mobile-only Home
+     tile colour that never renders anywhere in the Owner Dashboard this chart lives in, so that
+     margin carries no real co-location risk. The next-nearest conflicts are Rose (20.8°) and
+     Purple (25.2°) — Purple matters most here since Locations.jsx's own KPI row uses
+     --purple-text (dash-kpi-purple) on the SAME screen as this donut, so that 25.2° margin was
+     checked deliberately, not incidentally, following this file's own established rule that
+     same-screen co-located colours are the real conflict set, not just "used somewhere in the
+     app" (see the Success/Rust History-badge incident above for why that distinction matters). */
+  --chart-lime: #6AAB2B;
+  --chart-violet: #A12BAB;
+
   /* OWNER Home tile grid, SECOND full palette replacement (2026-08-27, same day) — supersedes the
      first palette (Green/Orange/Purple/Yellow/Red/Brown/Blue/Grey) before it ever shipped: that
      palette was staged in this file only hours earlier and never reached production, so this is a
@@ -3230,6 +3250,98 @@ body {
   color: var(--success-text);
   cursor: pointer;
   font-family: inherit;
+}
+
+/* --- DonutChart (2026-09-02). Generic — nothing here references a specific caller's data or
+   colours; a page composes its own legend markup around this next to it. */
+.donut-chart {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.donut-chart-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-chart-center-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.donut-chart-center-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Locations.jsx's stock-value-by-location card — the only current DonutChart caller. Kept here
+   rather than in DonutChart's own block above since this is this ONE page's layout choice
+   (donut + legend side by side), not something the reusable component should know about. */
+.dash-donut-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.dash-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dash-donut-legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dash-donut-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* A location whose value is <= 0 has no slice on the ring (DonutChart itself already excludes
+   it) — this swatch variant marks that in the legend instead of a solid colour, which would
+   otherwise imply a ring slice that isn't there. Dashed + hollow + circular is deliberately
+   distinct from the solid, rounded-square "real slice" swatch above, not just a different
+   colour — --danger-border/text is this app's existing negative/bad-value semantic token
+   (§3.1), reused rather than inventing a new one for this one case. */
+.dash-donut-legend-swatch-hidden {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--danger-border);
+  background: none;
+  flex-shrink: 0;
+}
+
+.dash-donut-caption {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--danger-text);
+}
+
+.dash-donut-legend-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dash-donut-legend-value {
+  color: var(--text-secondary);
+  margin-left: var(--space-2);
 }
 
 /* --- Sections and the activity feed. */

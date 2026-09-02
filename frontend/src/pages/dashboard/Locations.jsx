@@ -1,6 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '../../api/locations';
 import { PercentIcon } from '../../components/icons';
+import DonutChart from '../../components/DonutChart';
+
+// Donut slice colours, in display order — see index.css's own --chart-lime/--chart-violet comment
+// for the full collision check against every semantic/tile token already in use, including on
+// this exact page (dash-kpi-purple, immediately below this donut). Cycles via modulo if a third
+// location is ever added, rather than crashing on undefined — but only 2 colours exist today
+// because only 2 locations exist today (see this file's own header comment); a real 3rd location
+// would need a genuinely new colour picked with the same check, not just a silent 3rd cycle.
+const DONUT_COLORS = ['var(--chart-lime)', 'var(--chart-violet)'];
+
+// The three location-comparison donuts, in the same left-to-right order as the KPI grid above
+// them (Stock value / Revenue / Profit) so donut N visually corresponds to KPI card N — same
+// field names revenueData.locations already carries, no separate data shape per metric.
+const DONUT_METRICS = [
+  { key: 'stockValue', title: 'Stock value by location' },
+  { key: 'revenue', title: 'Revenue by location' },
+  { key: 'profit', title: 'Profit by location' },
+];
 
 // Owner Dashboard — Locations (added 2026-08-20, beyond 07_UI_DESIGN_BRIEF.md §8's original nav —
 // the location-attributed revenue/profit split calculation task's own dashboard consumer).
@@ -346,6 +364,74 @@ export default function Locations() {
                   {selectedLocationData.profitSharePercent}% share · {revenueData.label}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Stock value / Revenue / Profit by location — a comparison across every location at
+              once, added 2026-09-02 (moved below the KPI grid, and expanded from just Stock value
+              to all three metrics, same day). Deliberately unaffected by selectedLocationId/the
+              chip toggle above — unlike the KPI grid immediately above, which narrows to ONE
+              selected location, these three donuts always show ALL locations together, using
+              revenueData.locations exactly as GET /api/locations/revenue already returns it (no
+              new fetch, no dependency on selectedLocationData). Gated on revenueStatus/revenueData
+              alone for that reason. Reuses .dash-kpi-grid (not a bespoke 3-column grid) so this
+              row's three columns land in the exact same widths/positions as the KPI grid's own
+              three cards above — donut card N is a different metric's comparison, but sits
+              directly under KPI card N's own metric, by construction of sharing the same grid. */}
+          {revenueStatus === 'loaded' && revenueData && (
+            <div className="dash-kpi-grid">
+              {DONUT_METRICS.map((metric) => {
+                // DonutChart itself already excludes any slice with value <= 0 from the ring —
+                // correct, and untouched here. What was missing is that the LEGEND still gave
+                // every location a solid colour swatch regardless, implying a ring slice that
+                // doesn't actually exist for a zero/negative location (e.g. Revenue/Profit, both
+                // currently ₹0 for both locations — a solid swatch there falsely promises a
+                // slice of colour that's really just the bare grey track). hiddenLocations drives
+                // both the swatch variant below and the caption naming exactly which locations
+                // and real values are missing from the ring.
+                const hiddenLocations = revenueData.locations.filter((loc) => loc[metric.key] <= 0);
+                return (
+                  <div className="dash-card" key={metric.key}>
+                    <h2 className="dash-section-title">{metric.title}</h2>
+                    <div className="dash-donut-row">
+                      <DonutChart
+                        slices={revenueData.locations.map((loc, i) => ({
+                          label: loc.locationName,
+                          value: loc[metric.key],
+                          color: DONUT_COLORS[i % DONUT_COLORS.length],
+                        }))}
+                        centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
+                        centerSubLabel="total"
+                        description={`${metric.title}: ${revenueData.locations
+                          .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
+                          .join(', ')}`}
+                      />
+                      <ul className="dash-donut-legend">
+                        {revenueData.locations.map((loc, i) => {
+                          const onRing = loc[metric.key] > 0;
+                          return (
+                            <li key={loc.locationId} className="dash-donut-legend-row">
+                              <span
+                                className={`dash-donut-legend-swatch${onRing ? '' : ' dash-donut-legend-swatch-hidden'}`}
+                                style={onRing ? { background: DONUT_COLORS[i % DONUT_COLORS.length] } : undefined}
+                              />
+                              <span className="dash-donut-legend-name">{loc.locationName}</span>
+                              <span className="dash-donut-legend-value">{inr(loc[metric.key])}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                    {hiddenLocations.length > 0 && (
+                      <p className="dash-donut-caption">
+                        {hiddenLocations
+                          .map((loc) => `${loc.locationName} not shown — ${inr(loc[metric.key])}`)
+                          .join(', ')}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </>
