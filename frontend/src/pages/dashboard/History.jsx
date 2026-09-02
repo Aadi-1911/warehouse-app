@@ -485,33 +485,52 @@ export default function History() {
     const correctingTransfer = isTransfer && correctingTransferId === entry.transferId;
     return (
       <div key={entry.id} className="history-row">
-        <div className="history-row-top">
+        {/* Single-line row (2026-09-03, approved mockup variant B) — replaces the old
+            .history-row-top/.history-row-description/.history-row-actor 3-line stack with one
+            flat flex row: type badge, description (the only flex: 1 child, so it's what actually
+            pushes everything after it to the right edge — no margin-left: auto needed), person
+            badge, optional party name, Correct button, timestamp. .history-row-top/-actor are
+            shared with mobile History.jsx's own (still multi-line, unchanged) rows, so they're
+            just not used here any more rather than edited — see .dash-history-row-line's own CSS
+            comment for why. */}
+        <div className="dash-history-row-line">
           <span className={`badge ${badgeClass}`}>{entry.label ?? FALLBACK_LABEL}</span>
-          <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
-        </div>
-        <p className="history-row-description">{entry.description}</p>
-        <p className="history-row-actor">
+          <p className="history-row-description">{entry.description}</p>
           <span
             className="badge history-actor-badge"
             style={{ background: actorColor.bg, color: actorColor.text }}
           >
             {entry.actorName}
           </span>
-          {entry.partyName ? <span className="muted">· {entry.partyName}</span> : null}
-        </p>
+          {entry.partyName ? <span className="muted dash-history-row-party">· {entry.partyName}</span> : null}
 
-        {isReceipt && !entry.corrected && !correcting && (
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => handleStartCorrect(entry)}
-          >
-            Correct
-          </button>
-        )}
-        {isReceipt && entry.corrected && (
-          <span className="muted history-row-corrected-note">Already corrected</span>
-        )}
+          {isReceipt && !entry.corrected && !correcting && (
+            <button
+              type="button"
+              className="history-row-correct-btn"
+              onClick={() => handleStartCorrect(entry)}
+            >
+              Correct
+            </button>
+          )}
+          {isReceipt && entry.corrected && (
+            <span className="muted history-row-corrected-note">Already corrected</span>
+          )}
+          {isTransfer && !entry.corrected && !correctingTransfer && (
+            <button
+              type="button"
+              className="history-row-correct-btn"
+              onClick={() => handleStartCorrectTransfer(entry)}
+            >
+              Correct
+            </button>
+          )}
+          {isTransfer && entry.corrected && (
+            <span className="muted history-row-corrected-note">Already corrected</span>
+          )}
+
+          <span className="muted history-row-time">{formatTime(entry.timestamp)}</span>
+        </div>
 
         {correcting && (
           <div className="dash-history-correction">
@@ -729,19 +748,6 @@ export default function History() {
               </div>
             )}
           </div>
-        )}
-
-        {isTransfer && !entry.corrected && !correctingTransfer && (
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => handleStartCorrectTransfer(entry)}
-          >
-            Correct
-          </button>
-        )}
-        {isTransfer && entry.corrected && (
-          <span className="muted history-row-corrected-note">Already corrected</span>
         )}
 
         {correctingTransfer && (
