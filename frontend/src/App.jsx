@@ -33,9 +33,6 @@ import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
 import DashboardBills from './pages/dashboard/Bills';
 import DashboardFactories from './pages/dashboard/Factories';
 import DashboardLiveStock from './pages/dashboard/LiveStock';
-// TEMPORARY — delete this import and its route below after Aadi confirms the swipe gesture
-// feels right. See pages/dev/SwipePreview.jsx's own header comment for details.
-import SwipePreview from './pages/dev/SwipePreview';
 
 export default function App() {
   return (
@@ -46,9 +43,6 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
-          {/* TEMPORARY — delete after Aadi confirms the swipe gesture feels right. Not linked
-              from any nav/menu, not gated behind auth — reachable only by typing the URL. */}
-          <Route path="/dev/swipe-preview" element={<SwipePreview />} />
           <Route
             path="/"
             element={
