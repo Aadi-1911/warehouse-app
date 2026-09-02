@@ -123,11 +123,30 @@ export default function PackOrderDetail() {
   // no-op exactly once, so a completed drag can never ALSO fire handleMarkPackedClick a second
   // time via the button's own onClick.
   const suppressTrackClickRef = useRef(false);
+  // True from the moment packOrder() actually succeeds until navigation fires (see doMarkPacked's
+  // setTimeout below) — drives the toast-style success visual and keeps the track inert, same as
+  // `submitting` does, for that whole window. Only ever set true on the success path; a failed
+  // submit leaves this false and falls back to the existing submitError banner.
+  const [justPacked, setJustPacked] = useState(false);
 
   const SWIPE_CONFIRM_RATIO = 0.7;
 
+  // Once packing succeeds, the thumb should visibly finish its journey to the end of the track
+  // rather than sitting wherever a drag left it (a tap/keyboard trigger leaves dragX at 0 the
+  // whole time) — same dragX/transform mechanism the live drag already drives, just measured
+  // once here instead of read from pointer position.
+  useEffect(() => {
+    if (!justPacked) return;
+    const track = trackRef.current;
+    const thumb = thumbRef.current;
+    if (!track || !thumb) return;
+    const trackWidth = track.getBoundingClientRect().width;
+    const thumbWidth = thumb.getBoundingClientRect().width;
+    setDragX(Math.max(0, trackWidth - thumbWidth));
+  }, [justPacked]);
+
   function handleThumbPointerDown(e) {
-    if (submitting) return;
+    if (submitting || justPacked) return;
     const track = trackRef.current;
     const thumb = thumbRef.current;
     if (!track || !thumb) return;
@@ -361,12 +380,17 @@ export default function PackOrderDetail() {
       const shortCount = liveForOutcome.filter(
         (li) => (confirmed[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
       ).length;
-      navigate('/pack-orders', {
-        replace: true,
-        state: {
-          packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
-        },
-      });
+      // Toast-style success visual holds on screen for a beat before handing off — see the
+      // justPacked block near the top of this component for what renders during this window.
+      setJustPacked(true);
+      setTimeout(() => {
+        navigate('/pack-orders', {
+          replace: true,
+          state: {
+            packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
+          },
+        });
+      }, 700);
     } catch (err) {
       // Deliberately not resetting `confirmed` — someone else packing this order first
       // (ORDER_NOT_PLACED) must never cost staff the row-by-row confirmations they just worked
@@ -692,16 +716,16 @@ export default function PackOrderDetail() {
         <button
           type="button"
           ref={trackRef}
-          className="btn-primary pack-swipe-track"
+          className={`btn-primary pack-swipe-track${justPacked ? ' pack-swipe-track-success' : ''}`}
           onClick={handleTrackClick}
-          disabled={submitting}
+          disabled={submitting || justPacked}
         >
           <span className="pack-swipe-label">
-            {submitting ? 'Marking as packed…' : 'Slide to mark packed'}
+            {justPacked ? 'Order marked as packed' : submitting ? 'Marking as packed…' : 'Slide to mark packed'}
           </span>
           <span
             ref={thumbRef}
-            className="pack-swipe-thumb"
+            className={`pack-swipe-thumb${justPacked ? ' pack-swipe-thumb-success' : ''}`}
             style={{
               transform: `translateX(${dragX}px)`,
               transition: dragging ? 'none' : 'transform 0.2s ease',
@@ -712,8 +736,8 @@ export default function PackOrderDetail() {
             onPointerUp={handleThumbPointerEnd}
             onPointerCancel={handleThumbPointerEnd}
           >
-            <span className="pack-swipe-thumb-icon">
-              <ChevronIcon size={18} />
+            <span className={`pack-swipe-thumb-icon${justPacked ? ' pack-swipe-thumb-icon-success' : ''}`}>
+              {justPacked ? <CheckCircleIcon size={20} /> : <ChevronIcon size={18} />}
             </span>
           </span>
         </button>

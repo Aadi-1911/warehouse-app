@@ -2561,16 +2561,29 @@ body {
   border: 1px solid var(--card-border);
   color: var(--text-secondary);
   padding: 0;
-  /* A few px past .btn-primary's own 44px floor, so the 40px thumb (below) still clears it with
-     a small margin inside the track rather than touching edge to edge. */
-  min-height: 48px;
+  /* Scaled up (2026-09-02 design pass) from the original 48px — comfortably past .btn-primary's
+     44px floor either way, but now with real room to spare rather than just clearing it. Pill
+     shape (999px) matches the approved design; the 60px thumb (below) still insets symmetrically
+     inside it. */
+  min-height: 76px;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+/* Success state (2026-09-02) — toast-style tint, applied ALONGSIDE .pack-swipe-track (not
+   instead of it) once packOrder() actually succeeds; see PackOrderDetail.jsx's justPacked.
+   Declared after .pack-swipe-track in source order so its background/border win the tie at
+   equal specificity, same idiom .dash-pricing-row-editing already uses over .dash-pricing-row-alt. */
+.pack-swipe-track-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
 .pack-swipe-label {
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 700;
   /* The label never receives pointer events itself — dragging only ever starts on the thumb
      (see PackOrderDetail.jsx's handleThumbPointerDown), and a plain tap anywhere, label included,
@@ -2583,14 +2596,15 @@ body {
    inline, from PackOrderDetail.jsx's live drag state) moves it WITHOUT shifting any layout
    property, per this task's own requirement. Dark fill, same --text-primary token (#1C1B19)
    every other deliberate dark-neutral accent in this app already uses (e.g. the focus rings a
-   few rules above), not a new colour invented for this one control. */
+   few rules above), not a new colour invented for this one control. Inset (8px) scales with the
+   track/thumb size pair above — same symmetric margin ratio the original 4px-on-48px track had. */
 .pack-swipe-thumb {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  top: 8px;
+  left: 8px;
+  width: 60px;
+  height: 60px;
+  border-radius: 999px;
   background: var(--text-primary);
   color: #fff;
   display: flex;
@@ -2599,11 +2613,21 @@ body {
   cursor: grab;
 }
 
+.pack-swipe-thumb-success {
+  background: var(--success-text);
+}
+
 .pack-swipe-thumb-icon {
   display: inline-flex;
   /* ChevronIcon points down by default (the accordion caret shape) — rotated to point right,
      matching the direction this thumb actually travels. */
   transform: rotate(-90deg);
+}
+
+/* CheckCircleIcon is already upright — unlike ChevronIcon, it has no "resting" rotation to
+   inherit, so the success state overrides the rotation back off rather than adding one. */
+.pack-swipe-thumb-icon-success {
+  transform: none;
 }
 
 /* Cancel this order: same "quiet by default, full weight only on real interaction" principle as
