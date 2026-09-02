@@ -3281,6 +3281,32 @@ body {
   color: var(--text-secondary);
 }
 
+/* Donut row's own grid (2026-09-02) — deliberately DOES NOT share a class with .dash-kpi-grid
+   above it any more. That sharing existed only so the donut columns lined up under the KPI
+   cards' columns; the donuts have since grown to their own larger, independent size (see
+   DonutChart's size/strokeWidth props in Locations.jsx) and that alignment is intentionally
+   dropped, not preserved — if a future reader is tempted to point this back at .dash-kpi-grid
+   "to keep them in sync", that sync is no longer the intent. Fixed at exactly 3 columns
+   (never auto-fit/auto-fill): this is a desktop-only OWNER screen, so a fixed 3-up layout is
+   correct rather than something that should reflow at narrower widths. */
+.dash-donut-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+
+/* Modifier applied ALONGSIDE .dash-card (not a replacement) — .dash-card itself is shared by
+   most other dashboard pages (Overview, Orders, Parties, History, Low stock, Live Stock,
+   ComingSoon), so its own padding rule stays untouched; this only widens padding for these three
+   donut cards specifically. --space-6 (24px) covers the horizontal value from the reviewed
+   mockup exactly; the mockup's 28px vertical value has no matching token in this file's
+   --space-1..6 scale (tops out at 24px) — reusing --space-6 for both axes was the deliberate
+   choice here (see LEARNING_LOG.md) rather than hardcoding a one-off 28px or growing the scale
+   for a single use site. */
+.dash-donut-card {
+  padding: var(--space-6);
+}
+
 /* Locations.jsx's location-comparison donut cards — the only current DonutChart caller. Kept here
    rather than in DonutChart's own block above since this is this ONE page's layout choice, not
    something the reusable component should know about.

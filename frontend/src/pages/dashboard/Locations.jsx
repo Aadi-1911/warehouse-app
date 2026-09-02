@@ -368,18 +368,18 @@ export default function Locations() {
           )}
 
           {/* Stock value / Revenue / Profit by location — a comparison across every location at
-              once, added 2026-09-02 (moved below the KPI grid, and expanded from just Stock value
-              to all three metrics, same day). Deliberately unaffected by selectedLocationId/the
-              chip toggle above — unlike the KPI grid immediately above, which narrows to ONE
-              selected location, these three donuts always show ALL locations together, using
-              revenueData.locations exactly as GET /api/locations/revenue already returns it (no
-              new fetch, no dependency on selectedLocationData). Gated on revenueStatus/revenueData
-              alone for that reason. Reuses .dash-kpi-grid (not a bespoke 3-column grid) so this
-              row's three columns land in the exact same widths/positions as the KPI grid's own
-              three cards above — donut card N is a different metric's comparison, but sits
-              directly under KPI card N's own metric, by construction of sharing the same grid. */}
+              once, added 2026-09-02 (moved below the KPI grid, expanded from just Stock value to
+              all three metrics, and later given its own larger independent layout, same day).
+              Deliberately unaffected by selectedLocationId/the chip toggle above — unlike the KPI
+              grid immediately above, which narrows to ONE selected location, these three donuts
+              always show ALL locations together, using revenueData.locations exactly as
+              GET /api/locations/revenue already returns it (no new fetch, no dependency on
+              selectedLocationData). Gated on revenueStatus/revenueData alone for that reason.
+              Uses its own .dash-donut-grid, NOT .dash-kpi-grid — the two grids no longer need to
+              align; see .dash-donut-grid's own comment in index.css for why that alignment was
+              dropped on purpose. */}
           {revenueStatus === 'loaded' && revenueData && (
-            <div className="dash-kpi-grid">
+            <div className="dash-donut-grid">
               {DONUT_METRICS.map((metric) => {
                 // DonutChart itself already excludes any slice with value <= 0 from the ring —
                 // correct, and untouched here. What was missing is that the LEGEND still gave
@@ -391,7 +391,7 @@ export default function Locations() {
                 // and real values are missing from the ring.
                 const hiddenLocations = revenueData.locations.filter((loc) => loc[metric.key] <= 0);
                 return (
-                  <div className="dash-card" key={metric.key}>
+                  <div className="dash-card dash-donut-card" key={metric.key}>
                     <h2 className="dash-section-title">{metric.title}</h2>
                     <div className="dash-donut-legend-top">
                       {revenueData.locations.map((loc, i) => {
@@ -410,6 +410,8 @@ export default function Locations() {
                     </div>
                     <div className="dash-donut-center-wrap">
                       <DonutChart
+                        size={180}
+                        strokeWidth={46}
                         slices={revenueData.locations.map((loc, i) => ({
                           label: loc.locationName,
                           value: loc[metric.key],
