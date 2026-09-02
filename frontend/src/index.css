@@ -1887,7 +1887,7 @@ body {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-4);
   margin-top: var(--space-1);
 }
 
@@ -1941,7 +1941,7 @@ body {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
@@ -2120,6 +2120,8 @@ body {
 }
 
 .party-detail-actions {
+  display: flex;
+  gap: var(--space-4);
   margin-top: 10px;
 }
 
@@ -3612,7 +3614,7 @@ body {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-4);
 }
 
 .dash-party-order-billno-form input {
@@ -3956,12 +3958,10 @@ body {
 }
 
 .dash-pricing-action {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
   text-align: right;
-  padding-right: 0;
-}
-
-.dash-pricing-action .link-button + .link-button {
-  margin-left: 14px;
 }
 
 /* A row mid-edit gets a quiet neutral tint — same whisper-tint restraint Pack Order's own tone
@@ -4047,12 +4047,10 @@ body {
 }
 
 .dash-factories-action {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
   text-align: right;
-  padding-right: 0;
-}
-
-.dash-factories-action .link-button + .link-button {
-  margin-left: 14px;
 }
 
 .dash-factories-row-editing > td {
