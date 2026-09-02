@@ -393,7 +393,22 @@ export default function Locations() {
                 return (
                   <div className="dash-card" key={metric.key}>
                     <h2 className="dash-section-title">{metric.title}</h2>
-                    <div className="dash-donut-row">
+                    <div className="dash-donut-legend-top">
+                      {revenueData.locations.map((loc, i) => {
+                        const onRing = loc[metric.key] > 0;
+                        return (
+                          <span key={loc.locationId} className="dash-donut-legend-item">
+                            <span
+                              className={`dash-donut-legend-swatch${onRing ? '' : ' dash-donut-legend-swatch-hidden'}`}
+                              style={onRing ? { background: DONUT_COLORS[i % DONUT_COLORS.length] } : undefined}
+                            />
+                            <span className="dash-donut-legend-name">{loc.locationName}</span>
+                            <span className="dash-donut-legend-value">{inr(loc[metric.key])}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="dash-donut-center-wrap">
                       <DonutChart
                         slices={revenueData.locations.map((loc, i) => ({
                           label: loc.locationName,
@@ -406,21 +421,6 @@ export default function Locations() {
                           .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
                           .join(', ')}`}
                       />
-                      <ul className="dash-donut-legend">
-                        {revenueData.locations.map((loc, i) => {
-                          const onRing = loc[metric.key] > 0;
-                          return (
-                            <li key={loc.locationId} className="dash-donut-legend-row">
-                              <span
-                                className={`dash-donut-legend-swatch${onRing ? '' : ' dash-donut-legend-swatch-hidden'}`}
-                                style={onRing ? { background: DONUT_COLORS[i % DONUT_COLORS.length] } : undefined}
-                              />
-                              <span className="dash-donut-legend-name">{loc.locationName}</span>
-                              <span className="dash-donut-legend-value">{inr(loc[metric.key])}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
                     </div>
                     {hiddenLocations.length > 0 && (
                       <p className="dash-donut-caption">

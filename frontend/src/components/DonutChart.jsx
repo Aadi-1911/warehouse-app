@@ -2,12 +2,16 @@ import { useId } from 'react';
 
 // Reusable hand-rolled SVG donut chart — no charting library (frontend/backend package.json both
 // confirmed free of one before this component was written; see the 2026-09-02 donut-scoping
-// investigation). Pure SVG, no arc-path (M/A) math: each slice is its own full <circle> stacked on
-// the same center/radius, made to show only its own share of the ring via stroke-dasharray (a
-// "dash gap" pattern the length of the circle's own circumference) plus a per-slice
-// stroke-dashoffset that shifts where that dash starts, so consecutive slices sit end-to-end
-// instead of overlapping. rotate(-90) on every slice moves the shared starting point from the
-// SVG default (3 o'clock) to 12 o'clock, matching how a "clock face" pie/donut is normally read.
+// investigation).
+//
+// Each visible slice is its own <path>, an annular sector (a ring "wedge" between an inner and
+// outer radius, spanning a start/end angle) with small rounded fillets at all four corners
+// (outer-start, outer-end, inner-start, inner-end) — replacing an earlier stroke-circle +
+// stroke-linecap="round" approach, which gave large bulbous semicircular ends instead of a crisp
+// softened corner. Angles are measured in the standard math convention (0 = 3 o'clock, increasing
+// clockwise in SVG's y-down coordinate system) with a fixed -90° start offset baked into
+// SLICE_START_ANGLE so slice 0 begins at 12 o'clock, the same "clock face" reading the old
+// rotate(-90) transform produced.
 //
 // Deliberately generic — no colour, label wording, or data shape here is specific to any one
 // caller. `slices` is just { label, value, color }; whatever page renders this owns its own data
@@ -16,44 +20,131 @@ import { useId } from 'react';
 // its own currency-formatted string) since this component has no idea whether `value` is rupees,
 // a count, or anything else — see the accessibility comment below for why it falls back to a raw
 // label/value join, not a hardcoded unit, when a caller doesn't provide one.
+
+const SLICE_START_ANGLE = -Math.PI / 2; // 12 o'clock
+const FULL_TURN = 2 * Math.PI;
+
+// Reference corner radius: proportionally SMALL relative to strokeWidth (~12%), not
+// strokeWidth / 2 — the goal is a crisp softened corner, like a rounded rectangle bent into a
+// ring, not a pill/capsule shape (which is what strokeWidth / 2 rounding on a stroked circle
+// used to produce).
+const CORNER_RADIUS_RATIO = 0.12;
+
+function polarPoint(cx, cy, r, angle) {
+  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+}
+
+// Builds the path data for one rounded-corner annular sector. Corners are approximated as small
+// circular fillets tangent to the arc/radial edges they join: each fillet's tangent point on an
+// arc is offset from the true (sharp) corner by an angle of (cornerRadius / thatArc'sRadius) —
+// a small-angle approximation (arc length ≈ radius × angle) that's accurate enough for a
+// deliberately small cornerRadius, and each fillet's tangent point on a radial edge is simply
+// offset inward/outward by cornerRadius along that radius.
+function roundedAnnularSectorPath(cx, cy, innerR, outerR, startAngle, endAngle, cornerRadius) {
+  const span = endAngle - startAngle;
+
+  // Guard against the small-slice edge case: if this slice's own angular span is too small for
+  // the requested corner radius, the four fillets would overlap (or the arc's start would land
+  // past its own end), corrupting the path — self-intersecting or inverting rather than just
+  // "not very rounded". Clamp the EFFECTIVE corner radius down for this slice specifically,
+  // proportional to its own span, rather than let that happen. A generous safety margin (0.9 of
+  // the exact overlap threshold) keeps a hair of straight arc between the two fillets even at
+  // the clamp boundary, instead of landing exactly on the seam.
+  let radius = Math.min(cornerRadius, (outerR - innerR) / 2);
+  let outerDelta = radius / outerR;
+  let innerDelta = radius / innerR;
+  const maxDelta = Math.max(outerDelta, innerDelta);
+  if (maxDelta * 2 >= span) {
+    const scale = (span / 2 / maxDelta) * 0.9;
+    radius *= scale;
+    outerDelta *= scale;
+    innerDelta *= scale;
+  }
+
+  const outerStart = polarPoint(cx, cy, outerR, startAngle + outerDelta);
+  const outerEnd = polarPoint(cx, cy, outerR, endAngle - outerDelta);
+  const outerToInnerStart = polarPoint(cx, cy, outerR - radius, endAngle);
+  const outerToInnerEnd = polarPoint(cx, cy, innerR + radius, endAngle);
+  const innerEnd = polarPoint(cx, cy, innerR, endAngle - innerDelta);
+  const innerStart = polarPoint(cx, cy, innerR, startAngle + innerDelta);
+  const innerToOuterStart = polarPoint(cx, cy, innerR + radius, startAngle);
+  const innerToOuterEnd = polarPoint(cx, cy, outerR - radius, startAngle);
+
+  const largeArcOuter = endAngle - outerDelta - (startAngle + outerDelta) > Math.PI ? 1 : 0;
+  const largeArcInner = endAngle - innerDelta - (startAngle + innerDelta) > Math.PI ? 1 : 0;
+
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${outerR} ${outerR} 0 ${largeArcOuter} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `A ${radius} ${radius} 0 0 1 ${outerToInnerStart.x} ${outerToInnerStart.y}`,
+    `L ${outerToInnerEnd.x} ${outerToInnerEnd.y}`,
+    `A ${radius} ${radius} 0 0 1 ${innerEnd.x} ${innerEnd.y}`,
+    `A ${innerR} ${innerR} 0 ${largeArcInner} 0 ${innerStart.x} ${innerStart.y}`,
+    `A ${radius} ${radius} 0 0 1 ${innerToOuterStart.x} ${innerToOuterStart.y}`,
+    `L ${innerToOuterEnd.x} ${innerToOuterEnd.y}`,
+    `A ${radius} ${radius} 0 0 1 ${outerStart.x} ${outerStart.y}`,
+    'Z',
+  ].join(' ');
+}
+
+// A full, uncut annulus — used when exactly one slice is visible (today's real Gurgaon/Delhi
+// data, Delhi at ₹0), so it renders as one complete, unbroken ring rather than a wedge with a
+// fake seam. An SVG arc command can't represent a full 360° sweep (its start and end point would
+// coincide, which is degenerate), so each circle is drawn as two half-circle arcs instead — the
+// standard way to express a complete circle as path data — and the two circles combine into a
+// ring via evenodd fill.
+function fullAnnulusPath(cx, cy, innerR, outerR) {
+  const ring = (r) =>
+    [
+      `M ${cx - r} ${cy}`,
+      `A ${r} ${r} 0 1 1 ${cx + r} ${cy}`,
+      `A ${r} ${r} 0 1 1 ${cx - r} ${cy}`,
+      'Z',
+    ].join(' ');
+  return `${ring(outerR)} ${ring(innerR)}`;
+}
+
 export default function DonutChart({ slices, size = 160, strokeWidth = 24, centerLabel, centerSubLabel, description }) {
   const titleId = useId();
   const total = slices.reduce((sum, s) => sum + (s.value > 0 ? s.value : 0), 0);
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
+  const outerRadius = size / 2;
+  const innerRadius = outerRadius - strokeWidth;
+  const midRadius = (outerRadius + innerRadius) / 2;
   const center = size / 2;
+  const cornerRadius = strokeWidth * CORNER_RADIUS_RATIO;
 
   const visibleSlices = slices.filter((s) => s.value > 0);
   // Gaps between slices only make sense once there are 2+ of them to separate — a single 100%
-  // slice (today's real Gurgaon/Delhi data, Delhi at ₹0) must render as one complete, unbroken
-  // ring. Applying a gap unconditionally would carve a fake seam into what is actually one whole
-  // slice, wrongly implying a second boundary that isn't there.
-  const gapLength = visibleSlices.length >= 2 ? strokeWidth * 0.35 : 0;
+  // slice must render as one complete, unbroken ring (handled below via fullAnnulusPath).
+  // Expressed as an angle now rather than a dash-length subtraction, but the same idea: a small
+  // fixed visual gap, sized off strokeWidth, converted from a target arc-length-in-px to radians
+  // via the standard arc-length/radius relationship.
+  const gapAngle = visibleSlices.length >= 2 ? (strokeWidth * 0.35) / midRadius : 0;
 
-  // Running offset in circumference-units, not degrees — stroke-dasharray/-dashoffset are both
-  // specified in the same units as the path length (pixels here), never angles. This MUST stay
-  // based on each slice's true, ungapped length: it's what positions every later slice's start
-  // point, and shrinking it by the gap here too would compound across slices, drifting each one
-  // further off its real position instead of just trimming its own rendered end.
-  let offsetSoFar = 0;
-  const arcs = visibleSlices.map((slice) => {
-    const fraction = total > 0 ? slice.value / total : 0;
-    const trueDashLength = fraction * circumference;
-    const arc = {
-      key: slice.label,
-      color: slice.color,
-      // The gap is subtracted only from what's actually drawn, never from the cumulative offset
-      // above — floored at 0 so a slice smaller than the gap itself still renders as a sliver
-      // rather than a negative dash length.
-      dashLength: Math.max(trueDashLength - gapLength, 0),
-      // Negative offset shifts the dash pattern's start point FORWARD (clockwise) along the
-      // circle by the combined length of every slice already placed — the same well-known
-      // technique every stroke-based SVG pie/donut chart uses in place of manual arc paths.
-      dashOffset: -offsetSoFar,
-    };
-    offsetSoFar += trueDashLength;
-    return arc;
-  });
+  // Running angle in radians, not degrees-of-a-dash-pattern. This MUST stay based on each slice's
+  // true, ungapped span: it's what positions every later slice's start angle, and shrinking it by
+  // the gap here too would compound across slices, drifting each one further off its real
+  // position instead of just trimming its own rendered end.
+  let angleSoFar = SLICE_START_ANGLE;
+  const wedges = [];
+  if (visibleSlices.length === 1) {
+    wedges.push({ key: visibleSlices[0].label, color: visibleSlices[0].color, full: true });
+  } else {
+    for (const slice of visibleSlices) {
+      const fraction = total > 0 ? slice.value / total : 0;
+      const trueSpan = fraction * FULL_TURN;
+      const renderedSpan = Math.max(trueSpan - gapAngle, 0);
+      if (renderedSpan > 0) {
+        wedges.push({
+          key: slice.label,
+          color: slice.color,
+          startAngle: angleSoFar,
+          endAngle: angleSoFar + renderedSpan,
+        });
+      }
+      angleSoFar += trueSpan;
+    }
+  }
 
   // Accessible description — checked first: this app's existing aria-label usage (Combobox,
   // ScreenHeader's back link, the dashboard PIN overlay's role="dialog", quantity steppers) is
@@ -80,22 +171,25 @@ export default function DonutChart({ slices, size = 160, strokeWidth = 24, cente
         <title id={titleId}>{accessibleDescription}</title>
         {/* Track — the full ring, underneath every slice, visible only where no slice covers it
             (e.g. if every value is 0, or fractions don't sum to the full circle by design). */}
-        <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--card-border)" strokeWidth={strokeWidth} />
-        {arcs.map((arc) => (
-          <circle
-            key={arc.key}
-            cx={center}
-            cy={center}
-            r={radius}
-            fill="none"
-            stroke={arc.color}
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${arc.dashLength} ${circumference - arc.dashLength}`}
-            strokeDashoffset={arc.dashOffset}
-            strokeLinecap="round"
-            transform={`rotate(-90 ${center} ${center})`}
-          />
-        ))}
+        <circle
+          cx={center}
+          cy={center}
+          r={midRadius}
+          fill="none"
+          stroke="var(--card-border)"
+          strokeWidth={strokeWidth}
+        />
+        {wedges.map((wedge) =>
+          wedge.full ? (
+            <path key={wedge.key} d={fullAnnulusPath(center, center, innerRadius, outerRadius)} fill={wedge.color} fillRule="evenodd" />
+          ) : (
+            <path
+              key={wedge.key}
+              d={roundedAnnularSectorPath(center, center, innerRadius, outerRadius, wedge.startAngle, wedge.endAngle, cornerRadius)}
+              fill={wedge.color}
+            />
+          )
+        )}
       </svg>
       {(centerLabel || centerSubLabel) && (
         <div className="donut-chart-center">

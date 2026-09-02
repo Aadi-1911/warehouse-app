@@ -3281,29 +3281,29 @@ body {
   color: var(--text-secondary);
 }
 
-/* Locations.jsx's stock-value-by-location card — the only current DonutChart caller. Kept here
-   rather than in DonutChart's own block above since this is this ONE page's layout choice
-   (donut + legend side by side), not something the reusable component should know about. */
-.dash-donut-row {
+/* Locations.jsx's location-comparison donut cards — the only current DonutChart caller. Kept here
+   rather than in DonutChart's own block above since this is this ONE page's layout choice, not
+   something the reusable component should know about.
+   Legend moved to a centered row ABOVE the donut (was beside it) — each location's swatch/name/
+   value sits together as one inline item, wrapping onto a second line if the card gets narrow
+   rather than overflowing. */
+.dash-donut-legend-top {
   display: flex;
-  align-items: center;
-  gap: var(--space-6);
+  justify-content: center;
   flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
-.dash-donut-legend {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.dash-donut-legend-row {
+.dash-donut-legend-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.dash-donut-center-wrap {
+  display: flex;
+  justify-content: center;
 }
 
 .dash-donut-legend-swatch {
