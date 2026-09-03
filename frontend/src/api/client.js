@@ -4,7 +4,14 @@
 // Vite replaces `import.meta.env.VITE_*` at build time. Only variables prefixed VITE_ are
 // exposed to browser code — that prefix is a deliberate guardrail so a stray secret in .env
 // can't be bundled into the client by accident.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+//
+// `?? ''` matters here, not cosmetic: with no fallback, an UNSET var compiles to the literal
+// `undefined`, so every request below becomes fetch(`undefined/api/...`) — a real path that
+// 404s, discovered exactly this way against the first Vercel deploy (LEARNING_LOG.md). An empty
+// string is also the correct PRODUCTION value under this app's own Vercel Services setup
+// (frontend+backend on one domain, see /vercel.json) — `${''}/api/...` resolves same-origin,
+// which is what's wanted when there's no separate backend origin to point at.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // See LEARNING_LOG.md for the full localStorage-vs-alternatives reasoning. Short version:
 // staff run this as a phone PWA that gets backgrounded constantly, so in-memory storage would
