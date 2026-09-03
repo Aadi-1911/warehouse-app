@@ -649,10 +649,19 @@ body {
   margin-bottom: 0;
 }
 
-/* --- Form fields --- */
+/* --- Form fields ---
+   margin-bottom: 14px removed here 2026-09-03 (Aadi's own direct edit, bundled into cea06cd
+   alongside an unrelated History task — not made through a task prompt, reason not recorded).
+   FLAGGED, not confirmed safe: .field is used in at least 18 files across almost every form in
+   this app. Checked live on Manage Users' create-account form (Name/Username/Password/Role
+   stacked) and the gap between consecutive fields is now measured at 0px — each label sits
+   close enough to the field ABOVE it that the label-to-field association reads ambiguously,
+   worse than on Login's simpler 2-field form (which still looks acceptable, since the label's
+   own line-height provides some breathing room). This needs a real decision — restore some
+   margin, or confirm the tighter spacing is actually wanted — before being called safe. */
 .field {
   display: block;
-  
+
 }
 
 /* A plain labeled checkbox — used for "Damaged on arrival". Deliberately not a .chip: this is
@@ -1791,11 +1800,19 @@ body {
   margin-bottom: 2px;
 }
 
-/* --- Live Stock View: stat cards (§5.5) --- */
+/* --- Live Stock View: stat cards (§5.5) ---
+   margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded). FLAGGED, not confirmed safe: checked live on Factory Payables (this row sits
+   directly above .stat-hero there) and the gap is now measured at 0px — the Total owed/Total
+   paid cards visually touch the Amount payable hero card below with no separation, reading as
+   one fused block instead of two distinct sections. Same finding on .stat-hero's own
+   margin-bottom removal below (that gap collapses too, to the History card after it) — the two
+   compound on this page. Needs a real decision before being called safe. */
 .stat-row {
   display: flex;
   gap: 10px;
-  
+
 }
 
 .stat-card {
@@ -1823,6 +1840,12 @@ body {
    Full-width, larger than .stat-card, accent-tinted background/border/text together per §3.1's
    shared-role rule — same accent role the Owner Dashboard's Stock value KPI is spec'd to use
    for a computed financial figure (§8), even though that screen isn't built yet to copy from. */
+/* margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded). FLAGGED, not confirmed safe — see .stat-row's own comment above: on Factory
+   Payables this collapses the gap to the History card right after it to 0px, compounding with
+   .stat-row's own removed margin so THREE visually distinct blocks (stat cards / hero / History)
+   now sit flush against each other. Needs a real decision before being called safe. */
 .stat-hero {
   background: var(--accent-bg);
   border: 1px solid var(--accent-border);
@@ -1832,7 +1855,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  
+
 }
 
 .stat-hero-value {
@@ -2026,8 +2049,25 @@ body {
 }
 
 /* Nested (Article-level) sections sit inside an already-bordered Factory card, so they use a
-   plain top divider instead of their own card border/shadow — a card-inside-a-card would be
-   visual noise the brief's "resizing panel" language doesn't call for. */
+   plain divider instead of their own card border/shadow — a card-inside-a-card would be visual
+   noise the brief's "resizing panel" language doesn't call for.
+   Flipped from border-top to border-bottom 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded; this comment above still said "top divider" until this note, since the flip hadn't
+   been documented). This class is used broadly (Live Stock, Low Stock, Parties, Transfer,
+   PackOrderDetail/BillOrderDetail/ShipOrderDetail, GoodReturns, NewOrder, Home's "Others" list,
+   dashboard Orders) — checked live on several of these. The change is a symmetric trade, not a
+   new defect: border-top put a divider directly under the section's own header/summary line and
+   left the LAST nested item flush against the container's bottom edge; border-bottom does the
+   reverse — no divider right under the header, but the last item now gets a divider sitting
+   right at the container's own rounded bottom corner (confirmed via computed styles on Live
+   Stock: last item's bottom edge is flush with its parent card's, 0px gap). Neither position is
+   objectively more correct; both put exactly one divider at an edge. One place this reads as a
+   real (if minor) inconsistency rather than a neutral trade: Home's "Others" section sits inside
+   the flat .more-list, where every sibling row (.secondary-link-row) still uses border-top for
+   its own divider — the nested rows inside "Others" now use the opposite convention from the
+   flat rows immediately around them on that one screen. Not broken, but worth Aadi's awareness
+   since Home wasn't necessarily the page this was tested on. */
 .accordion-section.nested {
   margin-bottom: 0;
   border-bottom: 1px solid var(--divider);
@@ -3361,11 +3401,18 @@ body {
 /* Modifier applied ALONGSIDE .dash-card (not a replacement) — .dash-card itself is shared by
    most other dashboard pages (Overview, Orders, Parties, History, Low stock, Live Stock,
    ComingSoon), so its own padding rule stays untouched; this only widens padding for these three
-   donut cards specifically. --space-6 (24px) covers the horizontal value from the reviewed
-   mockup exactly; the mockup's 28px vertical value has no matching token in this file's
-   --space-1..6 scale (tops out at 24px) — reusing --space-6 for both axes was the deliberate
-   choice here (see LEARNING_LOG.md) rather than hardcoding a one-off 28px or growing the scale
-   for a single use site. */
+   donut cards specifically. Originally set to --space-6 (24px, see LEARNING_LOG.md for that
+   decision) — reused for both axes since the mockup's 28px vertical value had no matching token.
+   BUG, found 2026-09-03 while documenting Aadi's later direct edit (bundled into cea06cd
+   alongside an unrelated History task — not made through a task prompt): changed to
+   var(--space-8), but --space-8 is NOT DEFINED anywhere in this file (the --space-* scale still
+   tops out at --space-6). A var() referencing an undefined custom property with no fallback
+   makes the WHOLE declaration invalid, so this padding rule doesn't apply at all — confirmed via
+   computed styles live: .dash-donut-card's actual padding is 8px 16px, i.e. .dash-card's own
+   base padding showing through, LESS than even the original --space-6 (24px) value, not more.
+   The page still looks reasonable (the donuts themselves are large enough to dominate the
+   card), which is presumably why this went unnoticed. Needs a real decision — define
+   --space-7/8, or pick an intended value directly — before being called safe or correct. */
 .dash-donut-card {
   padding: var(--space-8);
 }
@@ -3376,6 +3423,15 @@ body {
    Legend moved to a centered row ABOVE the donut (was beside it) — each location's swatch/name/
    value sits together as one inline item, wrapping onto a second line if the card gets narrow
    rather than overflowing. */
+/* padding: 25px added 2026-09-03 — a FIFTH manual edit bundled into cea06cd that this task's own
+   instructions didn't enumerate (Aadi's own direct edit, not made through a task prompt, reason
+   not recorded — found only while documenting the four the task DID list; flagged to Aadi
+   separately since the task's count was off by more than this one). Plausible (not certain)
+   explanation, given the evidence: .dash-donut-card's own padding is currently broken (see that
+   rule's own comment — its var(--space-8) is undefined, so it silently falls back to a much
+   smaller 8px/16px than intended), and this 25px inner padding happens to visually compensate,
+   giving the card reasonable-looking breathing room despite the outer bug. Checked live — reads
+   fine on all three donut cards, the only consumers (Locations.jsx). */
 .dash-donut-legend-top {
   display: flex;
   justify-content: center;
@@ -3418,6 +3474,10 @@ body {
   flex-shrink: 0;
 }
 
+/* padding: 25px added 2026-09-03 — a SIXTH manual edit bundled into cea06cd, same situation as
+   .dash-donut-legend-top's own comment above (not in the task's enumerated four, found while
+   documenting them, reason not recorded, plausibly compensating for the same .dash-donut-card
+   padding bug). Checked live — reads fine, only consumer is Locations.jsx. */
 .dash-donut-caption {
   margin: var(--space-2) 0 0;
   font-size: 12px;
@@ -4079,11 +4139,16 @@ body {
   padding: var(--space-4);
 }
 
+/* padding-top: 15px added 2026-09-03 (Aadi's own direct edit, bundled into cea06cd alongside an
+   unrelated History task — not made through a task prompt, reason not recorded — presumably a
+   bit more breathing room between the "Location"/"Period" section titles above and their chip
+   rows). Only two consumers, both the Location and Period chip rows on this same
+   dashboard/Locations.jsx screen (checked live) — low blast radius, and both read fine. */
 .dash-location-toggle-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding-top:15px;
+  padding-top: 15px;
 }
 
 .dash-location-profit-row {
