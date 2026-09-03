@@ -652,16 +652,15 @@ body {
 /* --- Form fields ---
    margin-bottom: 14px removed here 2026-09-03 (Aadi's own direct edit, bundled into cea06cd
    alongside an unrelated History task — not made through a task prompt, reason not recorded).
-   FLAGGED, not confirmed safe: .field is used in at least 18 files across almost every form in
-   this app. Checked live on Manage Users' create-account form (Name/Username/Password/Role
-   stacked) and the gap between consecutive fields is now measured at 0px — each label sits
-   close enough to the field ABOVE it that the label-to-field association reads ambiguously,
-   worse than on Login's simpler 2-field form (which still looks acceptable, since the label's
-   own line-height provides some breathing room). This needs a real decision — restore some
-   margin, or confirm the tighter spacing is actually wanted — before being called safe. */
+   REVERTED 2026-09-03: .field is used in at least 18 files across almost every form in this
+   app, and the removal visibly broke Manage Users' create-account form (Name/Username/Password/
+   Role stacked) — labels sat close enough to the field ABOVE them that the label-to-field
+   association read ambiguously. Restored the original 14px. Wherever Aadi actually wanted
+   tighter spacing (Factory Payables), that's handled with a page-scoped modifier class instead
+   of touching this shared base rule — see .factory-field-tight. */
 .field {
   display: block;
-
+  margin-bottom: 14px;
 }
 
 /* A plain labeled checkbox — used for "Damaged on arrival". Deliberately not a .chip: this is
@@ -1803,16 +1802,15 @@ body {
 /* --- Live Stock View: stat cards (§5.5) ---
    margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
    cea06cd alongside an unrelated History task — not made through a task prompt, reason not
-   recorded). FLAGGED, not confirmed safe: checked live on Factory Payables (this row sits
-   directly above .stat-hero there) and the gap is now measured at 0px — the Total owed/Total
-   paid cards visually touch the Amount payable hero card below with no separation, reading as
-   one fused block instead of two distinct sections. Same finding on .stat-hero's own
-   margin-bottom removal below (that gap collapses too, to the History card after it) — the two
-   compound on this page. Needs a real decision before being called safe. */
+   recorded). REVERTED 2026-09-03: .stat-row is shared by LiveStock.jsx, dashboard/LiveStock.jsx,
+   FactoryPayables.jsx and dashboard/Parties.jsx — on Factory Payables specifically the removal
+   collapsed the gap to .stat-hero below it to 0px, visually fusing the Total owed/Total paid
+   cards to the Amount payable hero. Restored the shared margin; Factory Payables' own tighter
+   spacing (if still wanted) belongs on a page-scoped modifier — see .factory-stat-row-tight. */
 .stat-row {
   display: flex;
   gap: 10px;
-
+  margin-bottom: var(--space-4);
 }
 
 .stat-card {
@@ -1842,10 +1840,11 @@ body {
    for a computed financial figure (§8), even though that screen isn't built yet to copy from. */
 /* margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
    cea06cd alongside an unrelated History task — not made through a task prompt, reason not
-   recorded). FLAGGED, not confirmed safe — see .stat-row's own comment above: on Factory
-   Payables this collapses the gap to the History card right after it to 0px, compounding with
-   .stat-row's own removed margin so THREE visually distinct blocks (stat cards / hero / History)
-   now sit flush against each other. Needs a real decision before being called safe. */
+   recorded). REVERTED 2026-09-03: .stat-hero is also shared (FactoryPayables.jsx and
+   dashboard/Parties.jsx) — on Factory Payables the removal collapsed the gap to the History card
+   right after it to 0px, compounding with .stat-row's own removed margin so all three blocks
+   (stat cards / hero / History) sat flush against each other. Restored the shared margin; see
+   .factory-stat-hero-tight for Factory Payables' own scoped tightening. */
 .stat-hero {
   background: var(--accent-bg);
   border: 1px solid var(--accent-border);
@@ -1855,7 +1854,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-
+  margin-bottom: var(--space-4);
 }
 
 .stat-hero-value {
@@ -1869,6 +1868,28 @@ body {
   /* Inherits the hero's accent-text colour rather than a separate muted tone — §3.1 again:
      every element inside an accent-tinted block stays on that one role, nothing neutral. */
   opacity: 0.85;
+}
+
+/* --- Factory Payables: page-scoped tight spacing (§5.8) ---
+   2026-09-03: Aadi's earlier direct edit removed margin-bottom from the SHARED .field/.stat-row/
+   .stat-hero rules entirely, which broke other pages that reuse them (Manage Users' forms,
+   LiveStock.jsx, dashboard/Parties.jsx — see those rules' own comments). Those base rules have
+   been restored to their original values; these modifiers reproduce the tighter look Aadi
+   appeared to be going for, but scoped to Factory Payables only (applied alongside the base
+   class in FactoryPayables.jsx, same pattern as .dash-donut-card alongside .dash-card).
+   Values are a starting point, not a measured target: roughly half of each base margin, since no
+   specific tighter value was ever specified — worth a look to confirm they match what Aadi
+   actually wants before treating them as final. */
+.factory-field-tight {
+  margin-bottom: 7px;
+}
+
+.factory-stat-row-tight {
+  margin-bottom: var(--space-2);
+}
+
+.factory-stat-hero-tight {
+  margin-bottom: var(--space-2);
 }
 
 /* --- Factory Payables: payment history rows (§5.8) --- */
@@ -3402,20 +3423,22 @@ body {
 /* Modifier applied ALONGSIDE .dash-card (not a replacement) — .dash-card itself is shared by
    most other dashboard pages (Overview, Orders, Parties, History, Low stock, Live Stock,
    ComingSoon), so its own padding rule stays untouched; this only widens padding for these three
-   donut cards specifically. Originally set to --space-6 (24px, see LEARNING_LOG.md for that
-   decision) — reused for both axes since the mockup's 28px vertical value had no matching token.
-   BUG, found 2026-09-03 while documenting Aadi's later direct edit (bundled into cea06cd
-   alongside an unrelated History task — not made through a task prompt): changed to
-   var(--space-8), but --space-8 is NOT DEFINED anywhere in this file (the --space-* scale still
-   tops out at --space-6). A var() referencing an undefined custom property with no fallback
-   makes the WHOLE declaration invalid, so this padding rule doesn't apply at all — confirmed via
-   computed styles live: .dash-donut-card's actual padding is 8px 16px, i.e. .dash-card's own
-   base padding showing through, LESS than even the original --space-6 (24px) value, not more.
-   The page still looks reasonable (the donuts themselves are large enough to dominate the
-   card), which is presumably why this went unnoticed. Needs a real decision — define
-   --space-7/8, or pick an intended value directly — before being called safe or correct. */
-.dash-donut-card {
-  padding: var(--space-8);
+   donut cards specifically. --space-6 (24px, see LEARNING_LOG.md for that decision) — reused for
+   both axes since the mockup's 28px vertical value had no matching token.
+   FIXED 2026-09-03: Aadi's later direct edit (bundled into cea06cd alongside an unrelated
+   History task — not made through a task prompt) had changed this to var(--space-8), which is
+   NOT DEFINED anywhere in this file (the --space-* scale tops out at --space-6). That was
+   already a bug on its own (an undefined var() with no fallback invalidates the whole
+   declaration), but fixing the value back to --space-6 alone was NOT enough to actually restore
+   the padding — confirmed live it was still computing to .dash-card's own 8px 16px even with a
+   valid value. Root cause: .dash-card's own rule sits LATER in this file (further down, near the
+   other .dash-* card rules) and both selectors have equal specificity (one class each), so
+   .dash-card's padding wins the cascade regardless of what .dash-donut-card says — the original
+   "undefined token" diagnosis was real but incomplete. Fixed properly by compounding the
+   selector to .dash-card.dash-donut-card, which has higher specificity and wins independent of
+   source order — matches how the two classes are actually applied together in Locations.jsx. */
+.dash-card.dash-donut-card {
+  padding: var(--space-6);
 }
 
 /* Locations.jsx's location-comparison donut cards — the only current DonutChart caller. Kept here

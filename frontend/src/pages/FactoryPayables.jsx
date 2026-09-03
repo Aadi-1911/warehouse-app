@@ -422,7 +422,10 @@ export default function FactoryPayables({ inDashboard = false }) {
         </p>
       )}
 
-      <label className="field">
+      {/* factory-field-tight: page-scoped modifier (index.css) applied alongside the shared
+          .field, not in place of it — narrows just this field's margin-bottom for this screen
+          instead of touching .field's own base rule, which 17+ other forms also rely on. */}
+      <label className="field factory-field-tight">
         <span className="field-label">Factory</span>
         <select
           value={factoryId}
@@ -459,7 +462,11 @@ export default function FactoryPayables({ inDashboard = false }) {
 
       {showStats && (
         <>
-          <div className="stat-row">
+          {/* factory-stat-row-tight / factory-stat-hero-tight: page-scoped modifiers (index.css),
+              applied alongside the shared .stat-row/.stat-hero rather than editing those directly —
+              .stat-row and .stat-hero are also used by LiveStock.jsx, dashboard/LiveStock.jsx and
+              dashboard/Parties.jsx, which should keep their normal spacing. */}
+          <div className="stat-row factory-stat-row-tight">
             <div className="stat-card">
               <span className="stat-value">{formatCurrency(payable.totalOwed)}</span>
               <span className="stat-label">Total owed</span>
@@ -470,7 +477,7 @@ export default function FactoryPayables({ inDashboard = false }) {
             </div>
           </div>
 
-          <div className="stat-hero">
+          <div className="stat-hero factory-stat-hero-tight">
             <span className="stat-hero-value">{formatCurrency(payable.amountPayable)}</span>
             <span className="stat-hero-label">Amount payable</span>
           </div>
