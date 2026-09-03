@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '../../api/locations';
 import { PercentIcon } from '../../components/icons';
 import DonutChart from '../../components/DonutChart';
+import EChartsDonut from '../../components/EChartsDonut';
 
 // Donut slice colours, in display order — see index.css's own --chart-lime/--chart-violet comment
 // for the full collision check against every semantic/tile token already in use, including on
@@ -409,20 +410,44 @@ export default function Locations() {
                       })}
                     </div>
                     <div className="dash-donut-center-wrap">
-                      <DonutChart
-                        size={180}
-                        strokeWidth={46}
-                        slices={revenueData.locations.map((loc, i) => ({
-                          label: loc.locationName,
-                          value: loc[metric.key],
-                          color: DONUT_COLORS[i % DONUT_COLORS.length],
-                        }))}
-                        centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
-                        centerSubLabel="total"
-                        description={`${metric.title}: ${revenueData.locations
-                          .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
-                          .join(', ')}`}
-                      />
+                      {/* Stock value only, deliberately (2026-09-03 echarts proof of concept) — this
+                          is a partial, comparable state on purpose: Revenue/Profit stay on the
+                          hand-rolled DonutChart below so Aadi can look at old vs new side by side
+                          before three more charts and a new layout get built on the new library.
+                          Same slices/centerLabel/description shape either way — only the component
+                          rendering them differs. */}
+                      {metric.key === 'stockValue' ? (
+                        <EChartsDonut
+                          size={180}
+                          strokeWidth={46}
+                          slices={revenueData.locations.map((loc, i) => ({
+                            label: loc.locationName,
+                            value: loc[metric.key],
+                            color: DONUT_COLORS[i % DONUT_COLORS.length],
+                          }))}
+                          centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
+                          centerSubLabel="total"
+                          description={`${metric.title}: ${revenueData.locations
+                            .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
+                            .join(', ')}`}
+                          tooltipValueFormatter={inr}
+                        />
+                      ) : (
+                        <DonutChart
+                          size={180}
+                          strokeWidth={46}
+                          slices={revenueData.locations.map((loc, i) => ({
+                            label: loc.locationName,
+                            value: loc[metric.key],
+                            color: DONUT_COLORS[i % DONUT_COLORS.length],
+                          }))}
+                          centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
+                          centerSubLabel="total"
+                          description={`${metric.title}: ${revenueData.locations
+                            .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
+                            .join(', ')}`}
+                        />
+                      )}
                     </div>
                     {hiddenLocations.length > 0 && (
                       <p className="dash-donut-caption">
