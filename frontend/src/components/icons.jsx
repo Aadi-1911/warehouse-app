@@ -254,3 +254,123 @@ export function ReturnIcon({ size = 20 }) {
     </svg>
   );
 }
+
+// --- Owner Dashboard nav (paths taken from the design bundle's own SVGs so the rail matches it
+// exactly). Users/History/WarningTriangle are reused from above rather than re-drawn — the
+// design's versions of those three are the same feather-style shapes already in this set.
+
+// Overview — a four-pane grid, reading as "everything at once".
+export function GridIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="3" y="3" width="7" height="9" />
+      <rect x="14" y="3" width="7" height="5" />
+      <rect x="14" y="12" width="7" height="9" />
+      <rect x="3" y="16" width="7" height="5" />
+    </svg>
+  );
+}
+
+// Orders — a clipboard. Distinct from InvoiceIcon (billing) and PackageIcon (the app mark) so the
+// rail's five destinations stay tellable apart at 17px.
+export function ClipboardIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <path d="M8 11h8" />
+      <path d="M8 16h5" />
+    </svg>
+  );
+}
+
+// A closed padlock — the Owner Dashboard's manual lock button and its locked-overlay mark
+// (added 2026-08-21). Deliberately the CLOSED shape in both places: the button's job is "make it
+// locked," and the overlay's state IS locked, so an open-shackle variant would never be correct
+// in either spot and isn't drawn.
+export function LockIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+// A map pin — Owner Dashboard nav for the Locations page (added 2026-08-20). Distinct from every
+// other rail icon (none of the existing set represents "a place"), matching size/weight to
+// GridIcon/ClipboardIcon so all five/six rail icons read as one coherent set at 17px.
+export function LocationPinIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <path d="M12 21s7-6.7 7-12a7 7 0 0 0-14 0c0 5.3 7 12 7 12z" />
+      <circle cx="12" cy="9" r="2.5" />
+    </svg>
+  );
+}
+
+// Two overlapping rectangles — the standard "copy" glyph. Used next to the GSTIN value on the
+// Owner Dashboard's Parties page (§8); swapped for CheckCircleIcon briefly after a successful
+// copy, reusing that icon's existing "confirmed" meaning rather than drawing a second checkmark.
+export function CopyIcon({ size = 15 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.8}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+// Show/hide password toggle (Login's password field). The standard open-eye / eye-with-a-slash
+// pair rather than a shape invented for this app — recognisable at a glance from countless other
+// login forms, which matters more here than visual consistency with this app's other icons.
+export function EyeIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+// Same eye shape plus a diagonal slash — never a different pictogram (e.g. a crossed-out circle)
+// for the "hidden" state, so the toggle reads as one control with two states, not two controls.
+export function EyeOffIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size}>
+      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+// A factory silhouette (sawtooth roofline + chimney) — Owner Dashboard nav for the new Factories
+// page (added 2026-09-02). Distinct from every other rail icon (none of the existing set
+// represents "a supplier/place of manufacture"), matching size/weight to GridIcon/ClipboardIcon/
+// LocationPinIcon so it reads as one coherent set at 17px alongside them.
+export function FactoryIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <path d="M3 21V11l6 4v-4l6 4v-4l6 4v6H3z" />
+      <path d="M7 21v-4" />
+      <path d="M13 21v-4" />
+      <path d="M17 8V4" />
+      <path d="M15 4h4" />
+    </svg>
+  );
+}
+
+// A plain "%" glyph — the Owner Dashboard Locations page's Profit share popover trigger (added
+// 2026-09-02). Percent, not a gear/settings glyph: the control opens exactly one thing (the
+// profit-share percentage for the selected location), so an icon that names the actual value
+// being set reads more honestly than a generic "settings" symbol would for a single-purpose
+// control. Sized like CopyIcon/EyeIcon (an inline icon-only button), not the 17px rail set.
+export function PercentIcon({ size = 18 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.8}>
+      <line x1="19" y1="5" x2="5" y2="19" />
+      <circle cx="6.5" cy="6.5" r="2.5" />
+      <circle cx="17.5" cy="17.5" r="2.5" />
+    </svg>
+  );
+}

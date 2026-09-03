@@ -11,6 +11,7 @@ const TRANSFER_SELECT = {
   bundleId: true,
   qtySets: true,
   note: true,
+  productNameSnapshot: true,
   createdAt: true,
   userId: true,
   user: { select: { name: true } },
@@ -32,7 +33,9 @@ function toResponse(t) {
     bundleId: t.bundleId,
     productId: t.bundle.product.id,
     productArticleNo: t.bundle.product.articleNo,
-    productName: t.bundle.product.name,
+    // Snapshot first, live name only as the pre-2026-08-28 fallback — see
+    // OrderLineItem.productNameSnapshot's schema comment for the full reasoning.
+    productName: t.productNameSnapshot ?? t.bundle.product.name,
     colorId: t.bundle.color.id,
     colorName: t.bundle.color.name,
     fromLocationId: t.fromLocationId,
@@ -84,7 +87,13 @@ async function createTransfer(req, res) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'qtySets must be a positive integer');
   }
 
-  const bundle = await prisma.bundle.findUnique({ where: { id: bundleId } });
+  // product.name is selected here purely to snapshot it onto the Transfer below (2026-08-28) —
+  // read at this exact moment, server-side, never taken from the request body, same principle
+  // every other snapshot on this project follows.
+  const bundle = await prisma.bundle.findUnique({
+    where: { id: bundleId },
+    include: { product: { select: { name: true } } },
+  });
   if (!bundle) {
     return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${bundleId}`);
   }
@@ -150,6 +159,7 @@ async function createTransfer(req, res) {
           qtySets,
           userId: req.user.id,
           note: note || null,
+          productNameSnapshot: bundle.product.name,
         },
       });
 

@@ -6,6 +6,8 @@ import { listFactories } from '../api/factories';
 import { listProducts, getValidColors } from '../api/products';
 import { listStock } from '../api/stock';
 import { createOrder } from '../api/orders';
+import { piecesPerSetFor } from '../utils/piecesPerSet';
+import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
 
 // New Order — 07_UI_DESIGN_BRIEF.md §5.3 / §6 Round 6 refinements / §7 Round 7 refinements /
 // 05_BUSINESS_RULES.md rules 21-26, 53-56. "Review order" now genuinely submits via
@@ -14,21 +16,6 @@ import { createOrder } from '../api/orders';
 // Rule 25: staff creating orders during a sample visit is the PRIMARY real-world use case here,
 // not an owner action — this screen is reachable by any authenticated role (App.jsx has no
 // requireRole on this route), same reasoning already applied to Order's own API endpoints.
-
-// Rule 50's fixed Kids piece counts — same lookup ReceiveStock.jsx uses, kept local here too
-// since it's a tiny fixed table tied to one business rule, not shared app state.
-const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
-
-// Rule 56: ≤2 sets = a red flag/badge, unified across Live Stock, Pack Order, AND New Order —
-// explicitly correcting "earlier looser/inconsistent thresholds." Matches Live Stock's own
-// badge-danger treatment exactly; see LEARNING_LOG.md for why this is red, not amber.
-const LOW_STOCK_THRESHOLD = 2;
-
-function piecesPerSetFor(product) {
-  return product.isKids
-    ? KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0
-    : product.sizes.length;
-}
 
 export default function NewOrder() {
   // --- Party picker (07_UI_DESIGN_BRIEF.md §5.3, added 2026-08-15): filter chips (All / one
@@ -399,7 +386,13 @@ export default function NewOrder() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<ShoppingBagIcon size={20} />} tone="purple" title="New Order" />
+      {/* tone="tile-purple" (2026-08-27) matches Home's New Order tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "purple" (the shared
+          --purple-* token, used only here for New Order's header, never for a status badge on
+          this page), now the dedicated --tile-purple-* token instead. No collision found: nothing
+          else on this screen renders shared-purple, so there's no second, different-looking purple
+          left behind. */}
+      <ScreenHeader icon={<ShoppingBagIcon size={20} />} tone="tile-purple" title="New Order" />
       {selectedParty && <p className="muted">{selectedParty.name}</p>}
 
       {placedOutcome && (

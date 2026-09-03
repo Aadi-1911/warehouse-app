@@ -145,6 +145,28 @@ async function updateOwnPin(req, res) {
   res.json({ message: 'PIN updated successfully' });
 }
 
+// POST /api/users/me/verify-pin — OWNER only (👑) AND PIN-gated (📌, via requirePin in
+// routes/users.js). Added 2026-08-21 for the Owner Dashboard's PIN lock screen.
+//
+// The one PIN endpoint with NO side effects of its own — every other PIN use in this app
+// (price edits, factory payments/debits, password resets) verifies the PIN as a precondition of
+// a real write. The dashboard lock has nothing to write: the question genuinely is just "is this
+// the owner's PIN," so it gets its own endpoint rather than a mutating one being repurposed with
+// a no-op payload, which would make the audit story ("what was this request FOR?") a lie.
+//
+// requirePin does all the actual work — same hash comparison, same failedPinAttempts counter,
+// same 5-attempt/15-minute lockout, same INVALID_PIN/PIN_LOCKED/PIN_NOT_SET codes as everywhere
+// else. Reaching this handler at all means the PIN was correct, so it only reports success.
+//
+// NOT a security boundary, and deliberately not treated as one: the dashboard is already fully
+// protected by requireRole('OWNER') on every underlying route (a STAFF token can't read those
+// endpoints whatever the frontend renders). This is a privacy gate so the owner can blank his own
+// screen from a bystander — the lock state lives in frontend memory, and this endpoint issues no
+// token and grants no new access.
+function verifyOwnPin(req, res) {
+  res.json({ ok: true });
+}
+
 // PATCH /api/users/:id/password — OWNER only (👑) AND PIN-gated (📌, via requirePin in
 // routes/users.js), unconditionally. This is an ADMIN reset, not a self-service change: the
 // actor proves who THEY are (their own PIN, checked against req.user.id by requirePin — same
@@ -187,4 +209,67 @@ async function resetUserPassword(req, res) {
   res.json(user);
 }
 
-module.exports = { listUsers, createUser, deactivateUser, reactivateUser, updateOwnPin, resetUserPassword };
+// PATCH /api/users/:id — OWNER only (👑), no PIN. Edits name and/or username — never
+// role/password/PIN, each of those already has its own dedicated endpoint with its own gating.
+// Body is a partial: whichever of {name, username} is present gets updated, the other is left
+// untouched (not overwritten with an empty value).
+//
+// Same isPrimaryOwner restriction as resetUserPassword above (rule 97): a non-primary OWNER can
+// freely rename any STAFF account, and can rename themselves, but cannot touch a DIFFERENT
+// OWNER's name/username without isPrimaryOwner — same reasoning, this acts on an account that
+// already exists and a non-primary OWNER silently renaming another owner (least of all the
+// primary owner) is a real risk this closes, not a hypothetical.
+//
+// Username uniqueness is enforced the exact same way createUser already does it — no separate
+// pre-check, just attempt the write and let the DB's own @unique constraint reject a collision
+// via P2002. That keeps the case-sensitivity behavior identical to account creation by
+// construction (same constraint, same collation) rather than risking a second, subtly different
+// check drifting out of sync with it over time.
+async function updateUser(req, res) {
+  const { id } = req.params;
+  const { name, username } = req.body;
+
+  if (name === undefined && username === undefined) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'At least one of name or username is required');
+  }
+  if (name !== undefined && !name) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+  }
+  if (username !== undefined && !username) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'username cannot be empty');
+  }
+
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) {
+    return sendError(res, 404, 'USER_NOT_FOUND', `No user with id ${id}`);
+  }
+
+  if (target.role === 'OWNER' && target.id !== req.user.id && !req.user.isPrimaryOwner) {
+    return sendError(res, 403, 'FORBIDDEN_ROLE', 'Only the primary owner can edit another OWNER\'s details');
+  }
+
+  const data = {};
+  if (name !== undefined) data.name = name;
+  if (username !== undefined) data.username = username;
+
+  try {
+    const user = await prisma.user.update({ where: { id }, data, select: SELECT });
+    res.json(user);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return sendError(res, 409, 'DUPLICATE_USERNAME', `Username "${username}" already exists`);
+    }
+    throw err;
+  }
+}
+
+module.exports = {
+  listUsers,
+  createUser,
+  deactivateUser,
+  reactivateUser,
+  updateOwnPin,
+  verifyOwnPin,
+  resetUserPassword,
+  updateUser,
+};

@@ -35,9 +35,27 @@ export function packOrder(id, lineItems) {
 
 // PATCH /api/orders/:id/bill -> the updated order, same shape as getOrder. OWNER ONLY (rule 63)
 // and the single irreversible step in the lifecycle: it deducts real stock FIFO across locations
-// and applies rule 23's hard lock. No body — there's no formal Bill document entity yet.
-export function billOrder(id) {
-  return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH' });
+// and applies rule 23's hard lock. Body (added 2026-08-25, rule 101): { discountApplicable?,
+// discountPercent?, gstApplicable?, gstPercent? } — all optional, defaulting to no discount/no
+// GST. The server independently recomputes and stores preTaxAmount/finalAmount/actualPayable;
+// nothing computed client-side is ever trusted as the value that gets written.
+//
+// `billNo` (optional, 2026-08-30) rides along in the same body: a display-only reference tag for
+// the bill this order was billed under. It takes no part in any of the amount arithmetic above,
+// and unlike those amounts it stays correctable afterwards via updateOrderBillNo below.
+export function billOrder(id, billing = {}) {
+  return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH', body: billing });
+}
+
+// PATCH /api/orders/:id/bill-no -> the updated order, same shape as getOrder. OWNER ONLY, no PIN.
+// Corrects the reference tag on an already-billed order — rule 23 locks the order's money and
+// contents, not a reference tag, and this endpoint provably can't touch either. 409
+// ORDER_NOT_BILLED if the order hasn't been billed yet. Pass null to clear it.
+//
+// NOTE: `billNo` is OWNER-only on READ too — the server never selects it for a STAFF request, so
+// it's simply absent from order objects on STAFF-facing screens (Pack Order, Dispatch Order).
+export function updateOrderBillNo(id, billNo) {
+  return apiFetch(`/api/orders/${id}/bill-no`, { method: 'PATCH', body: { billNo } });
 }
 
 // PATCH /api/orders/:id/ship -> the updated order, same shape as getOrder. Any authenticated

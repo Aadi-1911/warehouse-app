@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   PackageIcon,
@@ -12,6 +12,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { getOrder, packOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
+import { LOW_STOCK_THRESHOLD } from '../utils/lowStock';
 
 // Pack Order — Pack List detail, 07_UI_DESIGN_BRIEF.md §5.4 (both the original and "— updated"
 // sections). Tally view and "Mark shipped" are both out of scope here — Tally is a separate
@@ -21,6 +22,11 @@ import { listStock } from '../api/stock';
 // Packing no longer moves stock (backend change 2026-08-17) — this screen confirms COUNTS, and
 // the actual deduction happens later at Bill. The stock numbers shown per line are still real and
 // still worth showing: they're what staff use to decide how much they can actually pack.
+//
+// Rule 56's low-stock badge (added 2026-08-20, via the shared LOW_STOCK_THRESHOLD) reads straight
+// off this same stockByBundleId — no "before/after this order" adjustment needed, because packing
+// never touches Stock any more (see above): today's real number already IS what it'll be right up
+// until Bill, regardless of what this order itself packs.
 //
 // --- CHECKLIST-FIRST, not quantity-first (redesigned 2026-08-19) ---
 // This screen used to pre-fill every line's stepper to the ordered quantity and track which of
@@ -92,6 +98,121 @@ export default function PackOrderDetail() {
   // Non-null only while the "some lines are still unconfirmed" warning is up; holds the exact
   // lines being warned about so the copy can name them rather than just counting them.
   const [unconfirmedWarning, setUnconfirmedWarning] = useState(null);
+
+  // --- "Mark as packed" swipe-to-confirm (added 2026-09-02) ---
+  // Purely a new INPUT GESTURE for the exact same action — handleMarkPackedClick below is called
+  // by all three paths (drag-past-threshold, plain tap, keyboard) and is completely unchanged
+  // itself; this block owns nothing about validation, submission, or the warning modal.
+  //
+  // dragX (state, drives the visible transform) and dragRef (a ref, the authoritative live value
+  // during a gesture) are deliberately separate: reading dragRef.current inside
+  // handleThumbPointerUp avoids any risk of that handler closing over a stale `dragX` from an
+  // earlier render, the same "ref for synchronous truth, state for what re-renders" split this
+  // app already uses wherever a value needs to be read back mid-gesture rather than next render.
+  const trackRef = useRef(null);
+  const thumbRef = useRef(null);
+  const dragRef = useRef({ active: false, moved: false, startX: 0, maxTravel: 0, x: 0 });
+  // True only while an actual drag is in progress — disables the snap-back CSS transition so the
+  // thumb follows the pointer instantly, then re-enabled on release so the return-to-start (or
+  // the brief moment before this bar unmounts on success) animates instead of jumping.
+  const [dragging, setDragging] = useState(false);
+  const [dragX, setDragX] = useState(0);
+  // A drag that crossed the "this was a real drag" movement threshold ends with a native `click`
+  // event likely still firing on the button afterwards (pointer capture redirects move/up
+  // events, but not the browser's own click synthesis) — this flag makes that follow-up click a
+  // no-op exactly once, so a completed drag can never ALSO fire handleMarkPackedClick a second
+  // time via the button's own onClick.
+  const suppressTrackClickRef = useRef(false);
+  // True from the moment packOrder() actually succeeds until navigation fires (see doMarkPacked's
+  // setTimeout below) — drives the toast-style success visual and keeps the track inert, same as
+  // `submitting` does, for that whole window. Only ever set true on the success path; a failed
+  // submit leaves this false and falls back to the existing submitError banner.
+  const [justPacked, setJustPacked] = useState(false);
+
+  const SWIPE_CONFIRM_RATIO = 0.7;
+
+  // Once packing succeeds, the thumb should visibly finish its journey to the end of the track
+  // rather than sitting wherever a drag left it (a tap/keyboard trigger leaves dragX at 0 the
+  // whole time) — same dragX/transform mechanism the live drag already drives, just measured
+  // once here instead of read from pointer position.
+  useEffect(() => {
+    if (!justPacked) return;
+    const track = trackRef.current;
+    const thumb = thumbRef.current;
+    if (!track || !thumb) return;
+    const trackWidth = track.getBoundingClientRect().width;
+    const thumbWidth = thumb.getBoundingClientRect().width;
+    setDragX(Math.max(0, trackWidth - thumbWidth));
+  }, [justPacked]);
+
+  function handleThumbPointerDown(e) {
+    if (submitting || justPacked) return;
+    const track = trackRef.current;
+    const thumb = thumbRef.current;
+    if (!track || !thumb) return;
+    suppressTrackClickRef.current = false;
+    const trackWidth = track.getBoundingClientRect().width;
+    const thumbWidth = thumb.getBoundingClientRect().width;
+    dragRef.current = { active: true, moved: false, startX: e.clientX, maxTravel: Math.max(0, trackWidth - thumbWidth), x: 0 };
+    setDragging(true);
+    thumb.setPointerCapture(e.pointerId);
+  }
+
+  function handleThumbPointerMove(e) {
+    const d = dragRef.current;
+    if (!d.active) return;
+    const delta = e.clientX - d.startX;
+    // A few px of jitter on what was meant as a tap shouldn't count as "moved" — only real
+    // drag distance should suppress the click path below.
+    if (Math.abs(delta) > 3) d.moved = true;
+    const clamped = Math.max(0, Math.min(d.maxTravel, delta));
+    d.x = clamped;
+    setDragX(clamped);
+  }
+
+  // Shared by pointerup AND pointercancel (a real device can cancel a gesture mid-drag, e.g. a
+  // scroll takeover) — both mean "the gesture ended," and cancel should never leave the thumb
+  // stranded mid-track or leave dragRef.active stuck true.
+  function handleThumbPointerEnd(e) {
+    const d = dragRef.current;
+    if (!d.active) return;
+    d.active = false;
+    const thumb = thumbRef.current;
+    if (thumb && thumb.hasPointerCapture?.(e.pointerId)) thumb.releasePointerCapture(e.pointerId);
+    setDragging(false);
+
+    if (!d.moved) {
+      // No real drag happened — a plain tap on the thumb. Let the button's own onClick handle it
+      // exactly like a tap anywhere else on the track; nothing to suppress.
+      setDragX(0);
+      return;
+    }
+
+    // A real drag happened, threshold crossed or not — either way this gesture is "spent," so
+    // the click the browser may still synthesize from this same down/up pair must not also fire
+    // handleMarkPackedClick.
+    suppressTrackClickRef.current = true;
+    setDragX(0);
+
+    const passedThreshold = d.maxTravel > 0 && d.x >= d.maxTravel * SWIPE_CONFIRM_RATIO;
+    if (passedThreshold) {
+      // Calls handleMarkPackedClick — NEVER doMarkPacked directly — so a drag confirm goes
+      // through the exact same unconfirmed-lines check a tap or keyboard Enter would.
+      handleMarkPackedClick();
+    }
+  }
+
+  // The track's own onClick — fires for a plain tap/click anywhere on the button AND for
+  // keyboard Enter/Space (native <button> behavior, not reimplemented here). This is the primary
+  // accessible path, not a fallback: dragging is an alternative way to reach the same call, not
+  // the other way around.
+  function handleTrackClick() {
+    if (suppressTrackClickRef.current) {
+      suppressTrackClickRef.current = false;
+      return;
+    }
+    handleMarkPackedClick();
+  }
 
   // One target for both cancel actions, same shape Parties.jsx uses for its archive/reactivate
   // confirm — { kind: 'line', line } or { kind: 'order' }. A single ConfirmModal serves both, with
@@ -259,12 +380,17 @@ export default function PackOrderDetail() {
       const shortCount = liveForOutcome.filter(
         (li) => (confirmed[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
       ).length;
-      navigate('/pack-orders', {
-        replace: true,
-        state: {
-          packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
-        },
-      });
+      // Toast-style success visual holds on screen for a beat before handing off — see the
+      // justPacked block near the top of this component for what renders during this window.
+      setJustPacked(true);
+      setTimeout(() => {
+        navigate('/pack-orders', {
+          replace: true,
+          state: {
+            packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
+          },
+        });
+      }, 700);
     } catch (err) {
       // Deliberately not resetting `confirmed` — someone else packing this order first
       // (ORDER_NOT_PLACED) must never cost staff the row-by-row confirmations they just worked
@@ -280,7 +406,10 @@ export default function PackOrderDetail() {
   if (orderStatus !== 'loaded') {
     return (
       <div className="page">
-        <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+        {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+            Home's Pack Order tile; see that file's comment for the full reasoning. Applied
+            identically across all 3 render states (loading/blocked/main) on this screen. */}
+        <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -298,7 +427,10 @@ export default function PackOrderDetail() {
   if (order.status !== 'PLACED') {
     return (
       <div className="page">
-        <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+        {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+            Home's Pack Order tile; see that file's comment for the full reasoning. Applied
+            identically across all 3 render states (loading/blocked/main) on this screen. */}
+        <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
           This order is no longer open for packing — its status is now {order.status}.
@@ -350,7 +482,9 @@ export default function PackOrderDetail() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+      {/* tone="tile-pink" (2026-08-27) — matches PackOrderList.jsx's own header change and
+          Home's Pack Order tile; see that file's comment for the full reasoning. */}
+      <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-warning">Placed</span>
 
@@ -432,6 +566,7 @@ export default function PackOrderDetail() {
                     const isShort = state === 'short';
                     const isFull = state === 'full';
                     const stockAvail = stockByBundleId[li.bundleId] ?? 0;
+                    const low = stockAvail <= LOW_STOCK_THRESHOLD;
                     const isAdjusting = li.id in adjusting;
                     const adjustQty = adjusting[li.id] ?? confirmed[li.id] ?? ordered;
 
@@ -473,7 +608,14 @@ export default function PackOrderDetail() {
                               <StatusIcon size={18} />
                             </span>
                             <span className="pack-line-tap-text">
-                              <span className="pack-line-color-chip">{li.colorName}</span>
+                              <span className="pack-line-color-row">
+                                <span className="pack-line-color-chip">{li.colorName}</span>
+                                {/* Rule 56: a small red flag, never a fully-tinted row — same
+                                    badge-danger treatment Live Stock/New Order use, reused rather
+                                    than a new style. Shown regardless of confirm state: it's a
+                                    fact about current stock, not about this line's own progress. */}
+                                {low && <span className="badge badge-danger">Low stock</span>}
+                              </span>
                               <span className="pack-line-ordered">
                                 {isShort
                                   ? `Ordered: ${ordered} · Only ${stockAvail} in stock`
@@ -545,7 +687,7 @@ export default function PackOrderDetail() {
                         {canCancel && (
                           <button
                             type="button"
-                            className="link-button danger-text line-cancel-link"
+                            className="link-button pack-line-cancel-link"
                             onClick={() => setCancelTarget({ kind: 'line', line: li })}
                             disabled={submitting || cancelling}
                           >
@@ -564,8 +706,40 @@ export default function PackOrderDetail() {
 
       <div className="sticky-action-bar">
         <p className="muted pack-order-tally">{tallyText}</p>
-        <button type="button" className="btn-primary" onClick={handleMarkPackedClick} disabled={submitting}>
-          {submitting ? 'Marking as packed…' : 'Mark as packed'}
+        {/* Swipe-to-confirm (added 2026-09-02) — tap-anywhere, drag, and keyboard Enter/Space all
+            call the identical handleMarkPackedClick, so all three reach the same validation/
+            warning-modal path as before; nothing about WHAT "Mark as packed" does changed here,
+            only how a person can trigger it. The track itself IS the <button> (real focus +
+            Enter/Space + click, for free, from native <button> semantics) — the thumb is a
+            purely visual, pointer-tracked child layered inside it. See the handler block above
+            (near dragRef) for the click-vs-drag disambiguation this relies on. */}
+        <button
+          type="button"
+          ref={trackRef}
+          className={`btn-primary pack-swipe-track${justPacked ? ' pack-swipe-track-success' : ''}`}
+          onClick={handleTrackClick}
+          disabled={submitting || justPacked}
+        >
+          <span className="pack-swipe-label">
+            {justPacked ? 'Order marked as packed' : submitting ? 'Marking as packed…' : 'Slide to mark packed'}
+          </span>
+          <span
+            ref={thumbRef}
+            className={`pack-swipe-thumb${justPacked ? ' pack-swipe-thumb-success' : ''}`}
+            style={{
+              transform: `translateX(${dragX}px)`,
+              transition: dragging ? 'none' : 'transform 0.2s ease',
+              touchAction: 'none',
+            }}
+            onPointerDown={handleThumbPointerDown}
+            onPointerMove={handleThumbPointerMove}
+            onPointerUp={handleThumbPointerEnd}
+            onPointerCancel={handleThumbPointerEnd}
+          >
+            <span className={`pack-swipe-thumb-icon${justPacked ? ' pack-swipe-thumb-icon-success' : ''}`}>
+              {justPacked ? <CheckCircleIcon size={20} /> : <ChevronIcon size={18} />}
+            </span>
+          </span>
         </button>
         {/* Visually separated from "Mark as packed" and from the per-line links: cancelling the
             whole order is a different scale of action, and the two must never be tapped by
@@ -573,7 +747,7 @@ export default function PackOrderDetail() {
         {canCancel && (
           <button
             type="button"
-            className="btn-danger order-cancel-button"
+            className="btn-danger order-cancel-button pack-order-cancel-btn"
             onClick={() => setCancelTarget({ kind: 'order' })}
             disabled={submitting || cancelling}
           >
@@ -618,7 +792,7 @@ export default function PackOrderDetail() {
         title={cancelTarget?.kind === 'order' ? 'Cancel this whole order?' : 'Cancel this line?'}
         body={
           cancelTarget?.kind === 'order'
-            ? `${order.partyName}'s entire order will be cancelled and removed from the packing list. The lines stay on record — nothing is deleted — but the order can't be packed, billed or shipped afterwards.`
+            ? `${order.partyName}'s entire order will be cancelled and removed from the packing list. The lines stay on record — nothing is deleted — but the order can't be packed, billed or dispatched afterwards.`
             : `${cancelTarget?.line.colorName} will be cancelled and won't be packed or billed. The ordered quantity stays on record; only the line is marked cancelled.`
         }
         confirmLabel={cancelling ? 'Cancelling…' : cancelTarget?.kind === 'order' ? 'Cancel whole order' : 'Cancel line'}

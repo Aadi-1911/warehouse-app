@@ -11,6 +11,14 @@ export function createFactory(data) {
   return apiFetch('/api/factories', { method: 'POST', body: data });
 }
 
+// PATCH /api/factories/:id -> the updated factory. OWNER only, no PIN (factoryController.js:
+// "editing factory details... is administrative, not the pricing-adjacent action the PIN gate
+// exists to protect"). This endpoint has existed since before Owner Dashboard's Factories page
+// (2026-09-02) — that page is simply its first caller from any frontend screen.
+export function updateFactory(id, { name, contact, gstNo }) {
+  return apiFetch(`/api/factories/${id}`, { method: 'PATCH', body: { name, contact, gstNo } });
+}
+
 // GET /api/factories/:id/payable -> { factoryId, totalOwed, totalPaid, amountPayable,
 // payments: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }],
 // debits: [{ id, amount, date, note, createdAt, updatedAt, wasEdited }] }. Owner-only —

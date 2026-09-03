@@ -37,13 +37,23 @@ export function createProduct({ articleNo, factoryId, name, categoryId, isKids, 
   return apiFetch('/api/products', { method: 'POST', body: { articleNo, factoryId, name, categoryId, isKids, sizes } });
 }
 
-// PATCH /api/products/:id -> the updated Product. Used here for Article Pricing's price edits —
+// PATCH /api/products/:id -> the updated Product. Used for Article Pricing's price edits —
 // costPrice/sellingPrice in the body means the backend requires OWNER role AND a PIN match
-// (`pin` in the body), enforced by requirePinForPriceEdits (routes/products.js). Same endpoint
-// Receive Stock/every other Product edit would use for non-price fields; nothing new invented
-// for pricing specifically.
-export function updateProduct(id, { costPrice, sellingPrice, pin }) {
-  return apiFetch(`/api/products/${id}`, { method: 'PATCH', body: { costPrice, sellingPrice, pin } });
+// (`pin` in the body), enforced by requirePinForPriceEdits (routes/products.js) — and, since
+// 2026-08-28, for article renames (`name`), which are OWNER-only but take NO pin, since rule 71's
+// gate is about money and a name carries none.
+//
+// Written as an explicit whitelist rather than a pass-through `body` so this client can never
+// forward a field the endpoint doesn't accept. `name` HAD to be added here as well as to the
+// server's PATCHABLE_FIELDS: the old signature destructured only { costPrice, sellingPrice, pin },
+// so a rename call silently sent `{}` and the server correctly rejected it with "No editable
+// fields provided" — a real bug caught in browser testing, not by the build, since dropping an
+// undeclared property is perfectly valid JS.
+//
+// undefined keys are stripped by apiFetch's own JSON.stringify, so a name-only call sends exactly
+// { name } with no stray nulls, and a price-only call is unchanged from before.
+export function updateProduct(id, { costPrice, sellingPrice, name, pin }) {
+  return apiFetch(`/api/products/${id}`, { method: 'PATCH', body: { costPrice, sellingPrice, name, pin } });
 }
 
 // PATCH /api/products/:id/deactivate -> the updated Product ({ ...fields, isActive }). Any

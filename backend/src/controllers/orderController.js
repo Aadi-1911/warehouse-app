@@ -1,5 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { piecesPerSetFor } = require('../utils/piecesPerSet');
+const { orderValueOf } = require('../utils/orderValue');
+const { normalizeBillNo } = require('../utils/billNo');
 
 const prisma = new PrismaClient();
 
@@ -13,28 +16,57 @@ const LINE_ITEM_SELECT = {
   qtySetsPacked: true,
   isCancelled: true,
   priceAtOrder: true,
+  productNameSnapshot: true,
   bundle: {
     select: {
-      product: { select: { id: true, articleNo: true, name: true } },
+      // isKids + sizes are the piecesPerSetFor shape (utils/piecesPerSet.js) — needed so a
+      // client (Bill Order's per-article total) can convert sets to pieces itself, same shape
+      // productController's productSelect already exposes elsewhere.
+      product: { select: { id: true, articleNo: true, name: true, isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } },
       color: { select: { id: true, name: true } },
     },
   },
 };
 
-const ORDER_DETAIL_SELECT = {
-  id: true,
-  partyId: true,
-  party: { select: { name: true } },
-  status: true,
-  createdById: true,
-  createdBy: { select: { name: true } },
-  createdAt: true,
-  packedAt: true,
-  billedAt: true,
-  shippedAt: true,
-  isCancelled: true,
-  lineItems: { select: LINE_ITEM_SELECT },
-};
+// A FUNCTION of the requester's role, not a plain constant, purely because of `billNo` (added
+// 2026-08-30). Every other field here is identical for both roles; billNo is the one field that
+// must never reach a STAFF response, and this select feeds any-role endpoints — GET
+// /api/orders/:id, packOrder and shipOrder are all reachable by STAFF (rule 63), and STAFF's Pack
+// Order and Dispatch Order screens genuinely use them.
+//
+// billNo is therefore left out of the SELECT itself for a STAFF request, so it is never fetched
+// from Postgres at all — deliberately the same never-fetch-it approach productSelect(role)
+// already takes for costPrice, rather than selecting it and deleting the key before responding.
+// A stripped field is one forgotten `res.json(order)` away from leaking; a field that was never
+// read out of the database cannot leak by any path.
+function orderDetailSelect(role) {
+  return {
+    id: true,
+    partyId: true,
+    party: { select: { name: true } },
+    partyNameSnapshot: true,
+    status: true,
+    createdById: true,
+    createdBy: { select: { name: true } },
+    createdAt: true,
+    packedAt: true,
+    billedAt: true,
+    shippedAt: true,
+    isCancelled: true,
+    // Billing snapshot (rule 101) — null/false for any order not yet BILLED. Selected here so
+    // GET /api/orders/:id and billOrder()'s own response both surface the real stored figures,
+    // not just the client's own live preview from before confirming.
+    discountApplicable: true,
+    discountPercent: true,
+    gstApplicable: true,
+    gstPercent: true,
+    preTaxAmount: true,
+    finalAmount: true,
+    actualPayable: true,
+    ...(role === 'OWNER' ? { billNo: true } : {}),
+    lineItems: { select: LINE_ITEM_SELECT },
+  };
+}
 
 function lineItemToResponse(li) {
   return {
@@ -42,7 +74,16 @@ function lineItemToResponse(li) {
     bundleId: li.bundleId,
     productId: li.bundle.product.id,
     productArticleNo: li.bundle.product.articleNo,
-    productName: li.bundle.product.name,
+    // The snapshot taken when this line was created, falling back to the live Product.name only
+    // for lines that predate productNameSnapshot existing (2026-08-28) and therefore have no
+    // recorded name to recover. Post-fix lines are immune to a later rename; pre-fix lines still
+    // follow the current name, which is the only value that was ever available for them — a
+    // disclosed limitation, see the schema comment on OrderLineItem.productNameSnapshot.
+    productName: li.productNameSnapshot ?? li.bundle.product.name,
+    // Flattened alongside the other product* fields above, same reasoning — lets a client
+    // reconstruct { isKids, sizes } and call its own piecesPerSetFor without a second request.
+    productIsKids: li.bundle.product.isKids,
+    productSizes: li.bundle.product.sizes,
     colorId: li.bundle.color.id,
     colorName: li.bundle.color.name,
     qtySetsRequested: li.qtySetsRequested,
@@ -52,11 +93,16 @@ function lineItemToResponse(li) {
   };
 }
 
-function orderDetailToResponse(o) {
+// `role` must be the same one passed to orderDetailSelect above — for a STAFF request the row
+// simply has no billNo property to read, so the two conditionals can't disagree in a way that
+// either invents the field or leaks it.
+function orderDetailToResponse(o, role) {
   return {
     id: o.id,
     partyId: o.partyId,
-    partyName: o.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // Order.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: o.partyNameSnapshot ?? o.party.name,
     status: o.status,
     createdById: o.createdById,
     createdByName: o.createdBy.name,
@@ -65,6 +111,14 @@ function orderDetailToResponse(o) {
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
     isCancelled: o.isCancelled,
+    discountApplicable: o.discountApplicable,
+    discountPercent: o.discountPercent,
+    gstApplicable: o.gstApplicable,
+    gstPercent: o.gstPercent,
+    preTaxAmount: o.preTaxAmount,
+    finalAmount: o.finalAmount,
+    actualPayable: o.actualPayable,
+    ...(role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
     lineItems: o.lineItems.map(lineItemToResponse),
   };
 }
@@ -111,7 +165,7 @@ async function createOrder(req, res) {
   const bundleIds = [...new Set(lineItems.map((li) => li.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true } } },
+    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
@@ -119,6 +173,8 @@ async function createOrder(req, res) {
   // moment — never trusted from the request body, same principle as Transaction.
   // costPriceSnapshot. Resolved fully before any DB write, so a bad bundleId or an unpriced
   // product anywhere in the array rejects the whole request with zero rows created.
+  // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, for
+  // exactly the same reason — a later rename must not rewrite what this order said it was for.
   const resolvedLineItems = [];
   for (const li of lineItems) {
     const bundle = bundleById.get(li.bundleId);
@@ -137,6 +193,7 @@ async function createOrder(req, res) {
       bundleId: li.bundleId,
       qtySetsRequested: li.qtySetsRequested,
       priceAtOrder: bundle.product.sellingPrice,
+      productNameSnapshot: bundle.product.name,
     });
   }
 
@@ -145,15 +202,19 @@ async function createOrder(req, res) {
       data: {
         partyId,
         createdById: req.user.id,
+        // Captured from the same `party` read already used for the isActive check above, at
+        // this exact instant — never from the request body, same principle as
+        // resolvedLineItems' own priceAtOrder/productNameSnapshot immediately above.
+        partyNameSnapshot: party.name,
         lineItems: { create: resolvedLineItems },
       },
     });
     // Re-read inside the transaction, with the full display-ready select, so the response
     // reflects the true post-write state rather than being reassembled in JS from inputs.
-    return tx.order.findUnique({ where: { id: order.id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id: order.id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.status(201).json(orderDetailToResponse(created));
+  res.status(201).json(orderDetailToResponse(created, req.user.role));
 }
 
 // GET /api/orders — any authenticated role (🔒). Lightweight list: party name and a
@@ -191,7 +252,13 @@ async function listOrders(req, res) {
       id: true,
       partyId: true,
       party: { select: { name: true } },
+      partyNameSnapshot: true,
       status: true,
+      // Selected (though excluded from the status-filtered worklist queries above) so an
+      // unfiltered caller — e.g. the Owner Dashboard's Orders page, which intentionally shows
+      // every order including cancelled ones (rule per the comment above) — can actually tell
+      // the two apart instead of a cancelled order rendering identically to an active one.
+      isCancelled: true,
       createdAt: true,
       // The stage timestamps ride along so a status-scoped list can show the date that actually
       // matters for ITS stage — Bill Orders (status=PACKED) shows when it was packed, Ship Order
@@ -199,21 +266,90 @@ async function listOrders(req, res) {
       packedAt: true,
       billedAt: true,
       shippedAt: true,
-      lineItems: { select: { qtySetsRequested: true, priceAtOrder: true } },
+      // The rule 101 billing snapshot. Selected purely so totalValue below can prefer the real
+      // stored amount owed over the pre-tax line-item sum (rule 103) — without this select it
+      // would be undefined on every row and orderValueOf would silently fall back forever,
+      // which is exactly the quiet-wrong-money failure this fix exists to remove.
+      actualPayable: true,
+      // OWNER-only, same never-fetch-for-STAFF reasoning as orderDetailSelect above — this is an
+      // any-role endpoint and STAFF's Pack/Dispatch worklists read it.
+      ...(req.user.role === 'OWNER' ? { billNo: true } : {}),
+      // The real cancellation moment — investigated 2026-08-20 for the Owner Dashboard Orders
+      // page's month bucketing. A cancelled order can have been cancelled while PLACED (no
+      // packedAt/billedAt/shippedAt at all), so those stage timestamps can't reliably date it.
+      // cancelOrder/cancelOrderLine both already write an order-level OrderAdjustment row
+      // (field: 'isCancelled', lineItemId: null) with a real changedAt the moment cancellation
+      // happens — the same append-only audit trail every other status transition uses (rule 9),
+      // not a new mechanism invented for this. take: 1 + orderBy desc gets the one that matters
+      // (an order can only be order-level-cancelled once — cancelOrder 409s on an already-
+      // cancelled order — but this is defensive rather than assuming that invariant here too).
+      adjustments: {
+        where: { field: 'isCancelled', lineItemId: null },
+        orderBy: { changedAt: 'desc' },
+        take: 1,
+        select: { changedAt: true },
+      },
+      lineItems: {
+        // A cancelled line is never billed and has no business inflating either figure below —
+        // same filter revenue.js and the dashboard's billedNotShipped/packedNotBilled KPIs already
+        // apply, and the same "tally live lines only" convention every order detail screen
+        // (Pack/Bill) already uses for its own counts. Filtering here means lineItemCount and
+        // totalValue both come from this one already-correct array, rather than each needing its
+        // own exclusion logic.
+        where: { isCancelled: false },
+        select: {
+          qtySetsRequested: true,
+          priceAtOrder: true,
+          // Needed for piecesPerSetFor — costPrice/sizes.costPrice never touched, this is
+          // purely the piece-count shape (isKids + sizeLabel), same select revenue.js uses.
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+        },
+      },
     },
   });
 
   const response = orders.map((o) => ({
     id: o.id,
     partyId: o.partyId,
-    partyName: o.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // Order.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: o.partyNameSnapshot ?? o.party.name,
     status: o.status,
+    isCancelled: o.isCancelled,
     createdAt: o.createdAt,
     packedAt: o.packedAt,
     billedAt: o.billedAt,
     shippedAt: o.shippedAt,
+    // Only meaningful when isCancelled — the real cancellation timestamp (see the adjustments
+    // select above), falling back to the latest stage date that actually exists, then createdAt,
+    // ONLY for the unexpected case where an order is order-level-cancelled with no matching
+    // OrderAdjustment row (shouldn't happen through cancelOrder's own code path, but this is the
+    // one place that reads the fallback chain, not left implicit).
+    cancelledAt: o.isCancelled ? (o.adjustments[0]?.changedAt ?? o.billedAt ?? o.packedAt ?? o.createdAt) : null,
+    // Present only for OWNER — mirrors the conditional select above, so a STAFF row has no
+    // billNo to read in the first place.
+    ...(req.user.role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
+    // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
+    // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,
-    totalValue: o.lineItems.reduce((sum, li) => sum + li.qtySetsRequested * Number(li.priceAtOrder), 0),
+    // The real amount owed when this order has one, else the live line-item sum (rule 103).
+    //
+    // The fallback below is unchanged and still correct for every order without a snapshot:
+    // qtySetsRequested × piecesPerSet × priceAtOrder — priceAtOrder is stored PER PIECE
+    // (rule 69's 2026-08-19 clarification), so a bare qtySets × price under-counts by the
+    // pieces-per-set factor. Same three-factor shape as revenue.js and the factory payable.
+    //
+    // Fixing it HERE rather than in each screen is deliberate: every list-view rupee figure in
+    // the app reads this one field — the Owner Dashboard's Orders page, Party Payables' per-order
+    // list, and the mobile Pack/Bill/Ship Order lists — so one server-side fix corrects all of
+    // them at once and leaves no screen able to drift back onto the pre-tax number.
+    totalValue: orderValueOf(
+      o,
+      o.lineItems.reduce(
+        (sum, li) => sum + li.qtySetsRequested * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder),
+        0,
+      ),
+    ),
   }));
 
   res.json(response);
@@ -224,12 +360,12 @@ async function listOrders(req, res) {
 async function getOrder(req, res) {
   const { id } = req.params;
 
-  const order = await prisma.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+  const order = await prisma.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
   }
 
-  res.json(orderDetailToResponse(order));
+  res.json(orderDetailToResponse(order, req.user.role));
 }
 
 // PATCH /api/orders/:id/pack — any authenticated role (🔒). Staff is the primary user for this
@@ -371,10 +507,10 @@ async function packOrder(req, res) {
       },
     });
 
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/bill — OWNER ONLY (👑), enforced by requireRole('OWNER') in routes/
@@ -396,18 +532,66 @@ async function packOrder(req, res) {
 // sorts by locationName.localeCompare(...) — i.e. alphabetical. This is the same convention that
 // logic used when it lived in pack, carried over unchanged rather than re-decided.
 //
-// No body. No formal Bill document/invoice entity exists yet (amounts, GST, a printable doc are
-// an explicitly separate later task) — this is a pure status-transition-plus-deduction endpoint,
-// structurally the same shape as shipOrder below.
+// Body (added 2026-08-25, rule 101): { discountApplicable?, discountPercent?, gstApplicable?,
+// gstPercent? } — all optional, defaulting to no discount/no GST. Still no formal Bill document/
+// invoice entity (a printable doc is still separate later work) — this remains a pure
+// status-transition-plus-deduction endpoint structurally, just one that also snapshots the
+// billed amount now that discount/GST are real, owner-entered facts at billing time.
 async function billOrder(req, res) {
   const { id } = req.params;
+
+  const {
+    discountApplicable = false,
+    discountPercent = null,
+    gstApplicable = false,
+    gstPercent = null,
+  } = req.body || {};
+
+  if (typeof discountApplicable !== 'boolean' || typeof gstApplicable !== 'boolean') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountApplicable and gstApplicable must be booleans');
+  }
+  if (discountApplicable && (typeof discountPercent !== 'number' || discountPercent < 0 || discountPercent > 100)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountPercent must be a number between 0 and 100 when discountApplicable is true');
+  }
+  if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0 || gstPercent > 5)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a number between 0 and 5 when gstApplicable is true');
+  }
+  // Optional reference tag, captured at billing time (2026-08-30). Validated alongside the money
+  // fields above but deliberately NOT part of any of the rule 101 arithmetic below — it is never
+  // read by preTaxAmount/finalAmount/actualPayable, and billing succeeds identically whether it
+  // is provided or left blank.
+  const billNo = normalizeBillNo(req.body?.billNo);
+  if (!billNo.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
+  }
 
   const order = await prisma.order.findUnique({
     where: { id },
     select: {
       id: true,
       status: true,
-      lineItems: { select: { id: true, bundleId: true, qtySetsPacked: true, isCancelled: true } },
+      // Was missing here (found 2026-08-20): the guard below read order.isCancelled, but nothing
+      // ever selected it at the Order level — only lineItems.isCancelled was fetched, so the
+      // field was `undefined`, and `if (order.isCancelled)` never fired for ANY order. Confirmed
+      // against the real cancelled order (cmsxewg0...) before this fix: the call bypassed this
+      // guard entirely and reached the stock-check stage (409 INSUFFICIENT_STOCK, not 409
+      // ORDER_CANCELLED) — it only avoided deducting real stock because that specific order
+      // happens to have a bundle with zero stock, not because this guard did its job.
+      isCancelled: true,
+      lineItems: {
+        select: {
+          id: true,
+          bundleId: true,
+          qtySetsPacked: true,
+          isCancelled: true,
+          // priceAtOrder + the piecesPerSetFor shape are needed to snapshot preTaxAmount below —
+          // same fields listOrders' own totalValue reads, just qtySetsPacked-based instead of
+          // qtySetsRequested-based (rule 101 — billing commits against what was actually packed,
+          // the same basis BillOrderDetail.jsx's frontend total has always used for this screen).
+          priceAtOrder: true,
+          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+        },
+      },
     },
   });
   if (!order) {
@@ -421,6 +605,20 @@ async function billOrder(req, res) {
   if (order.isCancelled) {
     return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
   }
+
+  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × priceAtOrder, summed
+  // across non-cancelled lines only. Computed from THIS SAME already-fetched order.lineItems,
+  // not a second query — a cancelled line's qtySetsPacked is irrelevant either way since it's
+  // filtered out here, same as it's excluded from linesToDeduct below.
+  const preTaxAmount = order.lineItems
+    .filter((li) => !li.isCancelled)
+    .reduce((sum, li) => sum + li.qtySetsPacked * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder), 0);
+
+  // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
+  // never the original preTaxAmount. Never trusts a client-computed final number; these are the
+  // only figures actually written below.
+  const finalAmount = discountApplicable ? preTaxAmount - (preTaxAmount * discountPercent) / 100 : preTaxAmount;
+  const actualPayable = gstApplicable ? finalAmount + (finalAmount * gstPercent) / 100 : finalAmount;
 
   // Deduct against qtySetsPacked, NOT qtySetsRequested — packing is the physical count of what
   // actually went in the box, so that's the number billing commits against. A short-packed line
@@ -535,7 +733,26 @@ async function billOrder(req, res) {
 
       await tx.order.update({
         where: { id },
-        data: { status: 'BILLED', billedAt: new Date() },
+        data: {
+          status: 'BILLED',
+          billedAt: new Date(),
+          // Written exactly once, here, the moment billing actually happens — never touched by
+          // any other endpoint. discountPercent/gstPercent are stored null when their own
+          // applicable flag is false, regardless of what the client sent, so a stray percent
+          // value can never look "applied" later just because it happened to be present in the
+          // request body.
+          discountApplicable,
+          discountPercent: discountApplicable ? discountPercent : null,
+          gstApplicable,
+          gstPercent: gstApplicable ? gstPercent : null,
+          preTaxAmount,
+          finalAmount,
+          actualPayable,
+          // Reference tag only — null when not supplied, and correctable afterwards via
+          // PATCH /api/orders/:id/bill-no (unlike every money field above, which rule 23 locks
+          // for good the moment this write lands).
+          billNo: billNo.provided ? billNo.value : null,
+        },
       });
       // Routine forward progress, not a correction — reason stays null, same as every other
       // status transition (03_DATABASE_SCHEMA.md §2's "Hard rules to enforce").
@@ -550,7 +767,7 @@ async function billOrder(req, res) {
         },
       });
 
-      return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+      return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
     });
   } catch (err) {
     if (err.isInsufficientStock) {
@@ -559,7 +776,7 @@ async function billOrder(req, res) {
     throw err;
   }
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/ship — any authenticated role (🔒). Same staff-primary reasoning as
@@ -572,10 +789,10 @@ async function shipOrder(req, res) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
   }
   if (order.isCancelled) {
-    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be shipped');
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be dispatched');
   }
   if (order.status !== 'BILLED') {
-    return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to ship — current status is ${order.status}`);
+    return sendError(res, 409, 'ORDER_NOT_BILLED', `Order must be BILLED to dispatch — current status is ${order.status}`);
   }
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -593,19 +810,239 @@ async function shipOrder(req, res) {
         reason: null,
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
+}
+
+// Shared by updateOrderLines below AND the Cancellation endpoints further down — both are the
+// same "still-editable" window rule 23 defines: everything is locked from Billed on, since stock
+// has already moved and any change from that point would have to be a Return, not an edit.
+// Declared once, up here, so both sections read from the exact same list rather than two copies
+// that could silently drift out of sync.
+const CANCELLABLE_STATUSES = ['PLACED', 'PACKED'];
+
+// PATCH /api/orders/:id/lines — OWNER only (👑), no PIN (routes/orders.js). Edits a committed
+// order's lines: change an existing (non-cancelled) line's requested quantity, add a brand-new
+// line, or both in one request — an order edit is usually one real event, not two API calls.
+//
+// Allowed while PLACED or PACKED, same two-status window as cancellation (CANCELLABLE_STATUSES
+// above).
+//
+// If the order is currently PACKED, this edit reverts it to PLACED — logged as its own
+// OrderAdjustment (field: 'status', reason: 'ORDER_EDITED'), not a silent field flip. Safe to do
+// unconditionally: Pack no longer touches stock (2026-08-17), so nothing can double-deduct from
+// re-packing, and Bill re-checks real stock availability at bill time regardless of what pack
+// last recorded.
+//
+// qtySetsPacked reset is TOUCHED-LINE-ONLY, not whole-order (see LEARNING_LOG.md for the
+// investigation this was based on): the edited/added line's qtySetsPacked clears to 0 because a
+// packed count against the OLD quantity is meaningless once that quantity has changed, but every
+// OTHER live line's qtySetsPacked is left exactly as it was — confirmed safe because nothing in
+// the frontend reads that field for a PLACED order, and PATCH /:id/pack fully overwrites every
+// live line's value the next time this order is actually re-packed regardless.
+async function updateOrderLines(req, res) {
+  const { id } = req.params;
+  const { lineChanges, newLines } = req.body;
+
+  if (lineChanges !== undefined && !Array.isArray(lineChanges)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'lineChanges must be an array');
+  }
+  if (newLines !== undefined && !Array.isArray(newLines)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'newLines must be an array');
+  }
+  const hasLineChanges = Array.isArray(lineChanges) && lineChanges.length > 0;
+  const hasNewLines = Array.isArray(newLines) && newLines.length > 0;
+  if (!hasLineChanges && !hasNewLines) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'At least one of lineChanges or newLines must be a non-empty array');
+  }
+
+  if (hasLineChanges) {
+    const seen = new Set();
+    for (const lc of lineChanges) {
+      if (!lc || !lc.lineItemId) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in lineChanges requires a lineItemId');
+      }
+      if (!Number.isInteger(lc.qtySetsRequested) || lc.qtySetsRequested <= 0) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in lineChanges requires a positive integer qtySetsRequested');
+      }
+      if (seen.has(lc.lineItemId)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', `lineItemId ${lc.lineItemId} submitted more than once in lineChanges`);
+      }
+      seen.add(lc.lineItemId);
+    }
+  }
+  if (hasNewLines) {
+    for (const nl of newLines) {
+      if (!nl || !nl.bundleId) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in newLines requires a bundleId');
+      }
+      if (!Number.isInteger(nl.qtySetsRequested) || nl.qtySetsRequested <= 0) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'Each entry in newLines requires a positive integer qtySetsRequested');
+      }
+    }
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      isCancelled: true,
+      lineItems: { select: { id: true, qtySetsRequested: true, isCancelled: true } },
+    },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!CANCELLABLE_STATUSES.includes(order.status)) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_EDITABLE',
+      `Lines can only be edited while an order is Placed or Packed — this order is ${order.status}`
+    );
+  }
+  // Same reasoning as packOrder/billOrder's own guard: dropping off a worklist is a display
+  // concern, not enforcement — a direct call must still be rejected.
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be edited');
+  }
+
+  const lineById = new Map(order.lineItems.map((li) => [li.id, li]));
+  const resolvedChanges = [];
+  if (hasLineChanges) {
+    for (const lc of lineChanges) {
+      const line = lineById.get(lc.lineItemId);
+      if (!line) {
+        return sendError(res, 404, 'LINE_ITEM_NOT_FOUND', `No line ${lc.lineItemId} on order ${id}`);
+      }
+      if (line.isCancelled) {
+        return sendError(res, 409, 'LINE_ALREADY_CANCELLED', `Line ${lc.lineItemId} is cancelled and cannot be edited`);
+      }
+      if (lc.qtySetsRequested === line.qtySetsRequested) {
+        return sendError(
+          res,
+          400,
+          'VALIDATION_ERROR',
+          `Nothing to change for line ${lc.lineItemId} — qtySetsRequested is already ${line.qtySetsRequested}`
+        );
+      }
+      resolvedChanges.push({ lineItemId: lc.lineItemId, oldQty: line.qtySetsRequested, newQty: lc.qtySetsRequested });
+    }
+  }
+
+  // priceAtOrder for a new line is resolved HERE, from Product.sellingPrice at this exact moment
+  // — never trusted from the request body, same principle createOrder already applies.
+  // productNameSnapshot (2026-08-28) rides along on the identical read, same as createOrder:
+  // a line added to an existing order is still a NEW line, so it snapshots the name as of now,
+  // not as of whenever the order it's joining was originally placed.
+  const resolvedNewLines = [];
+  if (hasNewLines) {
+    const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
+    const bundles = await prisma.bundle.findMany({
+      where: { id: { in: bundleIds } },
+      select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+    });
+    const bundleById = new Map(bundles.map((b) => [b.id, b]));
+    for (const nl of newLines) {
+      const bundle = bundleById.get(nl.bundleId);
+      if (!bundle) {
+        return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${nl.bundleId}`);
+      }
+      if (bundle.product.sellingPrice == null) {
+        return sendError(
+          res,
+          400,
+          'UNPRICED_PRODUCT',
+          `The article for bundle ${nl.bundleId} has no selling price set yet and cannot be ordered`
+        );
+      }
+      resolvedNewLines.push({
+        bundleId: nl.bundleId,
+        qtySetsRequested: nl.qtySetsRequested,
+        priceAtOrder: bundle.product.sellingPrice,
+        productNameSnapshot: bundle.product.name,
+      });
+    }
+  }
+
+  const wasPacked = order.status === 'PACKED';
+
+  const updated = await prisma.$transaction(async (tx) => {
+    for (const change of resolvedChanges) {
+      await tx.orderLineItem.update({
+        where: { id: change.lineItemId },
+        data: { qtySetsRequested: change.newQty, qtySetsPacked: 0 },
+      });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          lineItemId: change.lineItemId,
+          changedById: req.user.id,
+          field: 'qtySetsRequested',
+          oldValue: String(change.oldQty),
+          newValue: String(change.newQty),
+          reason: 'QUANTITY_CHANGED',
+        },
+      });
+    }
+
+    for (const nl of resolvedNewLines) {
+      const created = await tx.orderLineItem.create({
+        data: {
+          orderId: id,
+          bundleId: nl.bundleId,
+          qtySetsRequested: nl.qtySetsRequested,
+          priceAtOrder: nl.priceAtOrder,
+          productNameSnapshot: nl.productNameSnapshot,
+        },
+      });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          lineItemId: created.id,
+          changedById: req.user.id,
+          field: 'qtySetsRequested',
+          // '0' — there is no real "old" value for a line that didn't exist before this request;
+          // treating "didn't exist" as "requested 0 of it" lets this render through the same
+          // qtySetsRequested-change display logic QUANTITY_CHANGED uses.
+          oldValue: '0',
+          newValue: String(nl.qtySetsRequested),
+          reason: 'LINE_ADDED',
+        },
+      });
+    }
+
+    if (wasPacked) {
+      await tx.order.update({ where: { id }, data: { status: 'PLACED', packedAt: null } });
+      await tx.orderAdjustment.create({
+        data: {
+          orderId: id,
+          changedById: req.user.id,
+          field: 'status',
+          oldValue: 'PACKED',
+          newValue: 'PLACED',
+          reason: 'ORDER_EDITED',
+        },
+      });
+    }
+
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
+  });
+
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // --- Cancellation (added 2026-08-18) ---------------------------------------------------------
 // Both endpoints below are OWNER ONLY (routes/orders.js), and both are allowed only while the
-// order is PLACED or PACKED. From Billed onward rule 23's hard lock applies: stock has already
-// moved and the order is immutable, so a cancellation there would have to be a Return, not an
-// edit. Neither endpoint ever rewrites a quantity — qtySetsRequested/qtySetsPacked stay exactly
-// as they were, so the original ask and count remain readable forever; only a flag flips.
-const CANCELLABLE_STATUSES = ['PLACED', 'PACKED'];
+// order is PLACED or PACKED (CANCELLABLE_STATUSES, declared above updateOrderLines — shared with
+// it since it's the identical editability window). From Billed onward rule 23's hard lock
+// applies: stock has already moved and the order is immutable, so a cancellation there would
+// have to be a Return, not an edit. Neither endpoint ever rewrites a quantity —
+// qtySetsRequested/qtySetsPacked stay exactly as they were, so the original ask and count remain
+// readable forever; only a flag flips.
 
 // PATCH /api/orders/:id/lines/:lineItemId/cancel — OWNER only (👑).
 async function cancelOrderLine(req, res) {
@@ -653,14 +1090,14 @@ async function cancelOrderLine(req, res) {
         reason: 'ORDER_CANCELLED',
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
   // Deliberately NOT auto-cancelling the order when its last live line goes: cancelling every
   // line one by one and cancelling the order are different intents, and inferring the second
   // from the first would take an irreversible decision the owner never actually made. An order
   // with zero live lines simply bills nothing — see billOrder's linesToDeduct.
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
 // PATCH /api/orders/:id/cancel — OWNER only (👑).
@@ -699,14 +1136,78 @@ async function cancelOrder(req, res) {
         reason: 'ORDER_CANCELLED',
       },
     });
-    return tx.order.findUnique({ where: { id }, select: ORDER_DETAIL_SELECT });
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
   });
 
   // Line items are deliberately left alone. The order-level flag is what every guard and every
   // worklist reads; stamping isCancelled onto all 13 lines as well would be redundant state that
   // could later disagree with the order flag, and would destroy the distinction between "this
   // one line was cancelled" and "the whole order was".
-  res.json(orderDetailToResponse(updated));
+  res.json(orderDetailToResponse(updated, req.user.role));
 }
 
-module.exports = { createOrder, listOrders, getOrder, packOrder, billOrder, shipOrder, cancelOrderLine, cancelOrder };
+// PATCH /api/orders/:id/bill-no — OWNER only (👑), no PIN. Corrects (or clears) the reference tag
+// captured at billing time, nothing else. Added 2026-08-30.
+//
+// A SEPARATE endpoint rather than a branch inside billOrder or updateOrderLines, for two reasons:
+// billOrder is a one-shot irreversible transition that also deducts stock — it can only ever run
+// once per order, so it structurally cannot host a later correction — and updateOrderLines is
+// explicitly about order CONTENTS, which rule 23 freezes at billing. This endpoint touches
+// neither: no stock movement, no status change, no money field, no OrderAdjustment row (that
+// table records changes to the order's real content and status, and a reference tag is neither —
+// writing one would put a non-event into the History feed).
+//
+// No PIN, deliberately, unlike the factory-side debit edit: requirePin guards actions that move
+// money (rules 71/81/96), and this one provably cannot — `data` below contains exactly one key,
+// billNo, so there is no request shape that reaches this handler and changes an amount.
+//
+// Only meaningful once an order has actually been billed, so a not-yet-billed order is rejected
+// rather than silently accepting a tag that would sit invisibly on a PLACED/PACKED order.
+async function updateOrderBillNo(req, res) {
+  const { id } = req.params;
+
+  const billNo = normalizeBillNo(req.body?.billNo);
+  if (!billNo.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
+  }
+  if (!billNo.provided) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'billNo is required');
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: { id: true, status: true, billedAt: true },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  if (!order.billedAt) {
+    return sendError(
+      res,
+      409,
+      'ORDER_NOT_BILLED',
+      'A bill number can only be set on an order that has been billed'
+    );
+  }
+
+  const updated = await prisma.order.update({
+    where: { id },
+    data: { billNo: billNo.value },
+    select: orderDetailSelect(req.user.role),
+  });
+
+  res.json(orderDetailToResponse(updated, req.user.role));
+}
+
+module.exports = {
+  createOrder,
+  listOrders,
+  getOrder,
+  packOrder,
+  billOrder,
+  shipOrder,
+  updateOrderLines,
+  cancelOrderLine,
+  cancelOrder,
+  updateOrderBillNo,
+};

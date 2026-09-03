@@ -46,6 +46,29 @@ enum GoodReturnReason {
   OTHER                // escape hatch — and the one value that makes `note` mandatory (app layer)
 }
 
+// Why a Receive Stock receipt (STOCK_IN Transaction) needed correcting — added 2026-08-21.
+// WRONG_FACTORY is not structurally distinct from a bare wrong-article fix: Transaction has no
+// Factory field of its own, Factory is only ever inherited via Bundle -> Product.factoryId. Kept
+// as its own value purely for a more specific audit-trail label.
+enum TransactionCorrectionReason {
+  WRONG_QUANTITY
+  WRONG_LOCATION
+  WRONG_FACTORY  // mechanically identical to a bundle correction — see comment above
+  WRONG_PRICE    // Receive Stock only — a Transfer leg's costPriceSnapshot is always null by design
+  OTHER          // escape hatch — makes `note` mandatory (app layer), same convention as GoodReturnReason.OTHER
+}
+
+// Why a Transfer needed correcting — its own reason set (added 2026-08-21, the deferred follow-up
+// to Transaction Corrections above), not a reuse of TransactionCorrectionReason: a Transfer has no
+// Factory and no price, and its two locations can independently be wrong, so this list is shaped
+// differently on purpose.
+enum TransferCorrectionReason {
+  WRONG_QUANTITY
+  WRONG_FROM_LOCATION
+  WRONG_TO_LOCATION
+  OTHER
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -107,17 +130,27 @@ model ProductSize {
   sizeLabel String   // adult: "M","L","XL","XXL","3XL"..."6XL","S" (via "+ add other size").
                       // kids (Product.isKids = true): fixed category strings per rule 50 — "1-5yr", "6-16yr", "12-18yr".
   sortOrder Int      @default(0)
+  qty       Int      @default(1) // how many garments of THIS size are in one set (added 2026-08-25,
+  // rule 102). Some articles genuinely repeat a size in their standard composition — M, L, L, XL
+  // is a real recurring set for certain articles, not a one-off delivery quirk. Only rows with
+  // qty > 0 ever exist: a size stepped back to 0 during sizing has its row omitted entirely,
+  // never stored as a zero. Defaults to 1, so every row predating this field is unaffected.
 
-  // Adult articles: pieces-per-set = the COUNT of ProductSize rows (e.g. M/L/XL/XXL = 4 rows = 4 pieces).
+  // Adult articles: pieces-per-set = SUM(qty) across the article's ProductSize rows (e.g.
+  // M/L/L/XL = 3 rows with qtys 1/2/1 = 4 pieces). This replaced a straight COUNT of rows when
+  // qty was added; the two agree exactly whenever every qty is 1, which was verified against all
+  // 20 real articles before and after that migration.
   // Kids articles (rule 50, supersedes an earlier unified-counting design): exactly ONE ProductSize
   // row exists (single-select category), and pieces-per-set is a FIXED lookup on that category's
-  // label, NOT the row count — "1-5yr"=5pc, "6-16yr"=6pc, "12-18yr"=4pc. Counting rows for a Kids
-  // article gives the wrong answer; this caused real bugs before being caught and fixed.
+  // label, NOT the row count and NOT a qty sum — "1-5yr"=5pc, "6-16yr"=6pc, "12-18yr"=4pc.
+  // Counting rows for a Kids article gives the wrong answer; this caused real bugs before being
+  // caught and fixed. qty is structurally irrelevant for Kids and stays at its default of 1.
   // Used later (Phase 3) to convert set-quantities into piece-quantities for billing.
 
-  @@unique([productId, sizeLabel]) // a duplicate label for the same Product would silently
-  // inflate pieces-per-set (a straight COUNT of these rows) — this makes that unrepresentable
-  // at the database level, not just prevented by the chip-toggle UI never offering a duplicate.
+  @@unique([productId, sizeLabel]) // still exactly ONE row per size label — a deliberately
+  // repeated size is expressed as that row's qty, never as duplicate rows. Keeping this
+  // constraint preserves the original guarantee that an ACCIDENTAL duplicate label can't
+  // silently inflate pieces-per-set, while making the intentional case explicit instead.
 }
 
 model Color {
@@ -165,6 +198,9 @@ model Location {
   id       String  @id @default(cuid())
   name     String  @unique
   isActive Boolean @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
+  // Added 2026-08-20 for the location-attributed revenue/profit split (utils/locationRevenue.js).
+  // Defaults to 100 for every location — no location is special-cased by name in the migration.
+  profitSharePercent Int @default(100)
 
   stock             Stock[]
   loosePieces       LoosePieces[]
@@ -189,6 +225,7 @@ model Party {
 
   transactions      Transaction[]
   partyStockReturns PartyStockReturn[]
+  payments          PartyPayment[] // added 2026-08-21, Party Payables — see PartyPayment below
 }
 
 model Stock {
@@ -230,6 +267,12 @@ model Transaction {
   transferId           String?           // populated only for TRANSFER_OUT / TRANSFER_IN — links the two paired legs of a single Transfer back to that Transfer record. Null for every other type.
   transfer             Transfer?         @relation(fields: [transferId], references: [id])
   createdAt            DateTime          @default(now())
+
+  // Added 2026-08-21 (Transaction Corrections). A STOCK_IN row can be the ORIGINAL of at most one
+  // correction — a further correction re-targets the REPLACEMENT it produced, never the original
+  // again, so the chain stays linear. See TransactionCorrection's own comment for the mechanism.
+  correctionAsOriginal    TransactionCorrection? @relation("CorrectionOriginal")
+  correctionAsReplacement TransactionCorrection? @relation("CorrectionReplacement")
 }
 
 model TransactionSizeBreakdown {
@@ -285,6 +328,74 @@ model Transfer {
 
   // fromLocationId and toLocationId must never be equal — enforce at the application layer
   // (a "transfer" to the same location isn't a transfer, it's a no-op / data entry mistake).
+
+  // Added 2026-08-21 (Transfer Corrections). A Transfer row plays at most one of three roles in a
+  // correction: ORIGINAL, REVERSAL (undoes it — excluded from GET /api/history's ordinary Transfer
+  // listing, pure bookkeeping), or REPLACEMENT (the corrected values, reads as a fresh entry).
+  correctionAsOriginal    TransferCorrection? @relation("TransferCorrectionOriginal")
+  correctionAsReversal    TransferCorrection? @relation("TransferCorrectionReversal")
+  correctionAsReplacement TransferCorrection? @relation("TransferCorrectionReplacement")
+}
+
+model TransferCorrection {
+  // Corrects a wrongly-recorded Transfer — OWNER only, no PIN ever (a Transfer never touches
+  // price). Bundle/article isn't correctable here — only quantity/from-location/to-location.
+  //
+  // Mechanism, atomic in one DB transaction:
+  //   1. A REVERSAL Transfer (fromLocation/toLocation swapped from the original) undoes its exact
+  //      stock effect, reusing the same paired-legs mechanism a normal Transfer uses. Its own
+  //      TRANSFER_OUT leg (decrementing the original's DESTINATION) is where INSUFFICIENT_STOCK
+  //      can surface — some of what arrived there may have already left elsewhere.
+  //   2. A REPLACEMENT Transfer applies at the corrected values, exactly like a brand-new Transfer
+  //      — independently INSUFFICIENT_STOCK-able at the corrected source.
+  //   3. This row links original -> reversal -> replacement.
+  // The reversal is a REAL Transfer (not a bare Transaction pair) so its legs stay typed
+  // TRANSFER_OUT/TRANSFER_IN — invisible to the Receive Stock correction's RECEIPT entries (which
+  // only look at type STOCK_IN) with no extra exclusion logic needed. It's excluded from ordinary
+  // Transfer History entries via `correctionAsReversal: null` instead, since Transfer's History
+  // entry reads the Transfer table directly rather than filtering by Transaction type.
+  id                     String                    @id @default(cuid())
+  originalTransferId     String                    @unique // one original can be corrected at most once — a further correction re-targets the REPLACEMENT
+  originalTransfer       Transfer                  @relation("TransferCorrectionOriginal", fields: [originalTransferId], references: [id])
+  reversalTransferId     String                    @unique
+  reversalTransfer       Transfer                  @relation("TransferCorrectionReversal", fields: [reversalTransferId], references: [id])
+  replacementTransferId  String                    @unique
+  replacementTransfer    Transfer                  @relation("TransferCorrectionReplacement", fields: [replacementTransferId], references: [id])
+  reason                 TransferCorrectionReason
+  note                   String?                    // required at the app layer only when reason == OTHER
+  correctedById          String
+  correctedBy            User                       @relation(fields: [correctedById], references: [id])
+  createdAt              DateTime                   @default(now())
+}
+
+model TransactionCorrection {
+  // Corrects a wrongly-recorded Receive Stock receipt (a STOCK_IN Transaction) — OWNER only, no
+  // PIN except when the correction touches cost price (POST /api/transaction-corrections). The
+  // original Transaction is NEVER edited or deleted (rule 9's audit-trail principle) — this row
+  // instead links the original to a freshly-created REPLACEMENT Transaction carrying the
+  // corrected values.
+  //
+  // Mechanism, atomic in one DB transaction:
+  //   1. A STOCK_OUT Transaction reverses the original's exact stock effect (original bundle,
+  //      location, qtySets) — throws INSUFFICIENT_STOCK if some of that wrongly-received stock
+  //      has already left the building.
+  //   2. A STOCK_IN Transaction applies the corrected effect — corrected bundle/location/qtySets,
+  //      and either a corrected costPriceSnapshot or the ORIGINAL's own snapshot carried forward
+  //      unchanged when price wasn't what was wrong.
+  //   3. This row links original -> replacement.
+  // getFactoryPayable's SUM(STOCK_IN) excludes any Transaction with a non-null
+  // correctionAsOriginal — without that exclusion, a correction would double the payable figure
+  // rather than fix it (the reversal is a STOCK_OUT, never counted there by type alone).
+  id            String                       @id @default(cuid())
+  originalId    String                       @unique // one original can be corrected at most once — see Transaction.correctionAsOriginal
+  original      Transaction                  @relation("CorrectionOriginal", fields: [originalId], references: [id])
+  replacementId String                       @unique
+  replacement   Transaction                  @relation("CorrectionReplacement", fields: [replacementId], references: [id])
+  reason        TransactionCorrectionReason
+  note          String?                       // required at the app layer only when reason == OTHER
+  correctedById String
+  correctedBy   User                          @relation(fields: [correctedById], references: [id])
+  createdAt     DateTime                      @default(now())
 }
 
 model PartyStockReturn {
@@ -374,6 +485,35 @@ model FactoryDebit {
 //                                + SUM(FactoryDebit.amount for that factory)
 //                                − SUM(FactoryPayment.amount for that factory).
 // Same lightweight, computed-not-formal pattern as the Phase 2.5 party-dues tracker — not a formal ledger/invoice system.
+
+model PartyPayment {
+  // The mirror of FactoryPayment, reverse direction — money a Party pays TO the business,
+  // reducing what they owe (Party Payables, added 2026-08-21). Identical shape and the same
+  // "lightweight, not a formal ledger" framing (rules 81/96): same wasEdited flag (explicit,
+  // set true on any edit, never reset), same createdById/createdAt/updatedAt pattern.
+  //
+  // No "debit" mirror needed here, unlike Factory: FactoryDebit exists specifically because a
+  // factory's totalOwed had no way to represent real pre-app debt with no STOCK_IN history
+  // behind it (rule 96). A Party's side of that problem is already solved — Good Returns
+  // (PartyStockReturn) already serve as the "something reduces what's owed, with no Order behind
+  // it" case, via the totalReturned term in the Amount Due formula below.
+  id          String   @id @default(cuid())
+  partyId     String
+  party       Party    @relation(fields: [partyId], references: [id])
+  amount      Decimal
+  date        DateTime
+  note        String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wasEdited   Boolean  @default(false)
+}
+// Amount Due from a Party = totalBilled (utils/revenue.js's computeRevenue(prisma, { partyId }),
+//                                        all-time, BILLED+SHIPPED, non-cancelled — rule 98's basis)
+//                            − SUM(PartyPayment.amount for that party)
+//                            − SUM(PartyStockReturn.qtySets × piecesPerSet × priceAtReturn for that party) (rule 86)
+// Same lightweight, computed-fresh-every-call pattern as the Factory payable — no caching, no
+// stored aggregate, recomputed from live rows on every request.
 ```
 
 ### 1.1 Hard Rules to Enforce in Application Code (not expressible in schema alone)
@@ -384,6 +524,10 @@ model FactoryDebit {
 - When creating a `Bundle` reference (e.g. during a Transaction), only `Color` values that already have a `Bundle` row for that `Product` are valid — reject arbitrary Product+Color combinations at the API layer.
 - `PartyStockReturn.note` is required when `reason` is `OTHER`, optional for every other reason value — a conditional requirement Prisma can't express, so the write endpoint must enforce it (2026-08-18). Same class of app-layer rule as `OrderAdjustment.reason`'s own conditional requirement.
 - `PartyStockReturn.priceAtReturn` is computed server-side from `Product.sellingPrice` at the moment of the return — **never trusted from the request body**, and never sourced from `costPrice`. Same principle as `OrderLineItem.priceAtOrder` and `Transaction.costPriceSnapshot`.
+- `productNameSnapshot` (added 2026-08-28, on `OrderLineItem`, `Transfer` and `PartyStockReturn`) is captured server-side from `Product.name` at the instant the record is created, and **never recomputed afterwards** — the exact same write-once discipline `priceAtOrder`/`costPriceSnapshot`/`priceAtReturn` already follow, extended from price to the article's name so that renaming an article (`PATCH /api/products/:id` with `name`) can only ever affect go-forward display. Read paths must resolve it as `productNameSnapshot ?? bundle.product.name`: the fallback exists **only** for rows created before this field did, which have no recorded name and no way to recover one, so they continue to follow the live current name. That is a disclosed, deliberately un-backfilled limitation — inventing a "correct" historical name for those rows would be fabricating data, not fixing it.
+  - Deliberately **not** applied to `Transaction` itself: no API response or screen ever renders a product *name* off a Transaction (History builds its entries from `articleNo` + colour only, verified across every `entries.push` in `historyController.js`), so there is nothing there for a rename to corrupt.
+  - Deliberately **not** applied to `Stock`: Live Stock / Low Stock are current-state views, not historical records — they *should* follow a rename immediately, and do.
+  - `articleNo` needs no equivalent snapshot: it is immutable after creation (the write endpoint rejects any attempt to patch it), so it can never drift from what a historical record recorded.
 
 ---
 
@@ -441,12 +585,31 @@ model Order {
   // captured by an OrderAdjustment row for that same change (field: "status", changedById) —
   // one canonical audit trail, not two. See LEARNING_LOG.md.
 
+  // --- Discount/GST snapshot, added 2026-08-25 (rule 101) ---
+  // Real snapshots written once, inside billOrder() itself, at the exact moment an order is
+  // billed — never recomputed later. Same deliberate exception to this project's "always
+  // compute fresh" rule that priceAtOrder/costPriceSnapshot already are (see OrderLineItem
+  // below), safe here for the identical reason: rule 23 guarantees an order's lines can't
+  // change once Billed, so nothing downstream can ever make these go stale. All nullable/false
+  // until billed; PLACED/PACKED orders always have discountApplicable/gstApplicable false and
+  // the rest null.
+  discountApplicable Boolean @default(false)
+  discountPercent    Decimal? // percent (e.g. 5 means 5%) — only meaningful when discountApplicable is true
+  gstApplicable      Boolean @default(false)
+  gstPercent         Decimal? // percent (e.g. 18 means 18%) — only meaningful when gstApplicable is true
+  preTaxAmount       Decimal? // the order's billed total before discount/GST — qtySetsPacked-based (rule 101), not qtySetsRequested
+  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST
+  actualPayable      Decimal? // finalAmount after GST is applied — the real amount owed, never trusted from the client
+
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
 }
 // Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
 // status value (rule 23) — see OrderAdjustment below.
-// Billed requires the (separate, not-yet-designed) formal Bill entity below to exist for this order.
+// A formal Bill document/invoice entity (a printable document matching the business's Excel
+// template) is still separate, not-yet-designed later work — see note at the top of the Bill
+// model. Discount/GST capture (rule 101) is NOT that formal Bill; it's real data attached
+// directly to Order, captured at billing time.
 // A lightweight "outstanding amount" view can be computed directly from OrderLineItem pricing
 // for owner convenience before formal billing exists — see note at the top of the Bill model.
 
@@ -459,6 +622,7 @@ model OrderLineItem {
   qtySetsRequested Int      // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
   qtySetsPacked    Int      @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives both the packing stepper's clamp and the "will adjust for the shortfall" messaging when packed < requested.
   priceAtOrder     Decimal  // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
+  productNameSnapshot String? // snapshots Product.name at order time (2026-08-28) — same principle as priceAtOrder, extended from price to the name so an article rename can't retroactively change how an already-placed order reads. Nullable ONLY because rows predating this field have no recoverable original name; those fall back to the live name at read time. See "Hard rules to enforce" above. Transfer and PartyStockReturn carry the identical field for the identical reason.
 }
 
 model OrderAdjustment {
@@ -498,7 +662,7 @@ Notes for future implementation:
 
 ### Phase 3 — Billing & Payments
 
-**Note on scope:** the Bill model below is the FORMAL invoice (matching the business's existing Excel template — see rule 28 in `05_BUSINESS_RULES.md`) and is genuinely not yet designed in detail. An informal "outstanding amount owed" view is a separate, lighter feature that can be computed directly from `OrderLineItem.priceAtOrder × qtySetsRequested` per Party — useful for owner visibility before formal billing exists, but it is NOT a substitute for this Bill model and carries none of its guarantees (no immutability, no GST fields, no e-way flag, no correction mechanism).
+**Note on scope:** the Bill model below is the FORMAL invoice (matching the business's existing Excel template — see rule 28 in `05_BUSINESS_RULES.md`) and is genuinely not yet designed in detail. An informal "outstanding amount owed" view is a separate, lighter feature that can be computed directly from `OrderLineItem.priceAtOrder × qtySetsRequested` per Party — useful for owner visibility before formal billing exists, but it is NOT a substitute for this Bill model and carries none of its guarantees (no immutability, no printable document, no e-way flag, no correction mechanism). **Order's own `discountApplicable`/`discountPercent`/`gstApplicable`/`gstPercent`/`preTaxAmount`/`finalAmount`/`actualPayable` (rule 101, added 2026-08-25) are a third, narrower thing again** — real discount/GST *capture* at the moment of billing, deliberately lightweight (no e-way flag, no separate correction mechanism, no printable document), not an early version of the formal Bill and not a substitute for it either.
 
 ```prisma
 enum PaymentAllocationType {

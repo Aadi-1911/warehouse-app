@@ -1,23 +1,12 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+// Moved to utils/piecesPerSet.js (2026-08-19) when the Owner Dashboard became a second caller —
+// same code, one home. Re-exported below so any existing importer of this controller is unaffected.
+const { piecesPerSetFor } = require('../utils/piecesPerSet');
 
 const prisma = new PrismaClient();
 
 const SELECT = { id: true, name: true, contact: true, gstNo: true, isActive: true };
-
-// Mirrors the frontend's KIDS_PIECES_BY_LABEL (ReceiveStock.jsx) exactly — a Kids article
-// stores exactly ONE ProductSize row (the chosen category), so its piece count is a fixed
-// lookup, never sizes.length. Duplicated here (not imported) because frontend and backend are
-// separate codebases with no shared-constants package; if the three categories ever change,
-// both copies need updating together.
-const KIDS_PIECES_BY_LABEL = { '1-5yr': 5, '6-16yr': 6, '12-18yr': 4 };
-
-function piecesPerSetFor(product) {
-  if (product.isKids) {
-    return KIDS_PIECES_BY_LABEL[product.sizes[0]?.sizeLabel] ?? 0;
-  }
-  return product.sizes.length;
-}
 
 // GET /api/factories — any authenticated role (🔒)
 async function listFactories(req, res) {
@@ -143,6 +132,14 @@ async function reactivateFactory(req, res) {
 // itself, not a separate figure alongside it — 05_BUSINESS_RULES.md rule 96 explains why a
 // manual "amount owed" entry has to raise the same totalOwed the transaction sum contributes
 // to, not sit next to it as something amountPayable would have to separately account for.
+//
+// correctionAsOriginal: null (added for Transaction Corrections, see transactionCorrectionController.js)
+// excludes any STOCK_IN row that has been corrected away. Without this, a correction would double
+// the payable figure rather than fix it: the correction's own reversal is a STOCK_OUT (never
+// counted here by type alone, same as any ordinary sale/shipment), so the wrongly-recorded
+// original would otherwise keep contributing its old, wrong amount forever, on top of whatever
+// the corrected replacement STOCK_IN newly contributes. Excluding the superseded original is what
+// makes a price/quantity correction actually change this figure instead of just adding to it.
 async function getFactoryPayable(req, res) {
   const { id } = req.params;
 
@@ -154,6 +151,7 @@ async function getFactoryPayable(req, res) {
   const stockInTransactions = await prisma.transaction.findMany({
     where: {
       type: 'STOCK_IN',
+      correctionAsOriginal: null,
       stock: { bundle: { product: { factoryId: id } } },
     },
     select: {
@@ -164,7 +162,7 @@ async function getFactoryPayable(req, res) {
           bundle: {
             select: {
               product: {
-                select: { isKids: true, sizes: { select: { sizeLabel: true } } },
+                select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } },
               },
             },
           },
@@ -204,7 +202,12 @@ async function getFactoryPayable(req, res) {
     }),
     prisma.factoryDebit.findMany({
       where: { factoryId: id },
-      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      // billNo (2026-08-30) is selected for debits ONLY — FactoryPayment has no such column and
+      // deliberately never will: a payment is not tied to exactly one bill (two or three bills
+      // routinely get settled with a single lump sum), so a bill reference on a payment row would
+      // be actively misleading rather than merely unused. Display-only here — nothing below reads
+      // it, and totalDebited/totalOwed/amountPayable are untouched by its presence.
+      select: { id: true, amount: true, date: true, note: true, billNo: true, createdAt: true, updatedAt: true, wasEdited: true },
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
     }),
   ]);

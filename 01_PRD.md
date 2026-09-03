@@ -98,7 +98,7 @@ This is a real usage gate, not a feature-completeness gate. A feature-complete b
 7. **Transfer** — its own Home tile; moves stock between the business's own locations.
 
 ### 5.10 Stretch (only if time allows within Phase 1, not required)
-- Low-stock flag/alert: ≤2 sets remaining triggers a small red badge (never a fully-tinted card/row — keep it subtle, not alarming). This threshold is used consistently everywhere stock is shown, including future Live Stock, Pack Order, and New Order screens.
+- Low-stock flag/alert: ≤1 set remaining triggers a small red badge (never a fully-tinted card/row — keep it subtle, not alarming). This threshold is used consistently everywhere stock is shown, including future Live Stock, Pack Order, and New Order screens.
 
 ---
 

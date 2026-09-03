@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Home from './pages/Home';
 import ReceiveStock from './pages/ReceiveStock';
 import LiveStock from './pages/LiveStock';
+import LowStockList from './pages/LowStockList';
 import Transfer from './pages/Transfer';
 import ManageUsers from './pages/ManageUsers';
 import SetPin from './pages/SetPin';
@@ -21,6 +22,17 @@ import BillOrderDetail from './pages/BillOrderDetail';
 import ShipOrderList from './pages/ShipOrderList';
 import ShipOrderDetail from './pages/ShipOrderDetail';
 import GoodReturns from './pages/GoodReturns';
+import DashboardLayout from './pages/dashboard/DashboardLayout';
+import Overview from './pages/dashboard/Overview';
+import Orders from './pages/dashboard/Orders';
+import DashboardHistory from './pages/dashboard/History';
+import DashboardLowStock from './pages/dashboard/LowStock';
+import DashboardParties from './pages/dashboard/Parties';
+import DashboardLocations from './pages/dashboard/Locations';
+import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
+import DashboardBills from './pages/dashboard/Bills';
+import DashboardFactories from './pages/dashboard/Factories';
+import DashboardLiveStock from './pages/dashboard/LiveStock';
 
 export default function App() {
   return (
@@ -52,6 +64,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <LiveStock />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/low-stock"
+            element={
+              // No requireRole — 07_UI_DESIGN_BRIEF.md §5.7: a stock-visibility screen, same
+              // category as Live Stock itself, not owner-only.
+              <ProtectedRoute>
+                <LowStockList />
               </ProtectedRoute>
             }
           />
@@ -193,6 +215,51 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* Owner Desktop Dashboard (07_UI_DESIGN_BRIEF.md §8). A NESTED route: the layout shell
+              renders the rail and header once and swaps only the content pane through <Outlet>,
+              which is what makes the rail persist across nav clicks instead of remounting. The
+              OWNER gate sits on the parent, so it covers every child route by construction — a new
+              dashboard page can't accidentally ship ungated. Matches the requireRole="OWNER"
+              pattern already used for Manage Users, Factory Payables and Article Pricing.
+              GET /api/dashboard/overview enforces the same restriction server-side. */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute requireRole="OWNER">
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Overview />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="low-stock" element={<DashboardLowStock />} />
+            <Route path="parties" element={<DashboardParties />} />
+            <Route path="history" element={<DashboardHistory />} />
+            <Route path="locations" element={<DashboardLocations />} />
+            <Route path="article-pricing" element={<DashboardArticlePricing />} />
+            {/* Same FactoryPayables component the mobile /factory-payables route renders, with
+                `inDashboard` swapping its mobile .page/ScreenHeader wrapper for the dashboard
+                shell's own chrome — not a separate dashboard copy (see that file's header
+                comment for why). Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and the endpoints it calls are independently
+                OWNER+PIN gated server-side. */}
+            <Route path="factory-payables" element={<FactoryPayables inDashboard />} />
+            {/* Added 2026-08-30. Read-only — GET /api/orders and GET /api/parties are the only
+                calls this page makes, both any-role at the API, safe here for the same reason
+                Parties/History already are: the OWNER gate on the parent route covers it, and
+                there is no write path on this screen at all. */}
+            <Route path="bills" element={<DashboardBills />} />
+            {/* Added 2026-09-02. Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and PATCH /api/factories/:id is independently
+                OWNER-gated server-side (no PIN — see that endpoint's own comment). */}
+            <Route path="factories" element={<DashboardFactories />} />
+            {/* Added 2026-09-02, same "append at the end, never renumber" precedent as every
+                addition above. Needs no requireRole of its own: the OWNER gate on the parent
+                /dashboard route covers it, and GET /api/stock is independently any-role at the
+                API (safe here for the same reason History/Parties are — read-only, no write
+                path on this screen at all). */}
+            <Route path="live-stock" element={<DashboardLiveStock />} />
+          </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

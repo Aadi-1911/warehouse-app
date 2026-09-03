@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import ScreenHeader from '../components/ScreenHeader';
+import { EyeIcon, EyeOffIcon } from '../components/icons';
 
 export default function Login() {
   const { login, status } = useAuth();
@@ -15,6 +16,11 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // Masked by default on every render of this component — which is also every fresh visit to
+  // this screen, since nothing here reads from or writes to localStorage/sessionStorage. Purely
+  // local UI state: it resets to false (masked) on a page reload or a fresh navigation to
+  // /login, with no persistence anywhere, by construction rather than by extra code to reset it.
+  const [showPassword, setShowPassword] = useState(false);
 
   // Where the user was headed before being bounced here by ProtectedRoute.
   const from = location.state?.from?.pathname || '/';
@@ -75,13 +81,29 @@ export default function Login() {
 
           <label className="field">
             <span className="field-label">Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
+            <div className="password-field">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+              {/* type="button" is load-bearing here — inside a <form>, a plain <button> defaults
+                  to type="submit" and this one sits right next to the real submit button, so
+                  without it, clicking the eye would submit the login form instead of toggling
+                  visibility. aria-label carries the toggle's meaning on its own (the icon is
+                  aria-hidden, per icons.jsx's own convention) and updates with state, so a screen
+                  reader always announces what THIS press will do, not what's currently showing. */}
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
+              </button>
+            </div>
           </label>
 
           {/* role="alert" makes screen readers announce the failure rather than silently

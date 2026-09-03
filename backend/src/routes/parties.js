@@ -1,7 +1,15 @@
 const express = require('express');
 const requireAuth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
-const { listParties, createParty, deactivateParty, reactivateParty } = require('../controllers/partyController');
+const {
+  listParties,
+  createParty,
+  updateParty,
+  deactivateParty,
+  reactivateParty,
+  getPartyRevenue,
+  getPartyPayable,
+} = require('../controllers/partyController');
 
 const router = express.Router();
 
@@ -12,10 +20,23 @@ router.get('/', requireAuth, listParties);
 // member with a real new customer in front of them was blocked until an owner was available.
 // This puts Party in line with Factory/Color/Category, which have always been any-role.
 router.post('/', requireAuth, createParty);
+// OWNER only, no PIN — mirrors updateFactory's exact gating (routes/factories.js). Editing a
+// Party's own details (name, contact, address, tier) is administrative, not the pricing-adjacent
+// action the PIN gate exists to protect; rule 71's PIN is reserved for costPrice/sellingPrice,
+// neither of which exists on this model. Added 2026-09-02.
+router.patch('/:id', requireAuth, requireRole('OWNER'), updateParty);
 // Archive/reactivate stay OWNER-only, deliberately: creating a record is additive and low-risk,
 // whereas archiving removes an existing customer from everyone else's pickers. Different blast
 // radius, so a different gate — this is not an oversight left behind by the change above.
 router.patch('/:id/deactivate', requireAuth, requireRole('OWNER'), deactivateParty);
 router.patch('/:id/reactivate', requireAuth, requireRole('OWNER'), reactivateParty);
+// OWNER only — matches GET /api/dashboard/overview's own gating for the same underlying figure
+// (utils/revenue.js's computeRevenue), just scoped to one party. Owner Dashboard's Parties page
+// (§8) is the only caller.
+router.get('/:id/revenue', requireAuth, requireRole('OWNER'), getPartyRevenue);
+// OWNER only, PIN not required — matches GET /api/factories/:id/payable's own gating (reading a
+// figure isn't itself a financial action; PIN is reserved for the actual writes on
+// /api/party-payments). Party Payables, added 2026-08-21.
+router.get('/:id/payable', requireAuth, requireRole('OWNER'), getPartyPayable);
 
 module.exports = router;

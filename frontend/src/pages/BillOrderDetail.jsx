@@ -6,6 +6,9 @@ import ConfirmModal from '../components/ConfirmModal';
 import { useAuth } from '../hooks/useAuth';
 import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
+import { piecesPerSetFor } from '../utils/piecesPerSet';
+import { preBillingTotal, computeBillingAmounts } from '../utils/orderBilling';
+import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -34,6 +37,17 @@ function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
 }
 
+function formatCurrency(amount) {
+  return `₹${Number(amount).toLocaleString('en-IN')}`;
+}
+
+// utils/piecesPerSet.js's piecesPerSetFor expects a product-shaped { isKids, sizes } object;
+// getOrder() returns those flattened onto the line item itself (productIsKids/productSizes), so
+// this adapts the shape at the one call site below rather than changing the shared function.
+function piecesPerSetForLine(li) {
+  return piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes });
+}
+
 export default function BillOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -55,6 +69,21 @@ export default function BillOrderDetail() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // Discount/GST questions (added 2026-08-25, rule 101) — live-computed inside the same "Bill
+  // this order?" confirm flow, not a separate step. Percent fields are strings (not numbers)
+  // because a controlled number input needs to represent "nothing typed yet" as `''`, distinct
+  // from `0` — the same idle/loaded discipline this project applies to async status elsewhere,
+  // applied here to "not yet a real percent."
+  const [discountApplicable, setDiscountApplicable] = useState(false);
+  const [discountPercent, setDiscountPercent] = useState('');
+  const [gstApplicable, setGstApplicable] = useState(false);
+  const [gstPercent, setGstPercent] = useState('');
+  // Optional reference tag captured at billing time (2026-08-30). Lives alongside the discount/GST
+  // inputs because it's answered in the same moment, but it is NOT one of them: it feeds none of
+  // the amount arithmetic below, and leaving it blank never blocks billing (see
+  // billingInputIncomplete, which deliberately doesn't consider it).
+  const [billNo, setBillNo] = useState('');
 
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -120,7 +149,18 @@ export default function BillOrderDetail() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      await billOrder(id);
+      // Only the raw applicable/percent inputs go over the wire — the server independently
+      // recomputes preTaxAmount/finalAmount/actualPayable from live order data and stores those;
+      // nothing computed for the preview below is ever sent as-is.
+      await billOrder(id, {
+        discountApplicable,
+        discountPercent: discountApplicable ? Number(discountPercent) : null,
+        gstApplicable,
+        gstPercent: gstApplicable ? Number(gstPercent) : null,
+        // Omitted entirely when blank rather than sent as '' — optional means optional, and the
+        // order simply ends up with a null tag it can be given later.
+        ...(cleanBillNo(billNo) ? { billNo: cleanBillNo(billNo) } : {}),
+      });
       setConfirmOpen(false);
       navigate('/bill-orders', {
         replace: true,
@@ -129,7 +169,9 @@ export default function BillOrderDetail() {
     } catch (err) {
       // The two realistic failures both carry a real backend message worth showing verbatim:
       // INSUFFICIENT_STOCK (stock moved between packing and billing) and ORDER_NOT_PACKED
-      // (someone else billed it first). Neither loses anything — nothing here is user-entered.
+      // (someone else billed it first). Discount/GST inputs are deliberately NOT cleared on this
+      // path — a real, valid entry the owner already typed shouldn't vanish just because billing
+      // failed for an unrelated stock reason; they can retry without re-entering it.
       setConfirmOpen(false);
       setSubmitError(err.message);
     } finally {
@@ -137,10 +179,24 @@ export default function BillOrderDetail() {
     }
   }
 
+  // Discount/GST inputs reset when the confirm dialog is dismissed WITHOUT billing — re-opening
+  // it (for this order or, after navigating away, a different one) always starts from a clean
+  // "no discount, no GST" state rather than silently carrying over a half-filled previous attempt.
+  function handleCancelBillConfirm() {
+    setConfirmOpen(false);
+    setDiscountApplicable(false);
+    setDiscountPercent('');
+    setGstApplicable(false);
+    setGstPercent('');
+    setBillNo('');
+  }
+
   if (orderStatus !== 'loaded') {
     return (
       <div className="page">
-        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+        {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+            Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
         {orderError ? (
           <p className="error-banner" role="alert">
             Could not load this order: {orderError}
@@ -157,7 +213,9 @@ export default function BillOrderDetail() {
   if (order.status !== 'PACKED') {
     return (
       <div className="page">
-        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+        {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+            Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+        <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
         <p className="muted">{order.partyName}</p>
         <p className="error-banner" role="alert">
           This order can no longer be billed — its status is now {order.status}.
@@ -166,15 +224,22 @@ export default function BillOrderDetail() {
     );
   }
 
-  // Grouped by article, same shape PackOrderDetail and New Order's summary both use.
+  // Grouped by article, same shape PackOrderDetail and New Order's summary both use. `total` is
+  // this article's value across its non-cancelled lines only — qtySetsPacked, not
+  // qtySetsRequested, because this is the PRE-BILLING screen and packed quantity is the
+  // authoritative figure before billing (04_API_SPEC.md), exactly for a short-packed line like
+  // this. A cancelled line contributes nothing, same reasoning as listOrders' totalValue fix.
   const groups = order.lineItems
     .reduce((acc, li) => {
       let group = acc.find((g) => g.productId === li.productId);
       if (!group) {
-        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [] };
+        group = { productId: li.productId, articleNo: li.productArticleNo, productName: li.productName, lines: [], total: 0 };
         acc.push(group);
       }
       group.lines.push(li);
+      if (!li.isCancelled) {
+        group.total += li.qtySetsPacked * piecesPerSetForLine(li) * Number(li.priceAtOrder);
+      }
       return acc;
     }, [])
     .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
@@ -195,9 +260,29 @@ export default function BillOrderDetail() {
   const isBlocked = (li) => !li.isCancelled && li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
   const blockedLines = order.lineItems.filter(isBlocked);
 
+  // Live discount/GST preview (rule 101) — computed from the exact same liveLines/qtySetsPacked
+  // basis as `groups` above (utils/orderBilling.js, shared with dashboard/Orders.jsx so both
+  // real billing entry points can never disagree on the same order). Purely a client-side
+  // preview: billOrder() independently recomputes and stores the authoritative figures.
+  const preTaxAmount = preBillingTotal(liveLines);
+  const { discountAmount, finalAmount, gstAmount, actualPayable, hasDiscount, hasGst } = computeBillingAmounts({
+    preTaxAmount,
+    discountApplicable,
+    discountPercent,
+    gstApplicable,
+    gstPercent,
+  });
+  // Blocks confirming with a half-answered question — the checkbox says "yes, apply a discount"
+  // but no usable percent has been typed yet. Same guard shape as blockedLines.length above:
+  // the trigger button and the modal's own confirm button share this so an owner can't get from
+  // a checked-but-empty state into the modal expecting to just press through it.
+  const billingInputIncomplete = (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst);
+
   return (
     <div className="page">
-      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="accent" title="Bill Orders" />
+      {/* tone="tile-red" (2026-08-27) — matches BillOrderList.jsx's own header change and
+          Home's Bill Orders tile; see that file's comment for the full reasoning. */}
+      <ScreenHeader icon={<InvoiceIcon size={20} />} tone="tile-red" title="Bill Orders" />
       <p className="muted">{order.partyName}</p>
       <span className="badge badge-warning">Packed</span>
 
@@ -228,6 +313,9 @@ export default function BillOrderDetail() {
                   <div className="accordion-title-sm">
                     {group.articleNo}
                     <span className="muted"> — {group.productName}</span>
+                    {/* One total per article, not per colour line — the sum across this
+                        article's non-cancelled lines, at the header level only. */}
+                    <span className="muted"> · {formatCurrency(group.total)}</span>
                   </div>
                   {/* Surfaced on the COLLAPSED header specifically, so a blocked line doesn't
                       require expanding every article one by one to find. */}
@@ -339,7 +427,7 @@ export default function BillOrderDetail() {
         title={cancelTarget?.kind === 'order' ? 'Cancel this whole order?' : 'Cancel this line?'}
         body={
           cancelTarget?.kind === 'order'
-            ? `${order.partyName}'s entire order will be cancelled and removed from the billing list. The lines stay on record — nothing is deleted — but the order can't be billed or shipped afterwards.`
+            ? `${order.partyName}'s entire order will be cancelled and removed from the billing list. The lines stay on record — nothing is deleted — but the order can't be billed or dispatched afterwards.`
             : `${cancelTarget?.line.colorName} will be cancelled and won't be billed. No stock is deducted for it. The packed quantity stays on record; only the line is marked cancelled.`
         }
         confirmLabel={cancelling ? 'Cancelling…' : cancelTarget?.kind === 'order' ? 'Cancel whole order' : 'Cancel line'}
@@ -350,7 +438,12 @@ export default function BillOrderDetail() {
 
       {/* Deliberately heavier copy than any other confirm in this app — this is the only action
           in the whole lifecycle that can't be undone, and it does two separate irreversible
-          things. Both are named outright rather than summarised as "are you sure?" */}
+          things. Both are named outright rather than summarised as "are you sure?"
+
+          Discount/GST questions (rule 101) live inside this SAME confirm flow via ConfirmModal's
+          `children` — not a second dialog — so the owner answers them right where they're
+          already committing to bill, with the real rupee impact visible before they press
+          confirm, not only afterward. */}
       <ConfirmModal
         open={confirmOpen}
         title="Bill this order? This cannot be undone."
@@ -358,8 +451,82 @@ export default function BillOrderDetail() {
         confirmLabel={submitting ? 'Billing…' : 'Bill and lock order'}
         tone="danger"
         onConfirm={handleConfirmBill}
-        onCancel={() => setConfirmOpen(false)}
-      />
+        onCancel={handleCancelBillConfirm}
+        confirmDisabled={submitting || billingInputIncomplete}
+      >
+        <div className="bill-pricing-questions">
+          <p className="muted bill-pricing-pretax">Order total: {formatCurrency(preTaxAmount)}</p>
+
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={discountApplicable}
+              onChange={(e) => setDiscountApplicable(e.target.checked)}
+            />
+            Apply a discount?
+          </label>
+          {discountApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">Discount %</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={discountPercent}
+                onChange={(e) => setDiscountPercent(e.target.value)}
+                placeholder="e.g. 5"
+                autoFocus
+              />
+            </div>
+          )}
+          {hasDiscount && (
+            <p className="bill-pricing-line">
+              −{formatCurrency(discountAmount)} discount → {formatCurrency(finalAmount)}
+            </p>
+          )}
+
+          <label className="checkbox-field">
+            <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
+            Apply GST?
+          </label>
+          {gstApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">GST %</span>
+              <input
+                type="number"
+                min="0"
+                max="5"
+                step="0.01"
+                value={gstPercent}
+                onChange={(e) => setGstPercent(e.target.value)}
+                placeholder="e.g. 5"
+                autoFocus
+              />
+            </div>
+          )}
+          {hasGst && <p className="bill-pricing-line">+{formatCurrency(gstAmount)} GST</p>}
+
+          <p className="bill-pricing-final">Total to bill: {formatCurrency(actualPayable)}</p>
+
+          {/* Below the total on purpose: everything above it changes the amount, this doesn't.
+              Placing it among the discount/GST controls would imply it participates in the
+              arithmetic. Optional — blank is a perfectly normal outcome, and it never blocks the
+              confirm button (billingInputIncomplete ignores it entirely). Correctable afterwards
+              from the party's billing history if it's mistyped here. */}
+          <div className="field bill-no-field">
+            <span className="field-label">Bill No. (optional)</span>
+            <input
+              type="text"
+              value={billNo}
+              onChange={(e) => setBillNo(e.target.value)}
+              placeholder="e.g. INV-2291"
+              maxLength={BILL_NO_MAX_LENGTH}
+              disabled={submitting}
+            />
+          </div>
+        </div>
+      </ConfirmModal>
     </div>
   );
 }

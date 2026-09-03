@@ -59,7 +59,13 @@ export default function PackOrderList() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<PackageIcon size={20} />} tone="warning" title="Pack Order" />
+      {/* tone="tile-pink" (2026-08-27) matches Home's Pack Order tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was "warning" (amber). This page's
+          own result banner below can still genuinely be warning-amber for a partial save, and that
+          stays untouched and correct: pink and amber are different hue families, so there's no
+          two-different-shades-of-the-same-colour collision the way Article Pricing's gold/warning
+          pairing has. See PackOrderDetail.jsx for the same tone change on the detail screen. */}
+      <ScreenHeader icon={<PackageIcon size={20} />} tone="tile-pink" title="Pack Order" />
 
       {packedOutcome && (
         <div className="result-banner result-banner-success">

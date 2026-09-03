@@ -23,6 +23,349 @@
   --purple-bg: #F2EAFB;
   --purple-text: #6B2FA8;
 
+  /* Added 2026-08-22 for the OWNER Home tile reorganisation: Ship Order needed a colour
+     distinct from both Live Stock (kept Accent) and Bill Orders (moved to Danger), and the
+     existing 5-role palette had no tone left unclaimed by a tile. A genuinely new hex value,
+     not a reuse — see Home.jsx's OWNER_TILES comment and LEARNING_LOG.md for why. As of the
+     same-day follow-up below, Ship Order uses this tone for BOTH roles, not just OWNER. */
+  --teal-border: #9ED6D0;
+  --teal-bg: #E6F6F4;
+  --teal-text: #146B63;
+
+  /* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. A
+     ninth genuinely new tone, not a reuse of an existing one — see Home.jsx's STAFF_TILES
+     comment and LEARNING_LOG.md for the reasoning (Danger risks a false "something's wrong"
+     signal for a routine action; Rust/Lavender would mean "Article Pricing"/"History" on
+     OWNER's own Home screen and "Transfer" on STAFF's, confusing for an owner who sees both).
+     Distinct blue-violet, cooler/deeper than both Accent and Purple. */
+  --indigo-border: #A8B4E8;
+  --indigo-bg: #ECEEFB;
+  --indigo-text: #3D4A9E;
+
+  /* Added 2026-08-27 for History's per-employee name-badge feature (utils/avatar.js,
+     ACTOR_BADGE_COLORS) — specifically to replace Mukesh Kumar Yadav's colour a SECOND time in
+     one day. His first replacement (this same day, earlier) was --success-*, chosen after Rust
+     was retired out from under this feature by the tile-recolor task. That choice only checked
+     for conflicts against the other three actors' colours and the 8 Home tile tokens — it never
+     checked against History's OWN entry-type badges (TYPE_BADGE_CLASSES in both History.jsx
+     files), which render on the exact same row as an actor badge. Success is also
+     ORDER_STATUS's colour, and Pack Order (an ORDER_STATUS-producing action) is reachable by
+     STAFF — so a real STAFF-packed order puts a green entry-type badge directly next to Mukesh's
+     green actor badge, same row, two different meanings, indistinguishable at a glance. Found
+     because this task's own step 1 finally ran the FULL conflict check the previous fix skipped:
+     every actor colour + all 8 tile tokens + all 4 of History's own entry-type badge colours
+     (purple/ORDER_PLACED, success/ORDER_STATUS, warning/ORDER_ADJUSTMENT+GOOD_RETURN+
+     RECEIPT_CORRECTION+TRANSFER_CORRECTION, accent/TRANSFER+RECEIPT) at once.
+     With that full list, EVERY existing unused token failed: Danger sits just 4.2° from Tile Red,
+     Warning/Purple/Accent are entry-type colours themselves, Success is the one just proven
+     broken, Teal/Indigo are Ram's/Harsh's own colours, and all 8 tiles are excluded outright. No
+     existing token cleared a safe margin from the full conflict set, so — per this task's own
+     instruction — a new one was added rather than forcing a near-collision. A rose/magenta hue
+     (~316°) was picked because it sits in the single largest open gap across ALL 14 conflict
+     hues (accent/indigo/teal, all 8 tiles, and the 3 distinct entry-type hues) — its closest
+     neighbour is Tile Purple at a full 43.0° away, more than 1.5x the 28.8° margin the (flawed)
+     Success pick had. It's also a colour family — pink/magenta — nothing else anywhere in this
+     app currently uses, so it can't even coincidentally read as "close to" an existing meaning.
+     Border/bg/text S/L values follow this file's own established per-slot averages (border
+     ~54-72% sat/72-82% light, bg ~58-77% sat/93-95% light, text ~44-69% sat/25-43% light) — text
+     contrast against bg measures 6.2:1, inside the existing 4.85-6.91:1 baseline range. Scoped
+     the same way Teal/Indigo are: a real CSS custom property, not just a class, since
+     ACTOR_BADGE_COLORS consumes it directly via var(--rose-bg)/var(--rose-text) rather than
+     through a `.badge-rose`/`.tile-rose` class — there is no tile or generic badge use for this
+     colour, only History's actor badges, so no derived class was added for it. */
+  --rose-border: #EAA4D7;
+  --rose-bg: #FBEAF6;
+  --rose-text: #962C7A;
+
+  /* Added 2026-09-01 for the Overview KPI grid's rework (Open Orders replaced by three new
+     cards: Billed not shipped, Packed not billed, Orders this week). Full conflict check against
+     the 5 surviving KPI cards' colours (Accent/Danger/Success) plus all 8 Home tile tokens: of the
+     5 previously-unused semantic tokens (Warning/Purple/Teal/Indigo/Rose), Warning sits only 5.9°
+     from Tile Gold and 9.0° from Tile Orange, and Teal sits 5.6-7.0° from Tile Green across
+     border/bg/text alike with comparable saturation — both rejected as real collisions, not just
+     theoretical ones. Purple (24.8° from its nearest conflict, Tile Purple) and Indigo (13.0° from
+     Tile Purple — closer than ideal, but the same order of margin as the Gold/Orange 15.1° pair
+     this file already ships and treats as acceptably distinct) both cleared the bar and are reused
+     for two of the three new cards. That left one card with no safe existing token, so this one is
+     genuinely new — same situation Rose was added for above. Placed at hue ~340° (magenta,
+     between Rose/Tile Pink on one side and Danger/Tile Red on the other), the single open gap left
+     in that part of the wheel: 23.9° from its nearest conflict (Tile Red), 24.2° from Rose itself
+     and 31.2° from Tile Pink — comfortably clear of both. Also confirmed Indigo introduces no
+     on-screen collision with its use as Harsh's History actor-badge colour: Overview's own
+     "Recent activity" feed renders actor names as plain --text-secondary grey (.dash-activity-who),
+     never a coloured badge, so the two contexts never share a screen. Derived by rotating Rose's
+     own exact saturation/light values per slot to hue 340° (border sat 62.5/light 78.0, bg sat
+     68.0/light 95.1, text sat 54.6/light 38.0) rather than picked by eye, so it inherits the same
+     contrast ratio: 6.54:1 text-on-bg, inside the existing 4.85-6.91:1 baseline. */
+  --fuchsia-border: #EAA4BB;
+  --fuchsia-bg: #FBEAF0;
+  --fuchsia-text: #962C4F;
+
+  /* DonutChart slice colours (2026-09-02, first caller: Locations.jsx's stock-value-by-location
+     donut). Checked against the FULL live conflict set before picking either — every semantic
+     token above, every OWNER Home tile token, AND Overview's own Fuchsia KPI (which sits at almost
+     exactly hue 340°, the spot a first draft of --chart-crimson very nearly collided with —
+     caught by computing hue distance rather than eyeballing it).
+     --chart-lime sits at hue 90.5° (yellow-green), the single largest open gap on the wheel
+     (Tile Gold at 46.7° to Success at 134.3°, 87.6° wide) — nearest conflict 43.8° away
+     (Tile Gold/Success tied), comfortably clear of everything including this app's own semantic
+     green (Success) despite being a green-family hue itself.
+     --chart-violet sits at hue 295° — nearest conflict 13.8° from Tile Pink, a mobile-only Home
+     tile colour that never renders anywhere in the Owner Dashboard this chart lives in, so that
+     margin carries no real co-location risk. The next-nearest conflicts are Rose (20.8°) and
+     Purple (25.2°) — Purple matters most here since Locations.jsx's own KPI row uses
+     --purple-text (dash-kpi-purple) on the SAME screen as this donut, so that 25.2° margin was
+     checked deliberately, not incidentally, following this file's own established rule that
+     same-screen co-located colours are the real conflict set, not just "used somewhere in the
+     app" (see the Success/Rust History-badge incident above for why that distinction matters). */
+  --chart-lime: #6AAB2B;
+  --chart-violet: #A12BAB;
+
+  /* OWNER Home tile grid, SECOND full palette replacement (2026-08-27, same day) — supersedes the
+     first palette (Green/Orange/Purple/Yellow/Red/Brown/Blue/Grey) before it ever shipped: that
+     palette was staged in this file only hours earlier and never reached production, so this is a
+     straight replacement, not a migration with a prior live version to preserve compatibility
+     with. Derived systematically rather than picked by eye: each tile has one base hue, a pale
+     tint of that hue for the fill (bg), one darker step of the same tint for the border, and the
+     base mixed 50/50 with near-black #151412 for the text/icon ink — confirmed directly by Aadi,
+     verified per-tile internally consistent (bg/border/text of a given tile sit within ~1° of
+     each other in hue) before accepting any of it.
+     THREE of the 8 tiles changed HUE FAMILY, not just shade, versus the first palette — Article
+     Pricing moved off orange onto gold/yellow, Pack Order moved off yellow onto cyan/turquoise,
+     Ship Order moved off brown/warm-stone onto true orange — which means the token NAMES that
+     described the FIRST palette's hues no longer describe what's actually assigned now. Renamed
+     to match, following this file's own standing convention that a tile token's name describes
+     its colour, not the tile it happens to be attached to:
+       --tile-orange-* (was Article Pricing, orange) -> --tile-gold-* (Article Pricing, now gold)
+       --tile-yellow-* (was Pack Order, yellow)       -> --tile-cyan-* (Pack Order, now cyan)
+       --tile-brown-*  (was Ship Order, brown-stone)  -> --tile-orange-* (Ship Order, now orange —
+         reusing the "orange" name is correct, not confusing, precisely because the FIRST
+         palette's own orange tile (Article Pricing) just vacated that name in the rename above,
+         so there is no longer a live token called --tile-orange-* pointing at a different hue by
+         the time this one claims it)
+     Before any of the three renames/retirements, grepped the WHOLE frontend (not just this file,
+     not just derived class names) for the raw token variable names --tile-orange-, --tile-yellow-
+     and --tile-brown- — this is the exact check the same-day Rust incident (see LEARNING_LOG.md)
+     proved insufficient to skip: that incident's own verification only checked derived CSS class
+     names and the :root definition site, and missed a direct var(--rust-bg) reference sitting in
+     an unrelated file (utils/avatar.js). All three greps came back clean: every reference to
+     --tile-orange-/--tile-yellow-/--tile-brown- lived inside this file's own :root block and its
+     own .tile-orange/.tile-yellow/.tile-brown rules below — expected, since the first palette's
+     tokens were only staged earlier today specifically for tile use and never had time to
+     accumulate an external consumer, but confirmed rather than assumed.
+     Green/Purple/Red/Blue/Grey did NOT change hue family (Receive Stock stays green, New Order
+     stays violet/purple, Bill Orders stays red, Live Stock stays blue, History stays slate grey),
+     so those five token names are unchanged — only their hex values were updated in place to the
+     new systematic derivation.
+     VERIFICATION (computed hue/saturation/lightness distance for all 8 against each other, against
+     History's 4 actor-badge colours, and against History's 4 entry-type badge colours — every
+     pair, not a subset) surfaced two real findings, SHIPPED AS CONFIRMED BUT FLAGGED FOR AADI'S
+     OWN REVIEW below rather than silently corrected — unlike the same-day Rust/Success token
+     fixes, these are Aadi's own explicitly confirmed exact hex values from a stated derivation
+     method, not a placeholder this task was free to retune on its own judgment:
+       (1) Tile Gold (Article Pricing) vs Tile Orange (Ship Order): 15.1° apart, comparable
+       saturation and lightness at every corresponding tint step (bg/border/text alike) — the
+       least-protected pair found, and the only one where BOTH tiles sit on the SAME grid a person
+       directly compares. A real screenshot of the full OWNER grid (see LEARNING_LOG.md) shows them
+       as genuinely distinguishable — a butter-gold vs a peachy true-orange — but they are the
+       closest-reading pair of all 8 by a wide margin; every other pair is either a different hue
+       family outright or has a large compensating saturation/lightness gap the way this app's
+       earlier palette corrections relied on.
+       (2) CONTRAST: re-checked against this app's own established baseline (4.85:1-6.91:1 across
+       its five shared tokens) for all 8 new text/bg pairs, expecting a clean pass the way the
+       FIRST same-day palette's own values did — it did NOT clean pass this time. Tile Gold
+       measures 4.09:1 and Tile Cyan measures 3.99:1, BOTH below this app's own 4.85:1 floor, and
+       Cyan sits below the WCAG AA 4.5:1 minimum for normal-size text outright. This is a direct,
+       structural consequence of Aadi's own stated derivation method (base color mixed 50/50 with
+       near-black for the text ink): a naturally light/high-lightness base hue like gold or cyan
+       still doesn't darken as much from a 50/50 near-black mix as a naturally darker base hue like
+       red or blue does, so the method itself produces uneven contrast across the 8 tiles depending
+       on how light each base hue starts. Every other tile (Green 4.97, Purple 5.14, Red 5.75,
+       Orange 5.04, Blue 6.97, Grey 7.30) clears the floor comfortably. NOT silently corrected here
+       — flagged plainly for Aadi's own call, the same way step 3 of this task asked for a genuine
+       decision rather than a reflexive pass, and because darkening either ink further is a real
+       edit to Aadi's own confirmed derivation, not a judgment call this task should make alone.
+       (3) PERCEIVED DENSITY (the design brief's own stated constraint, step 5 of this task): no
+       tile should read lighter/weaker than the others. Computed relative luminance for all 8 bg
+       AND border values, not eyeballed. Cyan is the clear outlier: bg Y=0.886 and border Y=0.795
+       are both the palest of the 8 by a real margin (next-palest bg is Gold at 0.833, then Purple
+       at 0.774; every other border sits 0.41-0.58, well under Cyan's 0.795). Gold is the
+       second-palest on both counts. Same root cause as (2), not a coincidence: this derivation
+       method produces a paler bg/border from a naturally light base hue exactly as it produces
+       lower text contrast from one. Confirmed in the real OWNER grid screenshot too — Pack
+       Order's tile visibly reads more washed-out than its 7 neighbours. Flagged rather than
+       corrected for the same reason as (2).
+     This still replaces Rust, Lavender and Olive, which the first same-day palette had already
+     retired — nothing further to do for those three here.
+
+     THIRD pass, same day (2026-08-27) — FINAL. Aadi reviewed a real before/after comparison of the
+     second palette above and confirmed per-tile: Live Stock and Ship Order stay exactly as they
+     were (no change); Receive Stock/Article Pricing/New Order/Bill Orders/History all get their
+     fill+border lightened further toward white, TEXT INK UNCHANGED (a darker ink on a lighter fill
+     only ever improves contrast, never regresses it — confirmed by re-running the contrast numbers
+     below, not just assumed); and Pack Order abandons cyan entirely for a new vivid pink base,
+     #FF9FF3, requiring an actual derivation rather than a copy-in of a given fill/border pair.
+
+     REVERSE-ENGINEERING THE DERIVATION (done before computing anything for Pack Order, per this
+     task's own instruction not to assume a fixed blend %): checked the white-blend fraction each
+     tile's fill/border actually uses against its base hue, in plain sRGB terms. It is NOT a fixed
+     percentage — Receive Stock's fill blends ~80% toward white, Article Pricing's ~79%, Bill
+     Orders' ~82%, Live Stock's (unchanged) ~79%, History's ~84% — different enough that "just use
+     the same % as everyone else" would have been the wrong instruction to follow literally. Their
+     absolute OKLCH lightness (L) also isn't tightly fixed (fills span L=0.913-0.963). What IS
+     tightly consistent is each tile's fill/border lightness EXPRESSED AS A FRACTION OF THE
+     REMAINING DISTANCE FROM ITS OWN BASE HUE'S LIGHTNESS UP TO WHITE — i.e. fill_L = base_L +
+     f*(1-base_L) — which lands in a much tighter band: f≈0.68-0.85 for fill (mean 0.774) and
+     f≈0.36-0.59 for border (mean 0.469), across all 7 confirmed tiles including two very dark
+     bases (Blue, Grey) and two very light ones (Gold, Violet). This is the real rule: the palette
+     targets comparable PERCEIVED lightness headroom used up, not a fixed white percentage or a
+     fixed absolute lightness — exactly what this task's own instructions predicted checking
+     Receive Stock against Bill Orders would show.
+
+     Applied that same mean fraction (fill f=0.774, border f=0.469) to Pack Order's own base OKLCH
+     lightness (#FF9FF3 -> L=0.826, notably light for a "base" colour to begin with, since pink at
+     full saturation is inherently lighter than e.g. red or blue at full saturation) and solved
+     numerically (binary search on the white-blend amount) for the exact sRGB blend that lands on
+     the resulting target L in each case — not eyeballed, and not the flat "target the group's mean
+     fill" approach tried and rejected first (that produced a border barely different from the base,
+     because Pack Order's base is already close to the fill target's absolute lightness — the
+     fraction-of-remaining-headroom approach is what actually generalises correctly to a base this
+     light). Chroma came out at 21% of base for fill and 50% of base for border once L was solved
+     for — both comfortably inside the other 7 tiles' own chroma-retention range (fill 17-34%,
+     border 44-67%), confirming the fraction-based derivation, not just the L target alone.
+     Text ink used the one part of this derivation that IS an exact fixed rule, not a fraction:
+     base mixed precisely 50/50 with near-black #151412, ROUND-HALF-UP per channel — verified
+     against all 7 already-confirmed tiles' real text values first (this matters: Python's own
+     built-in round() uses round-half-to-even and gets 3 of the 7 tiles WRONG — Receive Stock,
+     Ship Order and Live Stock's real text values only match under round-half-up, confirmed by
+     testing both conventions against all 7 known-correct answers before trusting either).
+
+     PACK ORDER'S FULL NUMBERS: base #FF9FF3 -> fill #FFEBFC, border #FFCFF9, text #8A5A83.
+
+     MANDATORY conflict checks before accepting this (grep discipline, then colour distance):
+     grepped the whole frontend for the raw --tile-cyan- token before renaming/retiring it — found
+     only inside this file's own :root block and its own .tile-cyan rule, same clean result as
+     every other same-day rename. Renamed --tile-cyan-* -> --tile-pink-* to match the new hue.
+     Computed hue distance for the new pink against EVERY colour already in play, not assumed:
+       - vs History's Rose actor badge (Mukesh, --rose-*, ~316°) specifically, since this was
+         flagged in advance as the real risk: 8.3-8.8° apart across every representation (base,
+         text, fill, border alike) — genuinely the closest pair introduced anywhere this session.
+         Real compensating gaps exist (text: 33.6pt saturation gap, 6.7pt lightness gap; border:
+         37.5pt saturation gap, 12.6pt lightness gap — Pink consistently paler/less saturated than
+         Rose at every tint step) but the raw hue proximity is real and reported as-is, not
+         downplayed — see LEARNING_LOG.md for the actual screenshot-based call, not just this math.
+       - vs all 7 other tiles: closest is Red at 55.8° — no new tile-to-tile collision.
+       - vs History's other 3 actor colours (Accent/Indigo/Teal): doesn't appear in the closest 10
+         pairs at all — comfortably clear, no new collision there either.
+       - vs History's 4 entry-type badge colours: closest is Purple/ORDER_PLACED at 37.7° — no new
+         collision there either.
+     So Pink's only genuine new proximity anywhere is the Rose comparison — isolated, not part of a
+     wider pattern, and reported rather than silently substituted for a "safer" hue, per this task's
+     own explicit instruction that this decision belongs to Aadi.
+     CONTRAST for Pack Order's new text-on-fill: 4.79:1 — computed for real, not assumed to clear
+     just because most of the others did. This sits BELOW this app's own established 4.85:1 floor
+     (same shortfall class as finding (2) above for Gold/Cyan in the prior palette) but ABOVE the
+     WCAG AA 4.5:1 minimum for normal-size text. Flagged, not silently adjusted, for the identical
+     reason as every other confirmed-value finding today: darkening the ink is a real deviation from
+     Aadi's own fixed 50/50-near-black rule, which is his call, not this task's to make alone.
+
+     The five lightened tiles (Green/Gold/Violet/Red/Grey) below keep their existing text ink
+     UNCHANGED from the second palette — only fill/border moved lighter — so their contrast can only
+     have improved, not regressed against their OWN prior number; re-verified numerically rather
+     than assumed: Green 4.97->5.69, Gold 4.09->4.38, Violet 5.14->5.67, Red 5.75->6.77, Grey
+     7.30->8.43. All five genuinely improved, but Gold's improvement is NOT enough to clear either
+     bar this task cares about — 4.38:1 still sits below this app's own 4.85:1 floor AND below the
+     WCAG AA 4.5:1 minimum, same shortfall class as Pack Order's 4.79:1 above. "Improved" and
+     "now passes" are different claims and only the first is true for Gold; flagged plainly rather
+     than let the word "improved" imply the second. Live Stock and Ship Order are untouched,
+     confirmed still exactly matching what was already staged. */
+  --tile-green-border: #83DDCB;
+  --tile-green-bg: #CBF1E9;
+  --tile-green-text: #0B6653;
+
+  --tile-gold-border: #FCE38E;
+  --tile-gold-bg: #FEF3CD;
+  --tile-gold-text: #876F1B;
+
+  --tile-purple-border: #D4D1FE;
+  --tile-purple-bg: #EEEDFF;
+  --tile-purple-text: #5C5888;
+
+  --tile-pink-border: #FFCFF9;
+  --tile-pink-bg: #FFEBFC;
+  --tile-pink-text: #8A5A83;
+
+  --tile-red-border: #FFA7A2;
+  --tile-red-bg: #FFDCDA;
+  --tile-red-text: #8A2A23;
+
+  --tile-orange-border: #F6BD7E;
+  --tile-orange-bg: #FBDFBF;
+  --tile-orange-text: #83541F;
+
+  --tile-blue-border: #82C0F1;
+  --tile-blue-bg: #CEE6F9;
+  --tile-blue-text: #0F4C7B;
+
+  --tile-grey-border: #BCC1C3;
+  --tile-grey-bg: #E6E8E9;
+  --tile-grey-text: #3C4142;
+
+  /* SUPERSEDED same day (2026-08-28) — kept for the record, not deleted, matching this file's own
+     convention (see the 2026-08-27 rename block above). This --tile-yellow-* token and its
+     .tile-yellow class WERE Transfer Stock's fix for the real Indigo/Purple collision documented
+     below, and shipped briefly, but Aadi then explicitly chose — fully informed, not a reversal
+     of the collision finding itself — to have Transfer Stock share Article Pricing's EXACT
+     --tile-gold-* token and .tile-gold class instead, deliberately accepting Gold's below-floor 4.38:1 contrast
+     (below WCAG AA too) on this one tile as a knowing exception. See LEARNING_LOG.md. This token
+     and its .tile-yellow class are now fully orphaned (confirmed by a whole-frontend grep for the
+     raw variable name and the class name, same discipline as every other retirement in this
+     file) and have been removed from :root and from the class rules below — the derivation
+     reasoning stays here only as history, exactly as the 2026-08-27 palette rename comment above
+     stays after ITS tokens were renamed away.
+     Original comment, unchanged: Added 2026-08-28: STAFF's Transfer Stock tile moves off Indigo
+     onto this new yellow token — confirmed real by the math, not just the screenshot. Indigo's
+     border/fill/text sit only
+     11.3-15.3° from Tile Purple (New Order) in HSL hue, and at the fill tint specifically —
+     the one that dominates a tile's visible area — the LIGHTNESS gap between them is just 1.0pt
+     (Indigo fill L=95.5 vs Purple fill L=96.5), so the two are separated almost entirely by
+     saturation alone. That is a materially worse setup than every knowingly-close pair this app
+     has already shipped (Pink/Rose: 8.3-8.8° hue but 6.7-13pt lightness gaps at every step;
+     Gold/Orange: 15.1° hue with real gaps too) — Indigo/Purple is close in BOTH hue and
+     lightness with only saturation holding them apart, which is exactly what a screenshot would
+     show as a collision. Indigo itself is NOT retired — a whole-frontend grep for the raw
+     `--indigo-` variable name (not just `.tile-indigo`, per this file's own Rust-token lesson
+     above about checking variables directly, not just derived classes) found it's still consumed
+     directly by utils/avatar.js for Harsh Arora's History actor badge, so it stays live for that.
+     Derived with the same fraction-of-remaining-OKLCH-lightness method as this file's other
+     lightened tiles (fill f=0.774, border f=0.469, mean of the confirmed 7-tile sample above),
+     NOT the older denser style Indigo/Teal/Live Stock/Ship Order used. Base #C2C200 (HSL
+     60°/100%/38% — canonical yellow hue, not Gold's more orange-shifted ~46°) was chosen after
+     rejecting a brighter/lighter base (e.g. #FFEB00): a pure light-lightness yellow inherits the
+     same structural problem already documented above for Gold/Cyan — max-chroma yellow sits at
+     very high OKLCH lightness regardless of exact hue, so the fixed fraction formula pushes fill
+     into near-white and collapses text/fill contrast. Darkening the base's HSL lightness to 38%
+     lowers its OKLCH L enough to recover real contrast without leaving the yellow hue family or
+     drifting into an olive/green read (checked: pushing HUE further from Gold instead, e.g. 65-70°
+     at high saturation, reads as muddy olive-green in the actual rendered swatch, not yellow —
+     hue was kept at the canonical 60° and lightness tuned instead). Text uses this file's one
+     fixed rule (base mixed 50/50 with near-black #151412, round-half-up per channel, verified
+     against the known-correct tiles above under both rounding conventions first).
+     Result: fill #F0F2D2, border #DDE096, text #6C6B09.
+     FULL conflict check (HSL hue distance, run against every token this task named): vs Tile
+     Purple 174.4-179.6° (the original collision, now about as far apart as two hues can be) and
+     vs Indigo 166.3-172.6° — both resolved with wide margins, not just nudged. Vs all other 7
+     OWNER tile tokens, Teal, Rose, and History's 4 entry-type badge colours (purple/success/
+     warning/accent): closest is Warning at 18.6-21.8°, still clear. The ONE pair under 15° is
+     Tile Gold's text ink specifically, at 12.7° — flagged rather than adjusted, per this file's
+     own established practice, with real compensating gaps (17.9pt saturation, 8.8pt lightness);
+     Gold's border/fill sit at 16.1-17.2°, already clear. CONTRAST: text/fill measures 4.90:1 —
+     clears BOTH this app's own 4.85:1 floor and the WCAG AA 4.5:1 minimum, better than every
+     other light-hue tile token in this file (Gold 4.38, the old Cyan 3.99, Pack Order's Pink
+     4.79), because the darker base lightness chosen above bought real contrast headroom that
+     those tiles' fixed-formula derivations didn't have.
+     Tokens removed 2026-08-28 (same day) once orphaned — see SUPERSEDED note above. */
+
   --card-border: #E4E2DE;
   --card-bg: #fff;
   --text-primary: #1C1B19;
@@ -31,6 +374,20 @@
   --section-fill: #F5F4F1;
   --text-secondary: #6B6863;
   --text-tertiary: #9A968F;
+
+  /* Added 2026-08-27 for genuine data-table alternating rows (Receive Stock's receipt table,
+     Article Pricing's mobile and dashboard price tables) — deliberately NOT plain --section-fill.
+     --section-fill is already this app's OWN "a row/area needs a quiet highlight" token, already
+     used at full strength for a row actually mid-edit (.dash-pricing-row-editing) and for the
+     error/PIN rows beneath it (.dash-pricing-error-row, .dash-pricing-pin-row) — if a plain
+     alternating stripe used that same full-strength colour, an editing row landing on an even
+     index would render IDENTICAL to a normal stripe, and the "this row is different" signal those
+     three classes exist to give would silently disappear. This token dilutes --section-fill
+     toward --card-bg (white) via color-mix(), the same technique this file already uses elsewhere
+     (.dash-lock-overlay's veil) rather than inventing a new hex value — genuinely fainter than
+     --section-fill on its own, so a real state highlight still reads as visibly stronger than a
+     plain stripe wherever both could appear on the same table. */
+  --row-stripe-fill: color-mix(in srgb, var(--section-fill) 50%, var(--card-bg));
 }
 
 * {
@@ -42,7 +399,7 @@ body {
   background: var(--section-fill);
   color: var(--text-primary);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Full-viewport centring, used by the login screen and the auth loading state. */
@@ -51,13 +408,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px; /* standard horizontal page margin */
+  padding: var(--space-5); /* standard horizontal page margin */
 }
 
 .page {
   max-width: 480px;
   margin: 0 auto;
-  padding: 20px;
+  padding: var(--space-5);
 }
 
 .muted {
@@ -68,8 +425,8 @@ body {
 .screen-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
 /* Back-to-Home link (ScreenHeader.jsx) — leads the row, before the icon mark. Neutral/muted
@@ -130,8 +487,76 @@ body {
   color: var(--purple-text);
 }
 
+/* Added 2026-08-27 — Home-tile-to-screen colour continuity: tap a coloured tile, land on a screen
+   whose own header icon carries the exact same colour, confirmed by Aadi as the intended feel.
+   Deliberately prefixed `tile-*`, NOT reusing the bare `accent`/`success`/`warning`/`purple` names
+   above, even where a screen's new colour is in the same family as one of those four (e.g. Live
+   Stock's new tile-blue vs the existing `accent` blue) — this is the exact same naming discipline
+   already established for Home's own `--tile-*` custom properties (see that comment in this
+   file's `:root` block): a shared class name would silently redefine what e.g. `.icon-mark.purple`
+   means everywhere it's already used, rather than adding a genuinely new, independent one. Reuses
+   the SAME `--tile-*` custom properties Home's tiles already read from — not a second copy of the
+   hex values — so a header and its tile can never drift out of sync with each other by construction:
+   editing a tile's colour in one place (the `:root` block above) updates its screen's header too.
+   Scoped to exactly the 8 OWNER_TILES tones (Home.jsx) — Indigo (Transfer Stock) is deliberately
+   NOT given an `.icon-mark` class here: it's a separate, older, already-settled colour decision,
+   out of scope for this pass. Four of these 8 screens ALSO use one of the FOUR original semantic
+   tones above for a real, unrelated status meaning elsewhere on the same page (Receive Stock's own
+   "Matched" banner is genuinely `success`-green; Article Pricing's "Pending" badges are genuinely
+   `warning`-amber; Bill Orders' "Cancelled"/"can't be billed" badges are genuinely `danger`-red;
+   Live Stock's "N colours" badge is genuinely `accent`-blue) — flagged for Aadi's own review rather
+   than silently touched, since changing those OTHER elements to match the header was never asked
+   for and is a separate decision. See LEARNING_LOG.md for the full per-screen reasoning. */
+.icon-mark.tile-green {
+  background: var(--tile-green-bg);
+  border: 1px solid var(--tile-green-border);
+  color: var(--tile-green-text);
+}
+
+.icon-mark.tile-gold {
+  background: var(--tile-gold-bg);
+  border: 1px solid var(--tile-gold-border);
+  color: var(--tile-gold-text);
+}
+
+.icon-mark.tile-purple {
+  background: var(--tile-purple-bg);
+  border: 1px solid var(--tile-purple-border);
+  color: var(--tile-purple-text);
+}
+
+.icon-mark.tile-pink {
+  background: var(--tile-pink-bg);
+  border: 1px solid var(--tile-pink-border);
+  color: var(--tile-pink-text);
+}
+
+.icon-mark.tile-red {
+  background: var(--tile-red-bg);
+  border: 1px solid var(--tile-red-border);
+  color: var(--tile-red-text);
+}
+
+.icon-mark.tile-orange {
+  background: var(--tile-orange-bg);
+  border: 1px solid var(--tile-orange-border);
+  color: var(--tile-orange-text);
+}
+
+.icon-mark.tile-blue {
+  background: var(--tile-blue-bg);
+  border: 1px solid var(--tile-blue-border);
+  color: var(--tile-blue-text);
+}
+
+.icon-mark.tile-grey {
+  background: var(--tile-grey-bg);
+  border: 1px solid var(--tile-grey-border);
+  color: var(--tile-grey-text);
+}
+
 .eyebrow {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-tertiary);
 }
@@ -154,7 +579,7 @@ body {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 12px;
-  padding: 20px;
+  padding: var(--space-5);
 }
 
 .login-card {
@@ -162,12 +587,48 @@ body {
   max-width: 360px;
 }
 
+/* Password show/hide toggle — same `position: relative` wrapper + absolutely-positioned control
+   pattern Combobox.jsx already uses for its own input-adjacent UI (.combobox/.combobox-dropdown),
+   reused here rather than inventing a second way to overlay a control on an input. */
+.password-field {
+  position: relative;
+}
+
+/* Right padding clears the toggle button so typed text never runs underneath it. Selector is
+   deliberately `.field .password-field input:not(...)`, matching (and beating, by one extra
+   ancestor class) the specificity of the base `.field input:not([type='checkbox'])` rule above —
+   avoids `!important` for what's really just one property override on top of that rule. */
+.field .password-field input:not([type='checkbox']) {
+  padding-right: 40px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.password-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
 /* Card title/article name size, per the typography scale — a card's own section header,
    distinct from the page-level .screen-title above it. */
 .card-title {
   font-size: 14px;
   font-weight: 700;
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-3);
 }
 
 .hint-text {
@@ -178,8 +639,8 @@ body {
 /* Side-by-side Factory/Location selects at the top of Receive Stock (§5.2). */
 .field-row {
   display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .field-row .field {
@@ -188,7 +649,15 @@ body {
   margin-bottom: 0;
 }
 
-/* --- Form fields --- */
+/* --- Form fields ---
+   margin-bottom: 14px removed here 2026-09-03 (Aadi's own direct edit, bundled into cea06cd
+   alongside an unrelated History task — not made through a task prompt, reason not recorded).
+   REVERTED 2026-09-03: .field is used in at least 18 files across almost every form in this
+   app, and the removal visibly broke Manage Users' create-account form (Name/Username/Password/
+   Role stacked) — labels sat close enough to the field ABOVE them that the label-to-field
+   association read ambiguously. Restored the original 14px. Wherever Aadi actually wanted
+   tighter spacing (Factory Payables), that's handled with a page-scoped modifier class instead
+   of touching this shared base rule — see .factory-field-tight. */
 .field {
   display: block;
   margin-bottom: 14px;
@@ -199,9 +668,9 @@ body {
 .checkbox-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 10px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
@@ -220,7 +689,7 @@ body {
    step in the main flow. */
 .category-manager {
   margin: -6px 0 14px;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   background: var(--section-fill);
   border-radius: 10px;
 }
@@ -244,13 +713,13 @@ body {
 
 .category-manager-row > span:first-child {
   flex: 1;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .field-label {
   display: block;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 6px;
@@ -267,7 +736,7 @@ body {
   /* 1.5px border on inputs, per the brief's shape spec. */
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
-  padding: 11px 12px;
+  padding: 11px var(--space-3);
   font-size: 14px;
   font-family: inherit;
   background: var(--card-bg);
@@ -286,7 +755,7 @@ body {
   width: 100%;
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
-  padding: 11px 12px;
+  padding: 11px var(--space-3);
   font-size: 14px;
   font-family: inherit;
   background: var(--card-bg);
@@ -297,6 +766,60 @@ body {
 .field select:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* --- Combobox (added 2026-08-22) — live-filtering picker: components/Combobox.jsx --- */
+.combobox {
+  position: relative;
+}
+
+.combobox-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  /* Same shade family as .dash-card's own shadow (rgba(28,27,25,...)), just stronger — this
+     needs to visibly lift off whatever's rendered underneath it, not just hint at a card edge. */
+  box-shadow: 0 4px 16px rgba(28, 27, 25, 0.14);
+}
+
+.combobox-option {
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.combobox-option-highlighted {
+  background: var(--section-fill);
+}
+
+.combobox-option-selected {
+  font-weight: 700;
+}
+
+.combobox-create-row {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.combobox-create-row.combobox-option-highlighted {
+  background: var(--accent-bg);
+}
+
+.combobox-empty-row {
+  padding: 9px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* Article No. input sits next to the Add/Search button rather than stacked above it. Spacing
@@ -356,7 +879,7 @@ body {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   color: var(--text-secondary);
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 
 /* First real use of a standalone (non-modal) danger action button — Factory Payables' delete
@@ -414,7 +937,7 @@ body {
   border-radius: 10px;
   padding: 9px 11px;
   font-size: 12px;
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-3);
 }
 
 /* --- New-article form: Name + size selection (rules 49-50), then "Create article" --- */
@@ -429,14 +952,14 @@ body {
 .chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   margin-bottom: 10px;
 }
 
 .chip {
   border-radius: 9999px;
-  padding: 8px 16px;
-  font-size: 13px;
+  padding: var(--space-2) var(--space-4);
+  font-size: 14px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -455,7 +978,62 @@ body {
 }
 
 .kids-toggle-chip {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
+}
+
+/* Adult size chip with its own quantity stepper (2026-08-25) — a size can appear more than once
+   in one set, so each chip carries a count rather than an on/off state. Deliberately NOT built on
+   .chip: a .chip is a single tap target that is itself the button, while this is a labelled
+   container holding two separate buttons, so inheriting .chip's padding/cursor/border would style
+   a thing that is no longer clickable as a whole. */
+.size-stepper-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  border-radius: 9999px;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+}
+
+/* A size that's actually in the set. Same "Selected chip (any picker)" token .chip-selected uses
+   (§3.4) so an included size reads identically to every other selected picker item in the app —
+   but applied to the border/label only, never a full dark fill, because the stepper buttons sit
+   inside this container and would lose their own contrast against it. */
+.size-stepper-chip-included {
+  border-color: var(--text-primary);
+}
+
+.size-stepper-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 28px;
+}
+
+.size-stepper-chip-included .size-stepper-label {
+  color: var(--text-primary);
+}
+
+/* Tighter than the default .stepper (14px), which is sized for the standalone Sets control —
+   several of these sit side by side in a wrapping row, so they need to stay compact. */
+.size-stepper {
+  gap: var(--space-2);
+}
+
+.size-stepper .stepper-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+}
+
+.size-stepper .stepper-value {
+  min-width: 16px;
+  font-size: 14px;
+}
+
+.size-stepper-row {
+  gap: 10px;
 }
 
 .add-other-size-link {
@@ -464,9 +1042,9 @@ body {
 }
 
 .pieces-readout {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
-  margin: 4px 0 0;
+  margin: var(--space-1) 0 0;
 }
 
 /* --- Color staging (§6 Round 6, rule 53) --- */
@@ -509,7 +1087,7 @@ body {
 .stepper-value {
   min-width: 24px;
   text-align: center;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -545,10 +1123,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   border-radius: 10px;
-  padding: 11px 12px;
-  font-size: 12.5px;
+  padding: 11px var(--space-3);
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -568,15 +1146,25 @@ body {
   color: var(--warning-text);
 }
 
+/* Reactivate-with-a-new-price form (2026-08-28), shown under an ARCHIVED article's lookup banner
+   in Receive Stock — OWNER only. A nested .card inside the lookup area, so it needs its own top
+   margin to sit clear of the banner above it rather than butting straight against it; everything
+   else (padding, radius, background) is inherited from .card unchanged. Deliberately not given
+   its own colour: the amber warning banner directly above it already carries the "this article is
+   archived" signal, and repeating that tint here would read as a second, separate warning. */
+.reactivate-price-form {
+  margin-top: var(--space-3);
+}
+
 /* --- Save Receipt result banner: plain-language outcome, not a status code in sight ---
    Unlike .lookup-banner (a single line + an action, laid out in a row), this can hold several
    paragraphs and a list of exactly which lines still need saving, so it stacks vertically. */
 .result-banner {
   border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 12.5px;
+  padding: var(--space-3) 14px;
+  font-size: 12px;
   line-height: 1.5;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .result-banner p {
@@ -584,7 +1172,7 @@ body {
 }
 
 .result-banner p:last-of-type {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .result-banner-list {
@@ -613,7 +1201,7 @@ body {
   display: inline-block;
   border-radius: 9999px;
   padding: 3px 9px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -654,8 +1242,8 @@ body {
 .tile-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .tile {
@@ -664,7 +1252,7 @@ body {
   aspect-ratio: 1 / 1;
   border-radius: 14px;
   border: 1px solid;
-  padding: 16px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -680,28 +1268,77 @@ body {
   color: inherit;
 }
 
-.tile-success {
-  background: var(--success-bg);
-  border-color: var(--success-border);
-  color: var(--success-text);
+/* THIRD (final) OWNER tile palette pass (2026-08-27, same day) — see this file's own :root comment
+   above for the full reasoning. `.tile-cyan` (Pack Order, second palette) is renamed here to
+   `.tile-pink` to match its new base hue (#FF9FF3) — confirmed via a whole-frontend grep that
+   nothing outside this file and Home.jsx's own `tone` values referenced `.tile-cyan`/`--tile-cyan-*`
+   before renaming, same discipline every rename today has followed. `.tile-green`/`.tile-gold`/
+   `.tile-purple`/`.tile-red`/`.tile-orange`/`.tile-blue`/`.tile-grey` keep their names from the
+   second palette (none of them changed hue family this pass) — only the underlying token hex
+   values moved lighter (or, for Orange/Blue, stayed exactly as they were). New Order keeps the
+   word "purple" for the same reason recorded originally: the colour genuinely is purple and
+   nothing else ever used that class name. */
+.tile-green {
+  background: var(--tile-green-bg);
+  border-color: var(--tile-green-border);
+  color: var(--tile-green-text);
 }
 
-.tile-accent {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  color: var(--accent-text);
+.tile-gold {
+  background: var(--tile-gold-bg);
+  border-color: var(--tile-gold-border);
+  color: var(--tile-gold-text);
 }
 
 .tile-purple {
-  background: var(--purple-bg);
-  border-color: var(--purple-border);
-  color: var(--purple-text);
+  background: var(--tile-purple-bg);
+  border-color: var(--tile-purple-border);
+  color: var(--tile-purple-text);
 }
 
-.tile-warning {
-  background: var(--warning-bg);
-  border-color: var(--warning-border);
-  color: var(--warning-text);
+.tile-pink {
+  background: var(--tile-pink-bg);
+  border-color: var(--tile-pink-border);
+  color: var(--tile-pink-text);
+}
+
+.tile-red {
+  background: var(--tile-red-bg);
+  border-color: var(--tile-red-border);
+  color: var(--tile-red-text);
+}
+
+.tile-orange {
+  background: var(--tile-orange-bg);
+  border-color: var(--tile-orange-border);
+  color: var(--tile-orange-text);
+}
+
+.tile-blue {
+  background: var(--tile-blue-bg);
+  border-color: var(--tile-blue-border);
+  color: var(--tile-blue-text);
+}
+
+.tile-grey {
+  background: var(--tile-grey-bg);
+  border-color: var(--tile-grey-border);
+  color: var(--tile-grey-text);
+}
+
+/* Added 2026-08-22 (same-day follow-up) for STAFF's newly-promoted Transfer Stock tile. Not part
+   of the 2026-08-27 palette replacement above — Transfer isn't one of the 8 OWNER tiles, and
+   Indigo was explicitly confirmed to stay as-is.
+   As of 2026-08-28, Transfer Stock moved off Indigo — briefly onto a new `.tile-yellow` (now
+   removed, see the SUPERSEDED --tile-yellow-* comment above), then same-day onto `.tile-gold`
+   (shared directly with Article Pricing, per Aadi's explicit choice — see LEARNING_LOG.md) — so
+   no tile currently applies this class. Kept rather than deleted, since the underlying
+   --indigo-* variables it reads are still live (utils/avatar.js, Harsh Arora's actor badge),
+   confirmed by a whole-frontend grep for the raw variable name before deciding what to retire. */
+.tile-indigo {
+  background: var(--indigo-bg);
+  border-color: var(--indigo-border);
+  color: var(--indigo-text);
 }
 
 /* --- Footer note (§5.1): small muted banner, staff only --- */
@@ -709,9 +1346,9 @@ body {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   margin: 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
 }
@@ -724,25 +1361,25 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--text-secondary);
-  margin: 20px 0 10px;
+  margin: var(--space-5) 0 10px;
 }
 
 /* --- Receipt table (rule 53): one card per article, grouped, Colour/Sets/Pieces per row --- */
 .receipt-group {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 .receipt-group-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .receipt-group-article {
   font-weight: 700;
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 /* A genuine <table>, not the div-based row list used during staging — rule 53 specifically
@@ -751,12 +1388,12 @@ body {
 .receipt-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .receipt-table th {
   text-align: left;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -766,12 +1403,21 @@ body {
 }
 
 .receipt-table td {
-  padding: 8px 0;
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--divider);
 }
 
 .receipt-table tr:last-child td {
   border-bottom: none;
+}
+
+/* Alternating rows (2026-08-27) — prevents misreading a value into the wrong row once a group has
+   more than a couple of colours. Plain :nth-child is safe here (unlike the dashboard pricing
+   table below): every row in this tbody is a genuine data row, one per `group.rows` entry, with
+   no conditionally-inserted extra <tr> that could shift which rows land on even vs odd. See
+   --row-stripe-fill's own :root comment for why this isn't plain --section-fill. */
+.receipt-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
 }
 
 /* Sets/Pieces right-aligned as numbers; Colour (first column) stays left-aligned. */
@@ -781,7 +1427,7 @@ body {
 }
 
 .receipt-damaged-badge {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 /* Standard offscreen-but-announced technique — content stays in the accessibility tree (screen
@@ -812,12 +1458,12 @@ body {
 .pricing-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .pricing-table th {
   text-align: left;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -828,13 +1474,23 @@ body {
 }
 
 .pricing-table td {
-  padding: 8px 10px 8px 0;
+  padding: var(--space-2) 10px var(--space-2) 0;
   border-bottom: 1px solid var(--divider);
   white-space: nowrap;
 }
 
 .pricing-table tr:last-child td {
   border-bottom: none;
+}
+
+/* Alternating rows (2026-08-27) — same reasoning as .receipt-table above: this is the one screen
+   with the widest real column count (7) on this app's mobile surface, so losing track of which
+   row you're on while scanning right toward Margin/Edit is the exact risk this is for. Plain
+   :nth-child is safe here too — one <tr> per `sortedProducts` entry, no inserted extra rows (the
+   inline edit form for a selected article renders in its own block below the table, never as an
+   additional <tr> inside it). */
+.pricing-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
 }
 
 .pricing-table-num {
@@ -858,7 +1514,7 @@ body {
 
 /* --- Manage Users: account list rows --- */
 .user-list {
-  padding: 4px 20px;
+  padding: var(--space-1) var(--space-5);
 }
 
 /* Tap-to-expand, same visual pattern as Live Stock's article accordion (.accordion-*) — kept
@@ -891,7 +1547,7 @@ body {
 /* Deactivate/Reactivate/Reset Password, revealed on expand instead of always visible — the
    cramped-on-phone problem this whole pattern exists to fix. */
 .user-row-body {
-  margin-top: 12px;
+  margin-top: var(--space-3);
 }
 
 .user-row-info {
@@ -907,12 +1563,12 @@ body {
 }
 
 .user-row-primary-badge {
-  font-size: 9px;
+  font-size: 10px;
   padding: 2px 7px;
 }
 
 .user-row-username {
-  font-size: 11.5px;
+  font-size: 12px;
   margin-top: 1px;
 }
 
@@ -920,7 +1576,7 @@ body {
    — muted rather than a disabled button, since there's nothing to click at all, not a
    temporarily-unavailable action. */
 .user-row-disabled-note {
-  font-size: 11px;
+  font-size: 10px;
   font-style: italic;
   flex-shrink: 0;
 }
@@ -931,7 +1587,7 @@ body {
 .user-row-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 /* --- Confirm modal (§3.4): centered, dark scrim, ~300px card, two full-width buttons --- */
@@ -942,26 +1598,26 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: var(--space-5);
   z-index: 100;
 }
 
 .modal-card {
   background: var(--card-bg);
   border-radius: 16px;
-  padding: 20px;
+  padding: var(--space-5);
   width: 100%;
   max-width: 300px;
 }
 
 .modal-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
 }
 
 .modal-body {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
   margin: 0 0 18px;
@@ -977,7 +1633,7 @@ body {
   flex: 1;
   min-height: 42px;
   border-radius: 10px;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -1020,17 +1676,95 @@ body {
   cursor: default;
 }
 
+/* --- Bill Order's discount/GST questions (added 2026-08-25, rule 101) — rendered as
+   ConfirmModal's `children`, inside the same "Bill this order?" dialog. Both real billing
+   entry points (BillOrderDetail.jsx, dashboard/Orders.jsx) share these classes. --- */
+.bill-pricing-questions {
+  margin: var(--space-1) 0 var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.bill-pricing-pretax {
+  font-size: 12px;
+  margin: 0 0 var(--space-3);
+}
+
+/* Indented under its own checkbox, and capped narrow — a 2-3 digit percent doesn't need a
+   full-width input even inside a already-narrow 300px modal card. */
+.bill-pricing-percent-field {
+  margin-left: var(--space-6);
+  max-width: 120px;
+}
+
+/* Bill No. inside the billing confirm (2026-08-30). Deliberately NOT indented like
+   .bill-pricing-percent-field above — those are sub-answers to their checkbox, whereas this is a
+   top-level optional field that takes no part in the amount arithmetic. Separated from the total
+   line above it by a divider for the same reason: it belongs to the bill, not to the maths. */
+.bill-no-field {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+  max-width: 220px;
+}
+
+/* Negative top margin pulls this up against the percent field's own 14px .field margin-bottom,
+   so the live amount reads as a direct consequence of what was just typed, not a floating line. */
+.bill-pricing-line {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin: -6px 0 var(--space-3) var(--space-6);
+}
+
+.bill-pricing-final {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 14px 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+/* Billing breakdown inside an expanded Owner Dashboard order row (rule 103). Reuses the modal's
+   .bill-pricing-line/.bill-pricing-final type treatment so a billed order reads the same way in
+   both places, but overrides their geometry: those margins are tuned to sit under a percent input
+   mid-modal (negative top margin, 24px indent), which is meaningless here. Scoped under this
+   container so the modal's own usage is untouched. */
+.dash-order-billing {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.dash-order-billing .bill-pricing-line,
+.dash-order-billing .bill-pricing-final {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 6px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.dash-order-billing .bill-pricing-final {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--divider);
+}
+
 /* --- Home: self-service PIN prompt + Manage Users entry point --- */
 .prompt-banner {
   display: flex;
   align-items: center;
   gap: 10px;
   border-radius: 10px;
-  padding: 11px 12px;
+  padding: 11px var(--space-3);
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 .prompt-banner-warning {
@@ -1048,8 +1782,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 4px;
-  font-size: 13px;
+  padding: 11px var(--space-1);
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
   text-decoration: none;
@@ -1058,18 +1792,25 @@ body {
 
 /* --- Home: "More" list (§5.1 — updated) --- */
 .more-list {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .more-list-label {
   margin-bottom: 2px;
 }
 
-/* --- Live Stock View: stat cards (§5.5) --- */
+/* --- Live Stock View: stat cards (§5.5) ---
+   margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded). REVERTED 2026-09-03: .stat-row is shared by LiveStock.jsx, dashboard/LiveStock.jsx,
+   FactoryPayables.jsx and dashboard/Parties.jsx — on Factory Payables specifically the removal
+   collapsed the gap to .stat-hero below it to 0px, visually fusing the Total owed/Total paid
+   cards to the Amount payable hero. Restored the shared margin; Factory Payables' own tighter
+   spacing (if still wanted) belongs on a page-scoped modifier — see .factory-stat-row-tight. */
 .stat-row {
   display: flex;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .stat-card {
@@ -1077,19 +1818,19 @@ body {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 12px;
-  padding: 12px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
 .stat-value {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .stat-label {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -1097,16 +1838,23 @@ body {
    Full-width, larger than .stat-card, accent-tinted background/border/text together per §3.1's
    shared-role rule — same accent role the Owner Dashboard's Stock value KPI is spec'd to use
    for a computed financial figure (§8), even though that screen isn't built yet to copy from. */
+/* margin-bottom: var(--space-4) removed here 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded). REVERTED 2026-09-03: .stat-hero is also shared (FactoryPayables.jsx and
+   dashboard/Parties.jsx) — on Factory Payables the removal collapsed the gap to the History card
+   right after it to 0px, compounding with .stat-row's own removed margin so all three blocks
+   (stat cards / hero / History) sat flush against each other. Restored the shared margin; see
+   .factory-stat-hero-tight for Factory Payables' own scoped tightening. */
 .stat-hero {
   background: var(--accent-bg);
   border: 1px solid var(--accent-border);
   color: var(--accent-text);
   border-radius: 12px;
-  padding: 16px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 16px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
 
 .stat-hero-value {
@@ -1120,6 +1868,28 @@ body {
   /* Inherits the hero's accent-text colour rather than a separate muted tone — §3.1 again:
      every element inside an accent-tinted block stays on that one role, nothing neutral. */
   opacity: 0.85;
+}
+
+/* --- Factory Payables: page-scoped tight spacing (§5.8) ---
+   2026-09-03: Aadi's earlier direct edit removed margin-bottom from the SHARED .field/.stat-row/
+   .stat-hero rules entirely, which broke other pages that reuse them (Manage Users' forms,
+   LiveStock.jsx, dashboard/Parties.jsx — see those rules' own comments). Those base rules have
+   been restored to their original values; these modifiers reproduce the tighter look Aadi
+   appeared to be going for, but scoped to Factory Payables only (applied alongside the base
+   class in FactoryPayables.jsx, same pattern as .dash-donut-card alongside .dash-card).
+   Values are a starting point, not a measured target: roughly half of each base margin, since no
+   specific tighter value was ever specified — worth a look to confirm they match what Aadi
+   actually wants before treating them as final. */
+.factory-field-tight {
+  margin-bottom: 7px;
+}
+
+.factory-stat-row-tight {
+  margin-bottom: var(--space-2);
+}
+
+.factory-stat-hero-tight {
+  margin-bottom: var(--space-2);
 }
 
 /* --- Factory Payables: payment history rows (§5.8) --- */
@@ -1144,7 +1914,7 @@ body {
 }
 
 .payment-history-date {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -1152,14 +1922,67 @@ body {
    a coloured badge, so it doesn't compete with the "+ Owed"/"− Paid" badge for the eye. */
 .payment-history-edited {
   margin-left: 6px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   font-style: italic;
   color: var(--text-tertiary);
 }
 
+/* Bill No. (2026-08-30) — a reference tag shown beside the date on Owed rows. Styled like
+   .payment-history-edited above (muted, small, sitting inline after the date) rather than as a
+   badge, for the same reason: it's a factual annotation for locating paperwork, not a status
+   that needs to compete with the "+ Owed"/"− Paid" badge. Not italic, though — unlike "edited",
+   this is real transcribed data, and italicising a reference someone has to read character by
+   character against a paper bill would hurt legibility for no gain. */
+.payment-history-billno {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.payment-history-billno-edit {
+  margin-left: 6px;
+  font-size: 10px;
+}
+
+/* The inline edit, replacing the tag in place rather than opening a form elsewhere on the row. */
+.payment-history-billno-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+}
+
+.payment-history-billno-form input {
+  /* Narrow on purpose — a bill number is short, and a full-width input here would imply this is
+     a major field rather than a small correction to one line of an existing row. */
+  width: 140px;
+  min-height: 30px;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.payment-history-billno-form .link-button {
+  font-size: 12px;
+}
+
+.payment-history-billno-error {
+  font-size: 10px;
+  color: var(--danger-text);
+  /* Forces the message onto its own line below the input/buttons rather than squeezing into the
+     wrap gap beside them, where a long server message would fragment the row. */
+  flex-basis: 100%;
+}
+
 .payment-history-note {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1182,7 +2005,7 @@ body {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
@@ -1204,9 +2027,9 @@ body {
   position: sticky;
   bottom: 0;
   background: var(--section-fill);
-  padding-top: 12px;
-  padding-bottom: 4px;
-  margin-top: 4px;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-1);
+  margin-top: var(--space-1);
 }
 
 /* Factory Payables' two actions (Record payment / Record amount owed) sit side by side rather
@@ -1221,12 +2044,21 @@ body {
 .sticky-action-row .btn-primary,
 .sticky-action-row .btn-secondary {
   flex: 1;
+  /* margin-top is neutralised here on purpose (fix, 2026-08-30). The two base classes carry
+     DIFFERENT top margins — .btn-primary 6px, .btn-secondary 16px — which is correct where they
+     stack vertically at the end of a form (the secondary wants more separation from the primary
+     above it). Side by side in this flex row it's actively wrong: the row stretches its children
+     to a common height, each MINUS its own top margin, so "Record payment" rendered 10px taller
+     than "Record amount owed" — same font, same padding, visibly different button sizes.
+     Zeroing both here fixes the pair without touching either base class, so every vertical
+     stacking use elsewhere in the app keeps its intended spacing. */
+  margin-top: 0;
 }
 
 .centered-empty-state {
   text-align: center;
   padding: 32px 0;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 /* --- Accordion (Factory outer layer, Article nested inside — rule 57) ---
@@ -1238,11 +2070,28 @@ body {
 }
 
 /* Nested (Article-level) sections sit inside an already-bordered Factory card, so they use a
-   plain top divider instead of their own card border/shadow — a card-inside-a-card would be
-   visual noise the brief's "resizing panel" language doesn't call for. */
+   plain divider instead of their own card border/shadow — a card-inside-a-card would be visual
+   noise the brief's "resizing panel" language doesn't call for.
+   Flipped from border-top to border-bottom 2026-09-03 (Aadi's own direct edit, bundled into
+   cea06cd alongside an unrelated History task — not made through a task prompt, reason not
+   recorded; this comment above still said "top divider" until this note, since the flip hadn't
+   been documented). This class is used broadly (Live Stock, Low Stock, Parties, Transfer,
+   PackOrderDetail/BillOrderDetail/ShipOrderDetail, GoodReturns, NewOrder, Home's "Others" list,
+   dashboard Orders) — checked live on several of these. The change is a symmetric trade, not a
+   new defect: border-top put a divider directly under the section's own header/summary line and
+   left the LAST nested item flush against the container's bottom edge; border-bottom does the
+   reverse — no divider right under the header, but the last item now gets a divider sitting
+   right at the container's own rounded bottom corner (confirmed via computed styles on Live
+   Stock: last item's bottom edge is flush with its parent card's, 0px gap). Neither position is
+   objectively more correct; both put exactly one divider at an edge. One place this reads as a
+   real (if minor) inconsistency rather than a neutral trade: Home's "Others" section sits inside
+   the flat .more-list, where every sibling row (.secondary-link-row) still uses border-top for
+   its own divider — the nested rows inside "Others" now use the opposite convention from the
+   flat rows immediately around them on that one screen. Not broken, but worth Aadi's awareness
+   since Home wasn't necessarily the page this was tested on. */
 .accordion-section.nested {
   margin-bottom: 0;
-  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
 }
 
 .accordion-header {
@@ -1261,7 +2110,7 @@ body {
 }
 
 .accordion-header.nested {
-  padding: 12px 0;
+  padding: var(--space-3) 0;
 }
 
 .accordion-header-text {
@@ -1274,12 +2123,12 @@ body {
 }
 
 .accordion-title-sm {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .accordion-subtitle {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
   display: flex;
@@ -1306,7 +2155,7 @@ body {
 }
 
 .accordion-body.nested {
-  padding: 4px 0 12px;
+  padding: var(--space-1) 0 var(--space-3);
 }
 
 /* --- Individual stock rows: Colour / Location / Sets, per rule 56 never fully tinted --- */
@@ -1314,8 +2163,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  font-size: 12.5px;
+  padding: var(--space-2) 0;
+  font-size: 12px;
 }
 
 .stock-row + .stock-row {
@@ -1339,9 +2188,9 @@ body {
    itself has no equivalent for. --- */
 .party-detail-row {
   display: flex;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 12.5px;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: 12px;
 }
 
 .party-detail-label {
@@ -1352,6 +2201,8 @@ body {
 }
 
 .party-detail-actions {
+  display: flex;
+  gap: var(--space-4);
   margin-top: 10px;
 }
 
@@ -1364,13 +2215,13 @@ body {
 }
 
 .location-subgroup-header {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--text-tertiary);
   background: var(--section-fill);
-  padding: 5px 8px;
+  padding: 5px var(--space-2);
   border-radius: 6px;
   margin-bottom: 2px;
 }
@@ -1382,7 +2233,7 @@ body {
    option carries three pieces of information (article, colour, available quantity) that a
    single-line option label would flatten. */
 .transfer-stock-list {
-  margin: 12px 0;
+  margin: var(--space-3) 0;
   border-top: 1px solid var(--divider);
 }
 
@@ -1391,8 +2242,8 @@ body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 8px;
-  font-size: 12.5px;
+  padding: 10px var(--space-2);
+  font-size: 12px;
   text-align: left;
   background: none;
   border: none;
@@ -1425,23 +2276,60 @@ body {
   white-space: nowrap;
 }
 
+/* One Article's chip+stepper+"Add selected" block (2026-08-26) — same divider rhythm
+   .transfer-stock-row's own border-bottom already gave each colour row, now applied once per
+   Article block instead of once per individual row (a block can hold several colours' steppers
+   at once). Used both directly inside .transfer-stock-list (a single-colour Article, no
+   accordion wrapper) and inside a multi-colour Article's own .accordion-body.nested, where
+   :last-child trivially applies since it's the only child there. */
+.transfer-article-chips {
+  padding: 10px var(--space-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.transfer-article-chips:last-child {
+  border-bottom: none;
+}
+
+/* Search results, grouped by Article (2026-08-28) — one wrapper per Article, holding a plain
+   non-collapsible header (.transfer-search-group-header) plus that Article's own
+   .transfer-article-chips block. The divider lives HERE rather than relying on
+   .transfer-article-chips' own border-bottom: that rule removes itself on :last-child, but
+   inside this wrapper .transfer-article-chips is always the wrapper's own last (and only other)
+   child regardless of how many search groups follow it — so without this rule, every group's
+   divider would vanish, not just the final one. */
+.transfer-search-group {
+  border-bottom: 1px solid var(--divider);
+}
+
+.transfer-search-group:last-child {
+  border-bottom: none;
+}
+
+/* Matches .transfer-article-chips' own horizontal padding so the header and its chips below
+   read as one aligned block; top-padding only since the chips block's own padding handles the
+   bottom. */
+.transfer-search-group-header {
+  padding: 10px var(--space-2) 0;
+}
+
 /* --- New Order: Party picker --- */
 .party-picker-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .party-option-row {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
+  padding: var(--space-2) 10px;
   border: none;
   background: none;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-primary);
   cursor: pointer;
   border-radius: 8px;
@@ -1462,14 +2350,14 @@ body {
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 10px;
-  margin-top: 20px;
+  margin-top: var(--space-5);
 }
 
 .color-chip-block-stepper-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .color-chip-low-badge {
@@ -1486,11 +2374,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 14px var(--space-4);
   margin-bottom: 10px;
   text-decoration: none;
   color: inherit;
@@ -1525,33 +2413,47 @@ body {
 
 /* Compound selector (not a bare .pack-line-row-short) so this wins over the adjacency divider
    rule above at equal specificity — a straight divider line cutting across this tinted block's
-   rounded corners would look like a rendering glitch, not a second visual treatment. */
+   rounded corners would look like a rendering glitch, not a second visual treatment.
+   Same whisper-tint-plus-left-border treatment as .pack-line-row-confirmed below, and for the
+   same reason (quieted 2026-08-21) — a full solid --warning-bg fill on every short-packed line
+   was just as loud as the green one, and a tone pass that quieted one but not the other would
+   still leave the screen with a full-saturation state competing for attention. */
 .pack-line-row.pack-line-row-short {
-  background: var(--warning-bg);
+  background: color-mix(in srgb, var(--warning-bg) 45%, transparent);
   border-top: none;
-  border-radius: 8px;
-  padding: 10px;
-  margin: 4px 0;
+  border-left: 3px solid var(--warning-border);
+  border-radius: 6px;
+  padding: 10px 10px 10px 9px;
+  margin: var(--space-1) 0;
 }
 
-/* Checklist-first row treatment (2026-08-19). A confirmed line reads as DONE at a glance —
-   success-green tint plus struck-through text — using the same --success-* tokens every other
-   "this succeeded" surface in this app uses, rather than a green invented for this screen.
+/* Checklist-first row treatment (2026-08-19; quieted 2026-08-21 — see LEARNING_LOG.md). A
+   confirmed line reads as DONE at a glance, but no longer via a full solid --success-bg fill
+   covering the whole row: on a several-line order that meant multiple full-saturation green
+   cards competing with the amber short-pack cards, the persistent red cancel link, AND the
+   primary action bar all at once. Now it's a whisper tint (color-mix, not the raw token — this
+   is a NEW, screen-local way of using the shared success tokens more sparingly, not a redefinition
+   of what they mean) plus a left accent border; the actual "confirmed" signal is carried by the
+   green checkmark icon (.pack-line-status-full) and the strikethrough, not by recoloring the row.
    Compound selector for the same reason .pack-line-row-short needs one: it has to beat the
    .pack-line-row + .pack-line-row divider at equal specificity, or a border cuts across the
    tinted block's rounded corners and reads as a rendering glitch. */
 .pack-line-row.pack-line-row-confirmed {
-  background: var(--success-bg);
+  background: color-mix(in srgb, var(--success-bg) 45%, transparent);
   border-top: none;
-  border-radius: 8px;
-  padding: 10px;
-  margin: 4px 0;
+  border-left: 3px solid var(--success-border);
+  border-radius: 6px;
+  padding: 10px 10px 10px 9px;
+  margin: var(--space-1) 0;
 }
 
+/* Text stays muted, not green — recoloring both the chip and the ordered-quantity text on every
+   confirmed row was the row's second competing colour signal (the icon is the first and only one
+   needed). Strikethrough alone already communicates "done" without adding saturation. */
 .pack-line-row-confirmed .pack-line-color-chip,
 .pack-line-row-confirmed .pack-line-ordered {
   text-decoration: line-through;
-  color: var(--success-text);
+  color: var(--text-secondary);
 }
 
 .pack-line-row-confirmed .pack-line-color-chip {
@@ -1592,11 +2494,26 @@ body {
   opacity: 0.6;
 }
 
+/* Deliberate keyboard-focus treatment (2026-08-21) — replacing the unstyled browser default,
+   which was a flat rectangular UA blue (#005fcc-ish) with hard square corners slapped over a
+   rounded row: visible, but foreign to this app's own palette and shape language, not a colour
+   or corner radius that exists anywhere else on this screen. Neutral dark, not a semantic role
+   colour (§3.1 reserves success/danger/warning/accent for MEANING; a focus ring is chrome, not a
+   state), same tone the "Selected chip" token already uses elsewhere for "this is deliberately
+   highlighted." Offset + a radius on the button itself so the ring reads as a soft rounded
+   outline around the row rather than a hard box cutting across it. */
+.pack-line-tap:focus-visible,
+.pack-line-adjust-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
 .pack-line-tap-text {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -1611,9 +2528,9 @@ body {
   background: none;
   border: 1px solid var(--card-border);
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   min-height: 36px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
@@ -1625,44 +2542,55 @@ body {
 }
 
 .pack-line-adjust-panel {
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
   border-top: 1px solid var(--divider);
 }
 
 .pack-line-adjust-confirm {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 /* Small tinted chip behind the colour name — reuses --section-fill, the same neutral tint
    token .location-subgroup-header already uses for "this label needs to read as its own thing
    against a plain row," rather than inventing a new colour just for this. Needed now that the
    colour name no longer sits inside its own bordered card. */
+/* Wraps the colour chip and its optional low-stock badge (rule 56) so the two sit inline side by
+   side — .pack-line-tap-text (the parent) is flex-direction: column for its own reasons (chip
+   stacked above the ordered/status text), so without this the badge would stack under the chip
+   instead of beside it. Same 10px gap .color-chip-low-badge already uses for badge-next-to-pill
+   spacing, kept consistent rather than picking a new number. */
+.pack-line-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .pack-line-color-chip {
   display: inline-block;
   background: var(--section-fill);
   border-radius: 6px;
-  padding: 4px 9px;
-  font-size: 12.5px;
+  padding: var(--space-1) 9px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .pack-line-ordered {
   font-size: 12px;
   color: var(--text-secondary);
-  margin: 8px 0 0;
+  margin: var(--space-2) 0 0;
 }
 
 .pack-line-stepper-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .pack-line-shortfall-note {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--warning-text);
   margin: 6px 0 0;
 }
@@ -1686,8 +2614,128 @@ body {
 }
 
 .pack-order-tally {
-  margin: 0 0 8px;
-  font-size: 12.5px;
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+}
+
+/* Bottom action bar (2026-08-21 tone pass, part 2) — the one thing the per-line pass left alone,
+   and it visibly clashed with the quieted rows above it: a solid heavy blue block sitting right
+   on top of a solid heavy red block, right under a screen that had otherwise gone quiet.
+   Both buttons KEEP .btn-primary/.btn-danger in their className for shared LAYOUT (width,
+   min-height, radius, type scale — structural, not colour, and shared with every button in the
+   app). Only colour is overridden here, via a MORE SPECIFIC class added alongside — never by
+   editing .btn-primary/.btn-danger themselves, which BillOrderDetail.jsx and presumably other
+   screens also use; touching those directly would have silently changed every one of them. */
+
+/* Mark as packed — swipe-to-confirm (added 2026-09-02, replacing the flat solid-fill button this
+   comment used to describe). KEEPS .btn-primary in its className for the same shared LAYOUT this
+   file's own header comment already states (width/min-height/radius/type scale) — only colour
+   AND now structure (position/overflow/padding, for the thumb to lay out inside it) are
+   overridden here, via this more-specific class declared after .btn-primary in source order,
+   same override mechanism .pack-mark-packed-btn relied on before it. Neutral track (--section-
+   fill), not a bold fill — the track itself no longer carries the "primary action" signal alone;
+   the dark thumb + its own drag affordance now do that job instead. */
+.pack-swipe-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--section-fill);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  padding: 0;
+  /* Scaled up (2026-09-02 design pass) from the original 48px — comfortably past .btn-primary's
+     44px floor either way, but now with real room to spare rather than just clearing it. Pill
+     shape (999px) matches the approved design; the 60px thumb (below) still insets symmetrically
+     inside it. */
+  min-height: 76px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Success state (2026-09-02) — toast-style tint, applied ALONGSIDE .pack-swipe-track (not
+   instead of it) once packOrder() actually succeeds; see PackOrderDetail.jsx's justPacked.
+   Declared after .pack-swipe-track in source order so its background/border win the tie at
+   equal specificity, same idiom .dash-pricing-row-editing already uses over .dash-pricing-row-alt. */
+.pack-swipe-track-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.pack-swipe-label {
+  font-size: 17px;
+  font-weight: 700;
+  /* The label never receives pointer events itself — dragging only ever starts on the thumb
+     (see PackOrderDetail.jsx's handleThumbPointerDown), and a plain tap anywhere, label included,
+     is meant to bubble up to the track <button>'s own onClick exactly like tapping bare track
+     background does. */
+  pointer-events: none;
+}
+
+/* The draggable thumb — absolutely positioned so its CSS `transform: translateX(...)` (set
+   inline, from PackOrderDetail.jsx's live drag state) moves it WITHOUT shifting any layout
+   property, per this task's own requirement. Dark fill, same --text-primary token (#1C1B19)
+   every other deliberate dark-neutral accent in this app already uses (e.g. the focus rings a
+   few rules above), not a new colour invented for this one control. Inset (8px) scales with the
+   track/thumb size pair above — same symmetric margin ratio the original 4px-on-48px track had. */
+.pack-swipe-thumb {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 60px;
+  height: 60px;
+  border-radius: 999px;
+  background: var(--text-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.pack-swipe-thumb-success {
+  background: var(--success-text);
+}
+
+.pack-swipe-thumb-icon {
+  display: inline-flex;
+  /* ChevronIcon points down by default (the accordion caret shape) — rotated to point right,
+     matching the direction this thumb actually travels. */
+  transform: rotate(-90deg);
+}
+
+/* CheckCircleIcon is already upright — unlike ChevronIcon, it has no "resting" rotation to
+   inherit, so the success state overrides the rotation back off rather than adding one. */
+.pack-swipe-thumb-icon-success {
+  transform: none;
+}
+
+/* Cancel this order: same "quiet by default, full weight only on real interaction" principle as
+   .pack-line-cancel-link above, extended to a rarer, more consequential version of the same kind
+   of action — whole order, not one line, so the same restraint applies at least as strongly.
+   Outlined and muted at rest; escalates to the real solid --danger-text fill only on hover/focus.
+   The ConfirmModal this button already leads to is the actual safety gate for the destructive
+   action itself, so the button doesn't need to pre-emptively shout before that point. */
+.pack-order-cancel-btn {
+  background: transparent;
+  border: 1.5px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+.pack-order-cancel-btn:hover,
+.pack-order-cancel-btn:focus-visible {
+  background: var(--danger-text);
+  border-color: var(--danger-text);
+  color: #fff;
+}
+
+/* Same neutral deliberate focus ring as the per-line controls above, not the browser's default
+   blue box — see .pack-line-tap:focus-visible's comment for the full reasoning. */
+.pack-swipe-track:focus-visible,
+.pack-order-cancel-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
 }
 
 /* --- History: a flat reverse-chronological feed, grouped into day sections for scannability.
@@ -1695,7 +2743,7 @@ body {
    same divider-between-siblings idiom as .stock-row / .pack-line-row rather than each becoming
    its own card, which at feed length would be a wall of borders. */
 .history-day + .history-day {
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 
 .history-day-heading {
@@ -1703,15 +2751,23 @@ body {
 }
 
 .history-day-card {
-  padding: 4px 16px;
+  padding: var(--space-1) var(--space-4);
 }
 
 .history-row {
-  padding: 12px 0;
+  padding: var(--space-3) 0;
 }
 
 .history-row + .history-row {
   border-top: 1px solid var(--divider);
+}
+
+/* Drill-down picker (2026-08-29) — the value dropdown/article-search plus its optional date range,
+   rendered above the filtered result for every mode but Chronological. Just a bit of breathing
+   room before the first day-section starts; the field/field-row/chip-row/lookup-banner classes
+   inside it are all pre-existing generic form styles, nothing bespoke needed here. */
+.history-drilldown {
+  margin-bottom: var(--space-2);
 }
 
 .history-row-top {
@@ -1723,19 +2779,113 @@ body {
 }
 
 .history-row-time {
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .history-row-description {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
 .history-row-actor {
   margin: 3px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Replaces the earlier avatar-circle-plus-plain-text pair (2026-08-26) with ONE pill containing
+   the actor's full name — same shape/padding/weight family as this app's own .badge (the type tag
+   right above it on the same row), reusing that class directly rather than re-declaring an
+   identical shape under a new name. font-size is bumped slightly past .badge's own 10.5px because
+   this pill holds a real name ("Mukesh Kumar Yadav"), not a short status word, and needed to stay
+   comfortably legible at that length — confirmed not to wrap or overflow at a real 390px mobile
+   width. Background/text colour is NOT set here — it comes from an inline style driven by
+   utils/avatar.js's actorBadgeColorFor(actorName), a manually-curated map (never a hash — see
+   that function's own comment for why two automated attempts were discarded), so this rule only
+   owns shape, never colour. */
+.history-actor-badge {
+  font-size: 12px;
+}
+
+/* --- Owner Dashboard History: single-line row (2026-09-03, approved mockup variant B) ---
+   .history-row-top/.history-row-description/.history-row-actor above are SHARED with mobile
+   History.jsx's own rows (still the original multi-line stack, unchanged) — their base rules are
+   deliberately left untouched. Everything below is scoped under this new wrapper class instead,
+   which only dashboard/History.jsx's renderEntry() renders, so mobile's rows can't be silently
+   affected by a dashboard-only redesign. Order: type badge, description, person badge, optional
+   party name, Correct button, timestamp — Correct and the timestamp land right-aligned simply
+   because description is the only flex: 1 child (it consumes all remaining space), not via a
+   separate margin-left: auto rule. */
+.dash-history-row-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Allowed to truncate with an ellipsis on a long/narrow row — that's the point of a single-line
+   layout. The person badge right after it must NOT do the same (see .history-actor-badge's own
+   flex-shrink: 0 below) — truncating a person's name in a role-attribution context is a real
+   information loss in a way truncating a description mid-sentence isn't. */
+.dash-history-row-line .history-row-description {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-history-row-line .badge,
+.dash-history-row-line .history-row-time {
+  flex-shrink: 0;
+}
+
+.dash-history-row-party {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+/* Correct, restyled from underlined text to a real small button (approved mockup variant B) —
+   badge-scale proportions (matches .badge's own pill shape/padding family) but with genuine
+   button affordance, since unlike the labels beside it, this one does something. Accent-toned,
+   not danger: correcting a receipt/transfer is a routine data-entry fix, not a destructive
+   action (§3.1 reserves danger for negative/removal). */
+.history-row-correct-btn {
+  flex-shrink: 0;
+  display: inline-block;
+  border-radius: 9999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-text);
+  cursor: pointer;
+  margin-inline: 20px;
+}
+
+.history-row-correct-btn:hover {
+  background: var(--accent-border);
+}
+
+/* --- Owner Dashboard History: Transaction Correction (added 2026-08-21, rule 70 reversed) ---
+   Not shared with mobile (mobile's History.jsx never renders a Correct affordance, so it has no
+   "already corrected" state to show either) — safe to edit directly rather than scope under
+   .dash-history-row-line like the rules above. display:block/margin-top dropped now that this
+   renders inline within the single-line row instead of stacked below it. */
+.history-row-corrected-note {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.dash-history-correction {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
 }
 
 /* --- Bill Orders / Ship Order: read-only line rows inside an expanded article. Lighter than
@@ -1752,7 +2902,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .bill-line-row + .bill-line-row {
@@ -1760,7 +2910,7 @@ body {
 }
 
 .bill-line-qty {
-  font-size: 12.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -1780,12 +2930,12 @@ body {
   border-top: none;
   border-radius: 8px;
   padding: 10px;
-  margin: 4px 0;
+  margin: var(--space-1) 0;
 }
 
 .bill-line-blocked-note {
   margin: 6px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--danger-text);
 }
@@ -1793,7 +2943,7 @@ body {
 /* Sits directly above the disabled "Bill this order" button in the sticky bar, so the reason the
    control is unavailable is visible without hunting through the article list for red rows. */
 .bill-blocked-note {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   padding: 9px 11px;
   border-radius: 8px;
   background: var(--danger-bg);
@@ -1824,12 +2974,1523 @@ body {
    not compete with the screen's primary action. */
 .line-cancel-link {
   display: inline-block;
-  margin-top: 8px;
-  font-size: 11.5px;
+  margin-top: var(--space-2);
+  font-size: 12px;
 }
 
 /* Order-level cancel: full-width and visually separated from the primary action above it, so
    "Mark as packed"/"Bill this order" and "Cancel this order" can never be tapped for each other. */
 .order-cancel-button {
   margin-top: 10px;
+}
+
+/* Pack Order's OWN per-row cancel link (2026-08-21 tone pass) — deliberately a separate class
+   from .line-cancel-link above, not a modification of it: that class (plus .danger-text) is also
+   used by BillOrderDetail.jsx, so changing it would have silently muted Bill Order's own cancel
+   link too, a screen this task was never asked to touch. "Cancel this line" is a rare, deliberate
+   action repeated on every single row — full saturated --danger-text as a PERMANENT link colour
+   on every row of a several-line order reads as ambient noise, not a real warning, and dilutes
+   what red actually means everywhere else on this screen. Muted by default; only actually turns
+   red on hover/focus, when someone is genuinely about to use it. */
+.pack-line-cancel-link {
+  display: inline-block;
+  margin-top: var(--space-2);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.pack-line-cancel-link:hover,
+.pack-line-cancel-link:focus-visible {
+  color: var(--danger-text);
+}
+
+/* ===================================================================================
+   Owner Desktop Dashboard — 07_UI_DESIGN_BRIEF.md §8, design bundle "Owner Dashboard.dc.html".
+
+   A desktop surface that supplements the mobile app rather than replacing it (§8, rule 15), so
+   none of this reuses `.page` — that wrapper is capped at 480px for the phone-shaped screens, and
+   a rail-plus-content layout inside it would be unusable.
+
+   Colours below are §3.4's semantic tokens, already defined at the top of this file. The design
+   bundle ships its own :root block restating them as literal hex; those values are identical to
+   our tokens (it was retuned to them — see the bundle's github.md), so this references the tokens
+   rather than re-hard-coding the same hexes a second time and inviting drift.
+
+   The bundle also assumes a --space-2..6 scale from a design system we don't have. Defined here on
+   a standard 4px base; the task confirmed pixel-exactness on spacing isn't required.
+   =================================================================================== */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+}
+
+.dash {
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
+  /* --section-fill IS this app's canvas colour (#F5F4F1) — it's what `body` already uses. The
+     design bundle calls the same hex --color-bg; there is no --bg token in this codebase. */
+  background: var(--section-fill);
+  color: var(--text-primary);
+}
+
+/* --- Left rail. Sticky and full-height so only the content pane scrolls (§8). */
+.dash-rail {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  flex: none;
+  width: 218px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-sizing: border-box;
+}
+
+.dash-rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px var(--space-4);
+}
+
+.dash-rail-logo {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dash-rail-brand-text {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dash-rail-brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-rail-brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  white-space: nowrap;
+}
+
+.dash-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The active row is marked by a 2px left bar plus a tinted fill — the design's own treatment.
+   The bar is always present but transparent when inactive, so a row never shifts by 2px as it
+   becomes active. */
+.dash-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px var(--space-2);
+  font-size: 14px;
+  white-space: nowrap;
+  border-left: 2px solid transparent;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.dash-nav-link:hover {
+  background: var(--section-fill);
+}
+
+.dash-nav-link-active {
+  border-left-color: var(--accent-text);
+  color: var(--accent-text);
+  background: var(--accent-bg);
+  font-weight: 600;
+}
+
+.dash-rail-exit {
+  margin-top: auto;
+  padding: 9px var(--space-2);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.dash-rail-exit:hover {
+  color: var(--accent-text);
+}
+
+/* --- Main column. */
+.dash-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-header {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--card-border);
+  background: var(--card-bg);
+  flex-wrap: wrap;
+}
+
+.dash-header-crumb {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+
+.dash-header-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Groups the date and the lock button as one right-hand cluster. margin-left:auto moves here
+   from .dash-header-date (which now sits inside this wrapper, so its own auto margin would have
+   pushed it away from the lock button instead of pushing the pair to the right). */
+.dash-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.dash-header-date {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* --- Owner Dashboard PIN lock (added 2026-08-21) --- */
+.dash-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 6px var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dash-lock-btn:hover:not(:disabled) {
+  background: var(--section-fill);
+  color: var(--text-primary);
+}
+
+.dash-lock-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The positioning context for the overlay below. */
+.dash-content-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* While locked, the content pane is clipped to the visible area rather than being allowed to
+   contribute its full scroll height. Without this, a long page (say Locations or a 30-row
+   History) would leave the absolutely-positioned overlay stretched over a tall region, putting
+   the PIN card wherever the owner happened to be scrolled. Clipping means the overlay is exactly
+   one screen and the card lands centred every time. */
+.dash-content-wrap-locked {
+  max-height: calc(100vh - 88px);
+  overflow: hidden;
+}
+
+.dash-content {
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* --- KPI row. Fixed 4-column grid (2026-09-01, replacing the original 6-card auto-fit/minmax
+   layout) — 8 cards now, and the task's own spec calls for a deliberate 4-and-4 layout rather
+   than however many columns auto-fit happens to land on at a given window width. */
+.dash-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.dash-kpi {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: var(--space-4);
+  box-sizing: border-box;
+}
+
+.dash-kpi-label {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.dash-kpi-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-kpi-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-top: 6px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.dash-kpi-sub {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.dash-kpi-sub-muted {
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+/* Role-tinted variants. Each sets background, border AND text together, per §3.1's rule that a
+   role's three colours always travel as a set. */
+.dash-kpi-accent {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.dash-kpi-accent .dash-kpi-label,
+.dash-kpi-accent .dash-kpi-value,
+.dash-kpi-accent .dash-kpi-sub {
+  color: var(--accent-text);
+}
+
+.dash-kpi-purple {
+  background: var(--purple-bg);
+  border-color: var(--purple-border);
+}
+.dash-kpi-purple .dash-kpi-label,
+.dash-kpi-purple .dash-kpi-value,
+.dash-kpi-purple .dash-kpi-sub {
+  color: var(--purple-text);
+}
+
+.dash-kpi-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+.dash-kpi-danger .dash-kpi-label,
+.dash-kpi-danger .dash-kpi-value,
+.dash-kpi-danger .dash-kpi-sub {
+  color: var(--danger-text);
+}
+
+.dash-kpi-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+.dash-kpi-success .dash-kpi-label,
+.dash-kpi-success .dash-kpi-value,
+.dash-kpi-success .dash-kpi-sub {
+  color: var(--success-text);
+}
+
+.dash-kpi-indigo {
+  background: var(--indigo-bg);
+  border-color: var(--indigo-border);
+}
+.dash-kpi-indigo .dash-kpi-label,
+.dash-kpi-indigo .dash-kpi-value,
+.dash-kpi-indigo .dash-kpi-sub {
+  color: var(--indigo-text);
+}
+
+.dash-kpi-fuchsia {
+  background: var(--fuchsia-bg);
+  border-color: var(--fuchsia-border);
+}
+.dash-kpi-fuchsia .dash-kpi-label,
+.dash-kpi-fuchsia .dash-kpi-value,
+.dash-kpi-fuchsia .dash-kpi-sub {
+  color: var(--fuchsia-text);
+}
+
+.dash-kpi-link {
+  display: block;
+  text-decoration: none;
+}
+
+/* Dimmed, not blanked, while the Revenue figure is being recomputed — the previous number stays
+   readable so the card never flashes empty on a selector change. */
+.dash-kpi-busy {
+  opacity: 0.6;
+}
+
+.dash-kpi-select {
+  margin-left: auto;
+  width: auto;
+  min-height: 22px;
+  padding: 0 var(--space-1);
+  font-size: 10px;
+  font-weight: 600;
+  border: 0;
+  background: transparent;
+  color: var(--success-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* --- DonutChart (2026-09-02). Generic — nothing here references a specific caller's data or
+   colours; a page composes its own legend markup around this next to it. */
+.donut-chart {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.donut-chart-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-chart-center-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.donut-chart-center-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Donut row's own grid (2026-09-02) — deliberately DOES NOT share a class with .dash-kpi-grid
+   above it any more. That sharing existed only so the donut columns lined up under the KPI
+   cards' columns; the donuts have since grown to their own larger, independent size (see
+   DonutChart's size/strokeWidth props in Locations.jsx) and that alignment is intentionally
+   dropped, not preserved — if a future reader is tempted to point this back at .dash-kpi-grid
+   "to keep them in sync", that sync is no longer the intent. Fixed at exactly 3 columns
+   (never auto-fit/auto-fill): this is a desktop-only OWNER screen, so a fixed 3-up layout is
+   correct rather than something that should reflow at narrower widths. */
+.dash-donut-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+
+/* Modifier applied ALONGSIDE .dash-card (not a replacement) — .dash-card itself is shared by
+   most other dashboard pages (Overview, Orders, Parties, History, Low stock, Live Stock,
+   ComingSoon), so its own padding rule stays untouched; this only widens padding for these three
+   donut cards specifically. --space-6 (24px, see LEARNING_LOG.md for that decision) — reused for
+   both axes since the mockup's 28px vertical value had no matching token.
+   FIXED 2026-09-03: Aadi's later direct edit (bundled into cea06cd alongside an unrelated
+   History task — not made through a task prompt) had changed this to var(--space-8), which is
+   NOT DEFINED anywhere in this file (the --space-* scale tops out at --space-6). That was
+   already a bug on its own (an undefined var() with no fallback invalidates the whole
+   declaration), but fixing the value back to --space-6 alone was NOT enough to actually restore
+   the padding — confirmed live it was still computing to .dash-card's own 8px 16px even with a
+   valid value. Root cause: .dash-card's own rule sits LATER in this file (further down, near the
+   other .dash-* card rules) and both selectors have equal specificity (one class each), so
+   .dash-card's padding wins the cascade regardless of what .dash-donut-card says — the original
+   "undefined token" diagnosis was real but incomplete. Fixed properly by compounding the
+   selector to .dash-card.dash-donut-card, which has higher specificity and wins independent of
+   source order — matches how the two classes are actually applied together in Locations.jsx. */
+.dash-card.dash-donut-card {
+  padding: var(--space-6);
+}
+
+/* Locations.jsx's location-comparison donut cards — the only current DonutChart caller. Kept here
+   rather than in DonutChart's own block above since this is this ONE page's layout choice, not
+   something the reusable component should know about.
+   Legend moved to a centered row ABOVE the donut (was beside it) — each location's swatch/name/
+   value sits together as one inline item, wrapping onto a second line if the card gets narrow
+   rather than overflowing. */
+/* padding: 25px added 2026-09-03 — a FIFTH manual edit bundled into cea06cd that this task's own
+   instructions didn't enumerate (Aadi's own direct edit, not made through a task prompt, reason
+   not recorded — found only while documenting the four the task DID list; flagged to Aadi
+   separately since the task's count was off by more than this one). Plausible (not certain)
+   explanation, given the evidence: .dash-donut-card's own padding is currently broken (see that
+   rule's own comment — its var(--space-8) is undefined, so it silently falls back to a much
+   smaller 8px/16px than intended), and this 25px inner padding happens to visually compensate,
+   giving the card reasonable-looking breathing room despite the outer bug. Checked live — reads
+   fine on all three donut cards, the only consumers (Locations.jsx). */
+.dash-donut-legend-top {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  padding: 25px;
+}
+
+.dash-donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dash-donut-center-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.dash-donut-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* A location whose value is <= 0 has no slice on the ring (DonutChart itself already excludes
+   it) — this swatch variant marks that in the legend instead of a solid colour, which would
+   otherwise imply a ring slice that isn't there. Dashed + hollow + circular is deliberately
+   distinct from the solid, rounded-square "real slice" swatch above, not just a different
+   colour — --danger-border/text is this app's existing negative/bad-value semantic token
+   (§3.1), reused rather than inventing a new one for this one case. */
+.dash-donut-legend-swatch-hidden {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--danger-border);
+  background: none;
+  flex-shrink: 0;
+}
+
+/* padding: 25px added 2026-09-03 — a SIXTH manual edit bundled into cea06cd, same situation as
+   .dash-donut-legend-top's own comment above (not in the task's enumerated four, found while
+   documenting them, reason not recorded, plausibly compensating for the same .dash-donut-card
+   padding bug). Checked live — reads fine, only consumer is Locations.jsx. */
+.dash-donut-caption {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--danger-text);
+  padding: 25px;
+}
+
+.dash-donut-legend-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dash-donut-legend-value {
+  color: var(--text-secondary);
+  margin-left: var(--space-2);
+}
+
+/* --- Sections and the activity feed. */
+.dash-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: var(--space-3);
+}
+
+.dash-section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dash-section-link {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--accent-text);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.dash-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(28, 27, 25, 0.04);
+  padding: var(--space-2) var(--space-4);
+}
+
+.dash-activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: 9px 0;
+  font-size: 14px;
+}
+
+.dash-activity-row + .dash-activity-row {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-activity-kind {
+  flex: none;
+  width: 74px;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--accent-text);
+}
+
+.dash-activity-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-activity-who {
+  flex: none;
+  width: 90px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.dash-activity-when {
+  flex: none;
+  width: 118px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.dash-empty {
+  padding: var(--space-4) 0;
+  text-align: center;
+}
+
+/* --- Owner Dashboard: Orders page (§8) --- */
+/* Wraps the accordion toggle button and the sibling "Mark billed" button — kept as SEPARATE
+   elements (never a button nested inside the toggle button) for the same reason Pack Order's own
+   tap/adjust pair are siblings: a <button> inside a <button> is invalid HTML and browsers drop
+   the inner one's events. */
+.dash-order-row-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-order-row-header .accordion-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-order-row-header .btn-inline {
+  margin-top: 0;
+}
+
+.dash-order-status-badge {
+  margin-left: var(--space-2);
+}
+
+/* Second dash-section on the Orders page (month toggle, added 2026-08-20) — the same gap
+   .dash-section-head already gives itself below, just needed ABOVE the second section too now
+   that there are two stacked sections instead of one. */
+.dash-section-spaced {
+  margin-top: var(--space-6);
+}
+
+/* Month dropdown next to the "Order history" section title — deliberately its own compact
+   control rather than the generic .field/.field select pair (those are sized/spaced for a
+   full-width form field, not an inline control sitting next to a heading). */
+.dash-month-picker {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dash-month-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dash-month-picker select {
+  width: auto;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.dash-order-line {
+  padding: 10px 0;
+  font-size: 12px;
+}
+
+.dash-order-line + .dash-order-line {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-order-line-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dash-order-line-label {
+  font-weight: 700;
+}
+
+.dash-order-line-cancelled .dash-order-line-label {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.dash-order-line-meta {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 12px;
+}
+
+/* Same struck-through-name treatment as a cancelled line (.dash-order-line-cancelled above),
+   applied at the order level — never a fully-tinted card (rule 56's "small flag, not a solid
+   tint" convention extended to this row, consistent with how a cancelled line/order reads
+   everywhere else in this app: visible, struck through, not hidden or heavily recoloured). */
+.dash-order-row-cancelled .dash-order-party-name {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+/* --- Owner Dashboard: Low Stock page (§8, §5.7, rule 56) --- + shared with the staff-facing Low
+   Stock List page (LowStockList.jsx) --- */
+/* Both the factory and article layers now collapse, reusing the shared
+   .accordion-section/.accordion-header pattern (Live Stock/Pack Order/Bill Order) — the factory
+   layer used to be a plain always-expanded heading, but that drifted from Live Stock's own
+   factory-collapses-too convention, so it was brought in line with it (2026-08-26). The factory
+   wrapper itself uses the plain (non-`.nested`) accordion classes since it's the outer layer here,
+   same as Live Stock's own factory card; .dash-lowstock-card is just the inner content card that
+   now sits inside each factory's .accordion-body. */
+.dash-lowstock-card {
+  padding: var(--space-1) var(--space-4);
+}
+
+.dash-lowstock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.dash-lowstock-row + .dash-lowstock-row {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-lowstock-row-main {
+  min-width: 0;
+}
+
+.dash-lowstock-article {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.dash-lowstock-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* --- Owner Dashboard: Parties page (§8, rule 98) --- */
+/* Single-column layout, 2026-08-28 (supersedes the original fixed-left-column master-detail
+   grid — see dashboard/Parties.jsx's own header comment for why, including the same-day revision
+   splitting this into two separate pieces): PartySearchBar (lookup) then PartyInfoBox (constant
+   display of the current selection) stack at the top, both full width; Sales Summary/Party
+   Payables/Orders and bills stack below them, also full width, now that there's no separate list
+   column splitting the page in two. */
+.dash-parties-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dash-party-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* PartySearchBar — a real .field so it inherits the app's standard input look
+   (.field input:not([type='checkbox']) above) for free, matching every other text input rather
+   than a bespoke one just for this screen. margin-bottom:0 overrides .field's own default
+   spacing, since .dash-parties-layout's own flex gap already spaces this from its neighbours —
+   without this override the two would stack, doubling the gap. */
+.dash-party-search {
+  margin-bottom: 0;
+}
+
+.dash-party-option-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.dash-party-option-location {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* PartyInfoBox — a CONSTANT display, not a control: no cursor:pointer, no hover state, per
+   Aadi's own correction that this box must never itself act like a button or an input (that's
+   PartySearchBar's separate job, above). justify-content: space-between is what actually spreads
+   Name/Address/GST/Phone evenly across the full width, rather than clustering them on the left
+   with empty space on the right. */
+.dash-party-summary-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px var(--space-4);
+  width: 100%;
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: var(--space-3) 14px;
+}
+
+.dash-party-summary-empty {
+  justify-content: flex-start;
+  font-size: 14px;
+}
+
+.dash-party-summary-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dash-party-summary-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* The "Address:"/"GST:"/"Phone number:" prefixes themselves — a lighter weight/tint than the
+   value that follows, so the label reads as a label rather than more of the value. */
+.dash-party-summary-field-label {
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+/* GSTIN row: the copy button sits directly next to the number itself (per §8), not next to the
+   "GST:" label — .dash-party-summary-field-label is the label, this span is the label+value+
+   button together. */
+.dash-party-gstin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-party-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  border-radius: 6px;
+}
+
+.dash-party-copy-btn:hover {
+  color: var(--text-secondary);
+  background: var(--section-fill);
+}
+
+.dash-party-copied-text {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--success-text);
+}
+
+/* Real, visible failure feedback for copyToClipboard's fallback path — a failed copy (both
+   navigator.clipboard and document.execCommand unavailable/rejected) must never fail silently. */
+.dash-party-copy-error {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--danger-text);
+}
+
+.dash-party-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dash-party-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.dash-party-month-range {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.dash-party-month-field {
+  flex: 1;
+}
+
+.dash-party-summary-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.dash-party-summary-label {
+  font-size: 12px;
+}
+
+.dash-party-order-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 0;
+  font-size: 14px;
+}
+
+.dash-party-order-row + .dash-party-order-row {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-party-order-date {
+  flex: 1;
+}
+
+/* Bill No. on a billed order row (2026-08-30) — a reference tag, not a status, so it's muted and
+   sits inline between the status badge and the amount rather than becoming a badge of its own. */
+.dash-party-order-billno {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.dash-party-order-billno-value {
+  font-weight: 600;
+}
+
+.dash-party-order-billno-edit {
+  font-size: 12px;
+}
+
+.dash-party-order-billno-form {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.dash-party-order-billno-form input {
+  /* Short field for a short value — see the Factory Payables equivalent for the same reasoning. */
+  width: 140px;
+  min-height: 28px;
+  padding: 3px var(--space-2);
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.dash-party-order-billno-form .link-button {
+  font-size: 12px;
+}
+
+.dash-party-order-billno-error {
+  font-size: 10px;
+  color: var(--danger-text);
+  flex-basis: 100%;
+}
+
+/* Same "struck through, never hidden" convention as the Orders page's own cancelled rows
+   (.dash-order-row-cancelled) — a cancelled order still belongs in a party's history. */
+.dash-party-order-row-cancelled .dash-party-order-date {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+
+.dash-party-order-value {
+  font-weight: 700;
+  min-width: 90px;
+  text-align: right;
+}
+
+/* --- Party Payables (added 2026-08-21), inside the Parties page detail panel --- */
+.dash-party-payment-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 0;
+  font-size: 14px;
+}
+
+.dash-party-payment-row + .dash-party-payment-row {
+  border-top: 1px solid var(--divider);
+}
+
+.dash-party-payment-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dash-party-payment-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-party-payment-value {
+  font-weight: 700;
+  min-width: 90px;
+  text-align: right;
+}
+
+.dash-party-record-payment {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--card-border);
+}
+
+.dash-party-record-payment-title {
+  margin: 0 0 var(--space-3);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dash-party-payment-success {
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success-text);
+}
+
+/* Blur + fade, not display:none — the shapes stay faintly visible so it reads as "this screen is
+   covered," not "this screen is broken/empty". The figures themselves are unreadable at 14px.
+   pointer-events:none is belt-and-braces alongside the `inert` attribute on the same element:
+   inert already blocks interaction in every browser that supports it, this covers the rest. */
+.dash-content-locked {
+  filter: blur(14px);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+.dash-lock-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  /* Matches the app canvas rather than a dark scrim — the dashboard is a light surface, and a
+     dark modal veil here would read as an error state rather than a privacy screen. */
+  background: color-mix(in srgb, var(--section-fill) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.dash-lock-card {
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.dash-lock-mark {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-3);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+
+.dash-lock-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dash-lock-note {
+  margin: 0 0 var(--space-4);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The PIN field/button inherit their look from .field / .btn-primary — only the alignment needs
+   overriding, since .dash-lock-card centres its text and a left-aligned label reads better. */
+.dash-lock-card .field-label {
+  text-align: left;
+}
+
+.dash-lock-card .btn-primary {
+  width: 100%;
+}
+
+.dash-lock-nopin {
+  text-align: left;
+}
+
+/* --- Owner Dashboard: Locations page (added 2026-08-20) --- */
+/* Location + Period side by side (added 2026-09-02) — gap matches --space-6, the same token
+   .dash-content already uses for the vertical gap between this page's top-level stacked
+   sections, so the row's own internal spacing reads as consistent with the rest of the page
+   rather than introducing a second, different rhythm. flex-wrap is a narrow-viewport safety net
+   only — this page is desktop-only per rule 15, so wrapping is never expected to actually fire. */
+.dash-location-period-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.dash-location-period-row > .dash-card {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* Profit share's popover trigger, third item in this row (moved here 2026-09-02 from its own
+   standalone .dash-page-actions row — see Locations.jsx's own file header comment). Two rules
+   that both matter for the popover to anchor correctly, not just cosmetics:
+     - flex: 0 0 auto — the two .dash-card siblings get flex: 1 above and share the row's width;
+       this wrapper must NOT join that (a bare `flex: 1` default of 0 1 auto already wouldn't
+       grow, but stating it explicitly here documents that it's deliberate, not an oversight).
+     - align-self: center — .dash-location-period-row has no align-items of its own, so the
+       default (stretch) would otherwise stretch THIS WRAPPER to match the taller .dash-card
+       siblings' height. That matters beyond appearance: the popover panel below anchors via
+       `position: absolute; top: 100%` against ITS OWN nearest `position: relative` ancestor,
+       which is this wrapper. A stretched wrapper means "100% of the wrapper's height" is no
+       longer "just past the 34px button" — it becomes "just past the full card height," landing
+       the panel well below the button with a large visible gap. Centring the wrapper on its own
+       natural (button) height keeps position: relative scoped tightly to the button, exactly as
+       required — never promoted to the row's own positioning context.
+   The trigger button/popover panel rules themselves (.dash-profit-share-trigger/-popover) are
+   unchanged by this move. */
+.dash-profit-share-popover-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+/* Same plain icon-button treatment as .dash-party-copy-btn (border-free, tinted on hover), just
+   sized for a standalone control rather than one sitting inline next to text. */
+.dash-profit-share-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dash-profit-share-trigger:hover:not(:disabled) {
+  background: var(--section-fill);
+  color: var(--text-primary);
+}
+
+.dash-profit-share-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The popover panel — same visual weight as .dash-card (same bg/border/radius/shadow), but
+   absolutely positioned below the trigger rather than sitting inline in the page flow, and given
+   a fixed width so its content (title, description, input row) doesn't reflow the page under it. */
+.dash-profit-share-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(28, 27, 25, 0.12);
+  padding: var(--space-4);
+}
+
+/* padding-top: 15px added 2026-09-03 (Aadi's own direct edit, bundled into cea06cd alongside an
+   unrelated History task — not made through a task prompt, reason not recorded — presumably a
+   bit more breathing room between the "Location"/"Period" section titles above and their chip
+   rows). Only two consumers, both the Location and Period chip rows on this same
+   dashboard/Locations.jsx screen (checked live) — low blast radius, and both read fine. */
+.dash-location-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: 15px;
+}
+
+.dash-location-profit-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 10px;
+}
+
+.dash-location-profit-input {
+  width: 70px;
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  padding: var(--space-2) 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.dash-location-profit-saved {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--success-text);
+}
+
+.dash-coming-soon {
+  padding: var(--space-6);
+}
+
+.dash-coming-soon-title {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dash-coming-soon-note {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  max-width: 60ch;
+  line-height: 1.5;
+}
+
+/* --- Article Pricing (added 2026-08-21, beyond §8's original nav) — the dashboard's first real
+   sortable desktop grid, deliberately its OWN class rather than reusing mobile's .pricing-table:
+   that table is tuned for a 480px phone column (12.5px text, horizontal scroll as the escape
+   valve); this one is explicitly asked to read at a glance on a big screen, so it gets its own,
+   noticeably larger type scale — 15px body text vs. 13px elsewhere on this dashboard, not just
+   "consistent with the rest of the dashboard." */
+.dash-pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.dash-pricing-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-pricing-table td {
+  padding: var(--space-3) 14px var(--space-3) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-pricing-table tr:last-child > td {
+  border-bottom: none;
+}
+
+/* Alternating rows (2026-08-27) — DELIBERATELY NOT plain :nth-child(even), unlike .receipt-table/
+   .pricing-table above. This table's <tbody> can contain conditionally-inserted extra rows
+   (.dash-pricing-error-row, .dash-pricing-pin-row) directly beneath whichever product row is
+   currently being edited — real <tr> siblings, not decoration. :nth-child counts EVERY <tr> child
+   regardless of what it represents, so the moment one of those extra rows appears or disappears,
+   every product row below it would shift which stripe colour it lands on — rows visually
+   "changing colour" for no reason related to their own data, which is a worse version of the exact
+   misreading risk this whole task exists to prevent. Striped by DATA POSITION instead
+   (dashboard/ArticlePricing.jsx computes `rowIndex % 2` from the product's own index in
+   `group.products`, applied only to that product's own <tr>) so a stripe is anchored to which
+   product a row IS, immune to how many extra rows happen to be open elsewhere in the same table.
+   Declared BEFORE .dash-pricing-row-editing below on purpose: both classes have identical
+   specificity (one class + child combinator), so if a row being actively edited also happens to
+   land on an odd index, source order alone must decide the tie — editing's own (stronger,
+   full-strength --section-fill) rule needs to win, and placing it later in the cascade is what
+   makes that automatic rather than accidental. */
+.dash-pricing-row-alt > td {
+  background: var(--row-stripe-fill);
+}
+
+/* Compound selector (beats .dash-pricing-table th's own text-align:left outright, regardless of
+   source order) — a bare .dash-pricing-num class alone lost that fight for header cells while
+   still winning it for data cells (which have no competing text-align rule), so headers rendered
+   left-aligned while their own column's values rendered right-aligned. See LEARNING_LOG.md. */
+.dash-pricing-table th.dash-pricing-num,
+.dash-pricing-table td.dash-pricing-num {
+  text-align: center;
+}
+
+.dash-pricing-action {
+  text-align: right;
+}
+
+/* Shared by every dashboard table's action column (.dash-pricing-action, .dash-factories-action,
+   ...): the <td> itself must stay a plain table-cell so it stretches to match the row's real
+   height like its siblings — display:flex directly on a <td> was measured to break that stretch
+   (LEARNING_LOG.md), sizing the cell to its own content instead of the row. This inner wrapper
+   carries the flex/gap layout for the button(s) instead, leaving the <td> untouched. */
+.dash-table-action-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
+}
+
+/* A row mid-edit gets a quiet neutral tint — same whisper-tint restraint Pack Order's own tone
+   pass settled on (LEARNING_LOG.md), not a saturated highlight competing with the Pending badges
+   and the PIN step directly below it. */
+.dash-pricing-row-editing > td {
+  background: var(--section-fill);
+}
+
+.dash-pricing-inline-input {
+  width: 100px;
+  padding: 6px var(--space-2);
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: center;
+}
+
+/* Rename's own input (2026-09-01) — same border/radius/font as .dash-pricing-inline-input above,
+   but a Name column needs to actually fit a name ("LS KNITS U PKT"), not the fixed 100px/
+   right-aligned shape that column reuses for the two money fields. A separate class rather than
+   overriding those two properties on the shared one, so a future change to the price inputs'
+   shared look can't accidentally widen/left-align them too. */
+.dash-pricing-name-input {
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.dash-pricing-error-row > td,
+.dash-pricing-pin-row > td {
+  padding: var(--space-3) 14px;
+  background: var(--section-fill);
+}
+
+/* PinPrompt renders its own <form>, and its field/button are full-width by default (built for a
+   narrow mobile column) — capped here so it doesn't stretch edge-to-edge across a wide desktop
+   row. */
+.dash-pricing-pin-row .field,
+.dash-pricing-pin-row .btn-primary {
+  max-width: 280px;
+}
+
+/* --- Factories (added 2026-09-02) — same 14px desktop table scale as .dash-pricing-table above,
+   own class rather than reused directly for the same reason .dash-bills-table already states:
+   this table's <tbody> can contain a conditionally-inserted error row directly beneath whichever
+   factory row is mid-edit, so it needs the same row-index-driven stripe .dash-pricing-table uses
+   (see that class's own comment), not .dash-bills-table's plain :nth-child(even). */
+.dash-factories-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.dash-factories-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-factories-table td {
+  padding: var(--space-3) 14px var(--space-3) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-factories-table tr:last-child > td {
+  border-bottom: none;
+}
+
+.dash-factories-row-alt > td {
+  background: var(--row-stripe-fill);
+}
+
+.dash-factories-action {
+  text-align: right;
+}
+
+.dash-factories-row-editing > td {
+  background: var(--section-fill);
+}
+
+.dash-factories-inline-input,
+.dash-factories-name-input {
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: 1.5px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.dash-factories-error-row > td {
+  padding: var(--space-3) 14px;
+  background: var(--section-fill);
+}
+
+/* --- Bills (added 2026-08-30) — same 15px desktop type scale as .dash-pricing-table above (see
+   that class's own comment for why the dashboard gets a larger scale than mobile's .pricing-table),
+   but its OWN class rather than reused directly: this table has no inline-editing state at all, so
+   its alternating stripe is plain CSS :nth-child(even) — .dash-pricing-table deliberately avoids
+   that (row-index-driven from JS instead) only because ITS <tbody> can contain conditionally-
+   inserted extra rows that :nth-child would misread; this one never does. */
+.dash-bills-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.dash-bills-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 14px 10px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-bills-table td {
+  padding: var(--space-3) 14px var(--space-3) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-bills-table tr:last-child > td {
+  border-bottom: none;
+}
+
+.dash-bills-table tbody tr:nth-child(even) {
+  background: var(--row-stripe-fill);
+}
+
+/* th+td compound selector, not a bare .dash-bills-num class rule — `.dash-bills-table th` above
+   is a class+element selector (specificity 0,1,1), which beats a bare `.dash-bills-num` class
+   rule (0,1,0) on the header cell alone, so the header would stay force-left-aligned regardless
+   of what this rule said. Matching th/td explicitly (0,2,1 each) is what actually wins the
+   cascade for both, which is the header/value misalignment this was fixed for (2026-08-30) —
+   centered, not right-aligned, per that fix. */
+.dash-bills-table th.dash-bills-num,
+.dash-bills-table td.dash-bills-num {
+  text-align: center;
+}
+
+.dash-bills-sno {
+  color: var(--text-tertiary);
+}
+
+/* Lays the Date text and the 15+ days flag (added 2026-08-30) side by side without the flag
+   wrapping onto its own line at a narrower viewport width. */
+.dash-bills-date-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Controls row above the table (View toggle, and Month mode's Year/Month steps) — same `.field`
+   label/select markup every other dashboard control uses, just laid out inline rather than
+   stacked, since these are short selects sitting above a wide table rather than a tall form. */
+.dash-bills-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.dash-bills-controls .field {
+  min-width: 160px;
+  margin-bottom: 0;
+}
+
+/* The rail collapses to icons on narrow windows rather than disappearing — §8 is explicit that
+   this is a desktop surface and mobile needs its own design pass, so this is a graceful floor for
+   a small laptop window, not a phone layout. */
+@media (max-width: 900px) {
+  .dash-rail {
+    width: 58px;
+    padding: var(--space-4) var(--space-2);
+  }
+  .dash-rail-brand-text,
+  .dash-nav-link span,
+  .dash-rail-exit {
+    display: none;
+  }
+  .dash-content,
+  .dash-header {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
 }

@@ -22,7 +22,9 @@ function productSelect(role) {
     sellingPrice: true,
     ...(role === 'OWNER' ? { costPrice: true } : {}),
     sizes: {
-      select: { id: true, sizeLabel: true, sortOrder: true },
+      // qty rides along so any client calling its own piecesPerSetFor (Receive Stock's live
+      // readout, New Order, Good Returns) sums real quantities rather than counting rows.
+      select: { id: true, sizeLabel: true, sortOrder: true, qty: true },
       orderBy: { sortOrder: 'asc' },
     },
   };
@@ -99,6 +101,16 @@ async function createProduct(req, res) {
     if (!size || typeof size.sizeLabel !== 'string' || !size.sizeLabel.trim()) {
       return sendError(res, 400, 'VALIDATION_ERROR', 'Each size requires a non-empty sizeLabel');
     }
+    // qty is optional (omitted means 1, matching the column default and every pre-qty caller),
+    // but when present it must be a positive whole number. Rejecting 0 rather than quietly
+    // dropping the row is what enforces ProductSize's "only rows with qty > 0 ever exist"
+    // invariant at the API boundary: a zero-qty row would mean "this size is part of the set,
+    // zero times", which is exactly the contradiction the invariant exists to prevent. The UI
+    // already never sends one (a size stepped down to 0 is omitted from the array entirely) —
+    // this is the server-side guarantee for any caller that bypasses it.
+    if (size.qty !== undefined && (!Number.isInteger(size.qty) || size.qty < 1)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'Each size qty must be a whole number of at least 1');
+    }
   }
 
   try {
@@ -112,7 +124,15 @@ async function createProduct(req, res) {
         isKids: !!isKids,
         costPrice,
         sellingPrice,
-        sizes: { create: sizes.map((s) => ({ sizeLabel: s.sizeLabel, sortOrder: s.sortOrder ?? 0 })) },
+        sizes: {
+          create: sizes.map((s) => ({
+            sizeLabel: s.sizeLabel,
+            sortOrder: s.sortOrder ?? 0,
+            // ?? 1 keeps every pre-qty caller (and any client that doesn't know about repeated
+            // sizes) behaving exactly as before — one row, one piece.
+            qty: s.qty ?? 1,
+          })),
+        },
       },
       // Structurally the same "select, don't strip" guarantee as every other Product read —
       // now that STAFF can hit this route too, hardcoding 'OWNER' here would leak costPrice
@@ -219,7 +239,21 @@ async function reactivateProduct(req, res) {
   res.json(product);
 }
 
-const PATCHABLE_FIELDS = ['categoryId', 'isKids', 'costPrice', 'sellingPrice'];
+// `name` added 2026-08-28 (article rename). It sits with categoryId/isKids as an ordinary
+// non-price attribute edit, NOT with costPrice/sellingPrice: rule 71's PIN gate is specifically
+// about money, and a name carries no financial meaning. The route's own requireRole('OWNER')
+// still applies to it unconditionally (see routes/products.js) — that's the established
+// convention every other non-price Product edit already follows, confirmed by reading the route
+// chain rather than assumed. requirePinForPriceEdits inspects the BODY for price fields only, so
+// a name-only PATCH correctly passes through it without ever prompting for a PIN.
+//
+// Renaming is safe to allow freely precisely because it can no longer rewrite history: every
+// Order line, Transfer and Return created from 2026-08-28 onward snapshots the name at creation
+// (productNameSnapshot), so this edit only ever changes go-forward display.
+//
+// articleNo stays permanently un-patchable (rejected explicitly below) — it's the article's
+// identity, unique per Factory, and is what every historical record is keyed to reading by.
+const PATCHABLE_FIELDS = ['categoryId', 'isKids', 'costPrice', 'sellingPrice', 'name'];
 
 // PATCH /api/products/:id — OWNER only always (📌); PIN additionally required when the body
 // touches costPrice/sellingPrice (enforced by the requirePinForPriceEdits middleware in the
@@ -250,6 +284,16 @@ async function updateProduct(req, res) {
   // "pending" states), there's no valid empty value to patch it to.
   if ('categoryId' in data && !data.categoryId) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'categoryId cannot be empty');
+  }
+  // Same required-field reasoning as categoryId above: Product.name is non-nullable in the
+  // schema, so there's no valid empty value. Trimmed before the length check AND before writing,
+  // so " " is rejected rather than silently stored as a blank-looking name, and a name with
+  // accidental padding is normalised the same way createProduct already normalises its own.
+  if ('name' in data) {
+    data.name = String(data.name ?? '').trim();
+    if (!data.name) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'name cannot be empty');
+    }
   }
 
   const existing = await prisma.product.findUnique({ where: { id } });

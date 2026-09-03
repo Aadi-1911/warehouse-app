@@ -20,18 +20,22 @@ const productRoutes = require('./routes/products');
 const factoryRoutes = require('./routes/factories');
 const factoryPaymentRoutes = require('./routes/factoryPayments');
 const factoryDebitRoutes = require('./routes/factoryDebits');
+const partyPaymentRoutes = require('./routes/partyPayments');
 const colorRoutes = require('./routes/colors');
 const categoryRoutes = require('./routes/categories');
 const partyRoutes = require('./routes/parties');
 const locationRoutes = require('./routes/locations');
 const bundleRoutes = require('./routes/bundles');
 const transactionRoutes = require('./routes/transactions');
+const transactionCorrectionRoutes = require('./routes/transactionCorrections');
 const transferRoutes = require('./routes/transfers');
+const transferCorrectionRoutes = require('./routes/transferCorrections');
 const stockRoutes = require('./routes/stock');
 const userRoutes = require('./routes/users');
 const orderRoutes = require('./routes/orders');
 const returnRoutes = require('./routes/returns');
 const historyRoutes = require('./routes/history');
+const dashboardRoutes = require('./routes/dashboard');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -79,15 +83,19 @@ app.use('/api/factory-debits', factoryDebitRoutes);
 app.use('/api/colors', colorRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/parties', partyRoutes);
+app.use('/api/party-payments', partyPaymentRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/bundles', bundleRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/transaction-corrections', transactionCorrectionRoutes);
 app.use('/api/transfers', transferRoutes);
+app.use('/api/transfer-corrections', transferCorrectionRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/returns', returnRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Must be the LAST app.use() — Express only routes errors to handlers mounted after
 // whatever threw them, and this is meant to catch anything any route above didn't.

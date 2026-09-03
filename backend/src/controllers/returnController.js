@@ -36,6 +36,7 @@ const RETURN_SELECT = {
   id: true,
   partyId: true,
   party: { select: { name: true } },
+  partyNameSnapshot: true,
   bundleId: true,
   bundle: {
     select: {
@@ -47,6 +48,7 @@ const RETURN_SELECT = {
   location: { select: { name: true } },
   qtySets: true,
   priceAtReturn: true,
+  productNameSnapshot: true,
   reason: true,
   note: true,
   createdAt: true,
@@ -58,11 +60,15 @@ function toResponse(r) {
   return {
     id: r.id,
     partyId: r.partyId,
-    partyName: r.party.name,
+    // Snapshot first, live name only as the pre-2026-09-02 fallback — see
+    // PartyStockReturn.partyNameSnapshot's schema comment for the full reasoning.
+    partyName: r.partyNameSnapshot ?? r.party.name,
     bundleId: r.bundleId,
     productId: r.bundle.product.id,
     productArticleNo: r.bundle.product.articleNo,
-    productName: r.bundle.product.name,
+    // Snapshot first, live name only as the pre-2026-08-28 fallback — see
+    // OrderLineItem.productNameSnapshot's schema comment for the full reasoning.
+    productName: r.productNameSnapshot ?? r.bundle.product.name,
     colorId: r.bundle.color.id,
     colorName: r.bundle.color.name,
     locationId: r.locationId,
@@ -156,13 +162,15 @@ async function createReturns(req, res) {
   const bundleIds = [...new Set(lines.map((l) => l.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true } } },
+    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
   // priceAtReturn is computed HERE, server-side, from Product.sellingPrice at this exact moment —
   // never trusted from the request body, and never sourced from costPrice (rule 10). Same
   // principle as OrderLineItem.priceAtOrder and Transaction.costPriceSnapshot.
+  // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, so a
+  // later article rename can never rewrite what a logged return says it was for.
   const resolvedLines = [];
   for (const line of lines) {
     const bundle = bundleById.get(line.bundleId);
@@ -184,6 +192,7 @@ async function createReturns(req, res) {
       // Normalised to null rather than '' so "no note" is one value in the database, not two.
       note: String(line.note ?? '').trim() || null,
       priceAtReturn: bundle.product.sellingPrice,
+      productNameSnapshot: bundle.product.name,
     });
   }
 
@@ -213,6 +222,11 @@ async function createReturns(req, res) {
           reason: line.reason,
           note: line.note,
           userId: req.user.id,
+          productNameSnapshot: line.productNameSnapshot,
+          // Captured from the same `party` read already used for the isActive check above, at
+          // this exact instant — never from the request body, same principle as
+          // line.productNameSnapshot immediately above.
+          partyNameSnapshot: party.name,
         },
       });
 

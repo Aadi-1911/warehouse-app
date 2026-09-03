@@ -6,6 +6,7 @@ import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listFactories } from '../api/factories';
 import { listProducts, updateProduct, deactivateProduct, reactivateProduct } from '../api/products';
+import { listStock } from '../api/stock';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -65,6 +66,19 @@ export default function ArticlePricing() {
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [actionInFlight, setActionInFlight] = useState(false);
   const [actionError, setActionError] = useState(null);
+
+  // Rename (2026-08-28) — deliberately its own form and its own state, NOT an extra field bolted
+  // onto the price form above, for one concrete reason: the price form is PIN-gated end to end
+  // (its submit hands a PIN to the server and its whole error path is PIN-lockout handling),
+  // while a rename is not PIN-gated at all — rule 71's gate is specifically about money, and
+  // `name` sits with categoryId/isKids as an ordinary OWNER-only attribute edit (confirmed by
+  // reading routes/products.js's own chain, not assumed). Merging them would either drag a PIN
+  // requirement onto a rename that doesn't need one, or make the price form's PIN conditional on
+  // which fields happen to be dirty — a subtler, more breakable rule than two separate forms.
+  const [renamingProduct, setRenamingProduct] = useState(null);
+  const [newName, setNewName] = useState('');
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
+  const [renameError, setRenameError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +147,10 @@ export default function ArticlePricing() {
     setConfirmTarget(null);
     setActionError(null);
     setShowArchived(false);
+    // Identical reasoning for an in-progress rename — it belonged to the previous factory's list.
+    setRenamingProduct(null);
+    setNewName('');
+    setRenameError(null);
   }
 
   function handleStartEdit(product) {
@@ -151,6 +169,58 @@ export default function ArticlePricing() {
     setPin('');
     setSubmitError(null);
     setAttemptsRemaining(null);
+  }
+
+  function handleStartRename(product) {
+    setRenamingProduct(product);
+    // Pre-filled with the CURRENT name rather than blank — a rename is almost always a small
+    // correction to an existing name ("Round Nek" → "Round Neck"), not a fresh entry, so the
+    // useful starting point is the text that's already there.
+    setNewName(product.name);
+    setRenameError(null);
+  }
+
+  function handleCancelRename() {
+    setRenamingProduct(null);
+    setNewName('');
+    setRenameError(null);
+  }
+
+  async function handleSubmitRename(event) {
+    event.preventDefault();
+    setRenameError(null);
+
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setRenameError('Enter a name.');
+      return;
+    }
+    // Nothing to save, and the server would reject a no-op PATCH as "no editable fields" anyway
+    // — catching it here gives a plain-language reason instead of a validation error.
+    if (trimmed === renamingProduct.name) {
+      setRenameError('That is already the current name.');
+      return;
+    }
+
+    setRenameSubmitting(true);
+    try {
+      // No `pin` in this body, on purpose — see the renamingProduct state comment above.
+      await updateProduct(renamingProduct.id, { name: trimmed });
+      setSuccessMessage(
+        `${renamingProduct.articleNo} renamed to “${trimmed}”. Orders and records created before now still show the old name.`
+      );
+      setRenamingProduct(null);
+      setNewName('');
+      // Re-fetch so the table shows the new name rather than the one just replaced.
+      setProductsStatus('loading');
+      const fresh = await listProducts({ factoryId });
+      setProducts(fresh);
+      setProductsStatus('loaded');
+    } catch (err) {
+      setRenameError(err.message);
+    } finally {
+      setRenameSubmitting(false);
+    }
   }
 
   async function handleSubmitEdit(event) {
@@ -203,9 +273,77 @@ export default function ArticlePricing() {
   // Opens the archive/reactivate confirm (requirement 4: a plain ConfirmModal, no PIN — this
   // isn't a price action). Kept as its own handler pair, deliberately not touching
   // handleStartEdit/handleSubmitEdit above.
+  //
+  // Archiving now checks the article's REAL stock first (2026-08-28) so the dialog can name the
+  // actual quantity about to be hidden from the daily pickers. Checked live, at the moment the
+  // button is pressed, rather than read from anything already in state: this screen is a pricing
+  // screen that can sit open for a long time while stock moves underneath it, and a warning that
+  // names a stale quantity is worse than one that names none — it reads as authoritative while
+  // being wrong. Reactivating needs no check; it hides nothing.
   function handleStartArchiveAction(product, action) {
-    setConfirmTarget({ product, action });
     setActionError(null);
+
+    if (action !== 'archive') {
+      setConfirmTarget({ product, action, stockStatus: 'loaded', stockSets: 0, stockRows: [] });
+      return;
+    }
+
+    // 'loading' is its own state, and the confirm button stays disabled while it holds — the
+    // whole point is that nobody can archive a stocked article before the warning has had a
+    // chance to appear. A bare boolean would make "not checked yet" and "checked, found zero"
+    // the same value, which is exactly the window where the simple no-stock wording would show
+    // for an article that actually has stock.
+    setConfirmTarget({ product, action, stockStatus: 'loading', stockSets: null, stockRows: [] });
+
+    // Scoped by articleNo to keep the request small, then narrowed by productId: the backend's
+    // articleNo filter is a case-insensitive CONTAINS match, and article numbers are only unique
+    // per Factory anyway (CLAUDE.md), so the returned rows can legitimately include other
+    // articles and other factories. Matching on productId is the only safe narrowing.
+    listStock({ articleNo: product.articleNo })
+      .then((rows) => {
+        const mine = rows.filter((r) => r.productId === product.id);
+        const totalSets = mine.reduce((sum, r) => sum + r.qtySets, 0);
+        setConfirmTarget((prev) =>
+          // Guard against a resolved fetch landing after the dialog was cancelled or swapped to
+          // a different article — without it, a slow response could repopulate a closed dialog.
+          prev && prev.product.id === product.id && prev.action === 'archive'
+            ? { ...prev, stockStatus: 'loaded', stockSets: totalSets, stockRows: mine }
+            : prev
+        );
+      })
+      .catch(() => {
+        setConfirmTarget((prev) =>
+          prev && prev.product.id === product.id && prev.action === 'archive'
+            ? { ...prev, stockStatus: 'error', stockSets: null, stockRows: [] }
+            : prev
+        );
+      });
+  }
+
+  // The dialog body for an archive, built from whatever the stock check currently knows. Split
+  // out because there are four genuinely different things to say and inlining that much branching
+  // into JSX makes it hard to see that the zero-stock case is still the original wording,
+  // unchanged, exactly as required.
+  function archiveConfirmBody(target) {
+    const { product, stockStatus, stockSets, stockRows } = target;
+    const label = `${product.articleNo} — ${product.name}`;
+
+    if (stockStatus === 'loading') return `Checking current stock for ${label}…`;
+
+    if (stockStatus === 'error') {
+      return `Could not check current stock for ${label}. It may still be holding stock — archiving hides it from Article Pricing and New Order, but never deletes anything, and its stock would still count towards stock value and stay visible under Live Stock's archived section.`;
+    }
+
+    if (stockSets > 0) {
+      // Name the real quantity, and say where it is. "8 sets" alone invites the reply "where?",
+      // and this is the one moment the answer is genuinely needed.
+      const locations = [...new Set(stockRows.map((r) => r.locationName))].sort();
+      const where = locations.length === 1 ? locations[0] : locations.join(' and ');
+      return `${label} still has ${stockSets} set${stockSets === 1 ? '' : 's'} in stock at ${where}. Archiving does NOT remove that stock — it stays real, still counts towards stock value, and stays visible under Live Stock's archived section. It only hides the article from Article Pricing and New Order, along with ALL of its colours together. It can be reactivated anytime.`;
+    }
+
+    // Genuinely zero stock — the original wording, unchanged.
+    return `${label} will be hidden from Article Pricing and New Order, along with ALL of its colours together — archiving isn't done per colour. Every past receipt and transaction stays fully intact, and it can be reactivated anytime.`;
   }
 
   async function handleConfirmArchiveAction() {
@@ -253,7 +391,15 @@ export default function ArticlePricing() {
 
   return (
     <div className="page">
-      <ScreenHeader icon={<TagIcon size={20} />} title="Article Pricing" />
+      {/* tone="tile-gold" (2026-08-27) matches Home's Article Pricing tile exactly, per Aadi's
+          confirmed tap-a-tile/land-on-that-colour continuity — was unset (ScreenHeader's own
+          default, accent-blue), so this is a genuinely new header colour, not a repoint of an
+          existing one. Flagged, not silently touched: this page's own "Pending" price badges and
+          its PIN-setup banner (below) still genuinely mean warning and still use --warning-*
+          amber — gold and warning already sit only ~6° apart by hue (see the same-day tile-palette
+          work in LEARNING_LOG.md), so this is the closest-reading collision of the four found this
+          task, reported to Aadi rather than decided here. */}
+      <ScreenHeader icon={<TagIcon size={20} />} tone="tile-gold" title="Article Pricing" />
 
       {factoriesError && (
         <p className="error-banner" role="alert">
@@ -389,11 +535,22 @@ export default function ArticlePricing() {
                               >
                                 Edit
                               </button>
+                              {/* Deliberately NOT gated on user.hasPinSet, unlike Edit above —
+                                  a rename needs no PIN, so an owner who has never set one can
+                                  still fix a typo in an article's name. */}
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => handleStartRename(product)}
+                                disabled={actionInFlight || (renamingProduct && renamingProduct.id === product.id)}
+                              >
+                                Rename
+                              </button>
                               <button
                                 type="button"
                                 className="link-button danger-text"
                                 onClick={() => handleStartArchiveAction(product, 'archive')}
-                                disabled={actionInFlight || !!editingProduct}
+                                disabled={actionInFlight || !!editingProduct || !!renamingProduct}
                               >
                                 Archive
                               </button>
@@ -413,6 +570,55 @@ export default function ArticlePricing() {
               <KeyIcon size={18} />
               <span>Set your price-edit PIN to edit article prices.</span>
             </Link>
+          )}
+
+          {/* Rename form (2026-08-28) — no PIN field anywhere in it, and that absence is the
+              point: this is an ordinary OWNER-only attribute edit, not a money edit. The note
+              under the input states the snapshot guarantee in plain language, because "will this
+              rewrite my old orders?" is the first thing anyone renaming an article will wonder,
+              and the honest answer (no, they keep the old name) is reassuring rather than
+              something to hide. */}
+          {renamingProduct && (
+            <div className="card">
+              <h2 className="card-title">
+                Rename article — {renamingProduct.articleNo}
+              </h2>
+              <form onSubmit={handleSubmitRename}>
+                <label className="field">
+                  <span className="field-label">Article name</span>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    autoFocus
+                    disabled={renameSubmitting}
+                  />
+                </label>
+                <p className="muted">
+                  This renames the whole article, including all {renamingProduct.articleNo}’s
+                  colours. Orders, transfers and returns recorded before now keep showing the old
+                  name — renaming only affects what’s created from here on.
+                </p>
+
+                {renameError && (
+                  <p className="error-banner" role="alert">
+                    {renameError}
+                  </p>
+                )}
+
+                <button type="submit" className="btn-primary" disabled={renameSubmitting}>
+                  {renameSubmitting ? 'Saving…' : 'Save name'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleCancelRename}
+                  disabled={renameSubmitting}
+                >
+                  Cancel
+                </button>
+              </form>
+            </div>
           )}
 
           {editingProduct && (
@@ -493,13 +699,23 @@ export default function ArticlePricing() {
         title={confirmTarget?.action === 'archive' ? 'Archive this article?' : 'Reactivate this article?'}
         body={
           confirmTarget?.action === 'archive'
-            ? `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} will be hidden from Article Pricing and Receive Stock, along with ALL of its colours together — archiving isn't done per colour. Every past receipt and transaction stays fully intact, and it can be reactivated anytime.`
-            : `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} (and all of its colours) will be visible again in Article Pricing and available to pick during Receive Stock.`
+            ? archiveConfirmBody(confirmTarget)
+            : `${confirmTarget?.product.articleNo} — ${confirmTarget?.product.name} (and all of its colours) will be visible again in Article Pricing and available to pick in New Order.`
         }
         confirmLabel={
-          actionInFlight ? 'Working…' : confirmTarget?.action === 'archive' ? 'Archive' : 'Reactivate'
+          actionInFlight
+            ? 'Working…'
+            : confirmTarget?.action === 'archive'
+              ? confirmTarget?.stockStatus === 'loading'
+                ? 'Checking stock…'
+                : 'Archive'
+              : 'Reactivate'
         }
         tone={confirmTarget?.action === 'archive' ? 'danger' : 'success'}
+        // Disabled until the stock check settles. This is the safety property the whole check
+        // exists for: without it, a fast tap could confirm an archive during the window where the
+        // dialog hasn't yet been able to say the article is holding stock.
+        confirmDisabled={actionInFlight || confirmTarget?.stockStatus === 'loading'}
         onConfirm={handleConfirmArchiveAction}
         onCancel={() => setConfirmTarget(null)}
       />

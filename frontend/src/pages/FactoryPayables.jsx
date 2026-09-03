@@ -5,7 +5,13 @@ import { WalletIcon, KeyIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import { listFactories, getFactoryPayable } from '../api/factories';
 import { createFactoryPayment, updateFactoryPayment, deleteFactoryPayment } from '../api/factoryPayments';
-import { createFactoryDebit, updateFactoryDebit, deleteFactoryDebit } from '../api/factoryDebits';
+import {
+  createFactoryDebit,
+  updateFactoryDebit,
+  updateFactoryDebitBillNo,
+  deleteFactoryDebit,
+} from '../api/factoryDebits';
+import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -33,7 +39,13 @@ function todayInputValue() {
 // GET /api/factories/:id/payable, POST /api/factory-payments, and POST /api/factory-debits
 // (all owner-only and PIN-gated — see LEARNING_LOG.md for why the payment POST's gate changed
 // mid-task, and 05_BUSINESS_RULES.md rule 96 for why the debit endpoint exists at all).
-export default function FactoryPayables() {
+// `inDashboard` selects which shell wraps the content — see the return at the bottom of this
+// function. One component serves both the mobile screen (/factory-payables) and the Owner
+// Dashboard page (/dashboard/factory-payables) rather than a separate dashboard copy, because
+// every line of behaviour here (the payable calculation, the per-request PIN on every write, the
+// edit/delete flows) is identical on both and a second copy would be two places to fix each bug.
+// Defaults to false so the existing mobile route keeps working untouched.
+export default function FactoryPayables({ inDashboard = false }) {
   const { user } = useAuth();
 
   // 'idle' | 'loading' | 'loaded' — never a bare boolean (CLAUDE.md's standing rule): this
@@ -61,6 +73,12 @@ export default function FactoryPayables() {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayInputValue);
   const [note, setNote] = useState('');
+  // Optional reference tag, DEBIT FORM ONLY (2026-08-30) — never rendered or sent for a payment.
+  // A payment is not tied to exactly one bill (two or three bills routinely get settled with a
+  // single lump sum), so a bill number on a payment row would be actively misleading, not merely
+  // unused. Kept as one piece of state despite the shared form below, because the shared form
+  // simply doesn't render this field in payment mode.
+  const [billNo, setBillNo] = useState('');
   const [pin, setPin] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
@@ -81,6 +99,50 @@ export default function FactoryPayables() {
   const [entrySubmitting, setEntrySubmitting] = useState(false);
   const [entrySubmitError, setEntrySubmitError] = useState(null);
   const [entryAttemptsRemaining, setEntryAttemptsRemaining] = useState(null);
+
+  // --- Inline Bill No. correction (2026-08-30), deliberately its OWN small state rather than a
+  // field inside entryAction's edit form above. Two reasons: that form is PIN-gated because every
+  // field on it is financial, and a reference-tag typo shouldn't demand a PIN (the endpoint it
+  // calls provably can't change an amount); and this is a one-field inline edit rather than a
+  // full form, so folding it in would mean the edit form rendering differently per row type.
+  // Holds the id of the debit whose tag is currently being edited, or null.
+  const [billNoEditId, setBillNoEditId] = useState(null);
+  const [billNoDraft, setBillNoDraft] = useState('');
+  const [billNoSaving, setBillNoSaving] = useState(false);
+  const [billNoError, setBillNoError] = useState(null);
+
+  function startEditBillNo(entry) {
+    setBillNoEditId(entry.id);
+    setBillNoDraft(entry.billNo ?? '');
+    setBillNoError(null);
+  }
+
+  function cancelEditBillNo() {
+    setBillNoEditId(null);
+    setBillNoDraft('');
+    setBillNoError(null);
+  }
+
+  async function handleSaveBillNo(entryId) {
+    setBillNoSaving(true);
+    setBillNoError(null);
+    try {
+      const trimmed = cleanBillNo(billNoDraft);
+      // Empty means "clear it" — sent as an explicit null rather than omitted, so the server can
+      // tell a deliberate blanking apart from a field that simply wasn't provided.
+      await updateFactoryDebitBillNo(entryId, trimmed === '' ? null : trimmed);
+      // Re-fetch rather than patching the row locally: the same reasoning the create/edit flows
+      // above already use — one source of truth for what's on screen, no hand-maintained copy
+      // that could disagree with the server.
+      const fresh = await getFactoryPayable(factoryId);
+      setPayable(fresh);
+      cancelEditBillNo();
+    } catch (err) {
+      setBillNoError(err.message);
+    } finally {
+      setBillNoSaving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +209,8 @@ export default function FactoryPayables() {
     // Same reasoning applies to an in-progress edit/delete of an existing entry — it belonged
     // to a row from the previous factory's history, which is about to disappear.
     setEntryAction(null);
+    // Same reasoning again for an open inline Bill No. edit — its row is about to disappear.
+    cancelEditBillNo();
     setSuccessMessage(null);
   }
 
@@ -154,6 +218,7 @@ export default function FactoryPayables() {
     setAmount('');
     setDate(todayInputValue());
     setNote('');
+    setBillNo('');
     setPin('');
     setSubmitError(null);
     setAttemptsRemaining(null);
@@ -195,6 +260,9 @@ export default function FactoryPayables() {
         amount: parsedAmount,
         date,
         note: note.trim() || undefined,
+        // Debit only, and only when actually filled in — createFactoryPayment's endpoint has no
+        // billNo column at all, so it must never even be sent there.
+        ...(isDebit && billNo.trim() ? { billNo: billNo.trim() } : {}),
         pin,
       });
       setSuccessMessage(
@@ -344,17 +412,20 @@ export default function FactoryPayables() {
       })
     : [];
 
-  return (
-    <div className="page">
-      <ScreenHeader icon={<WalletIcon size={20} />} title="Factory Payables" />
-
+  // The screen's actual content, identical in both shells — deliberately built once as a fragment
+  // rather than duplicated, so the mobile screen and the dashboard page can never drift apart.
+  const content = (
+    <>
       {factoriesError && (
         <p className="error-banner" role="alert">
           Could not load factories: {factoriesError}
         </p>
       )}
 
-      <label className="field">
+      {/* factory-field-tight: page-scoped modifier (index.css) applied alongside the shared
+          .field, not in place of it — narrows just this field's margin-bottom for this screen
+          instead of touching .field's own base rule, which 17+ other forms also rely on. */}
+      <label className="field factory-field-tight">
         <span className="field-label">Factory</span>
         <select
           value={factoryId}
@@ -391,7 +462,11 @@ export default function FactoryPayables() {
 
       {showStats && (
         <>
-          <div className="stat-row">
+          {/* factory-stat-row-tight / factory-stat-hero-tight: page-scoped modifiers (index.css),
+              applied alongside the shared .stat-row/.stat-hero rather than editing those directly —
+              .stat-row and .stat-hero are also used by LiveStock.jsx, dashboard/LiveStock.jsx and
+              dashboard/Parties.jsx, which should keep their normal spacing. */}
+          <div className="stat-row factory-stat-row-tight">
             <div className="stat-card">
               <span className="stat-value">{formatCurrency(payable.totalOwed)}</span>
               <span className="stat-label">Total owed</span>
@@ -402,7 +477,7 @@ export default function FactoryPayables() {
             </div>
           </div>
 
-          <div className="stat-hero">
+          <div className="stat-hero factory-stat-hero-tight">
             <span className="stat-hero-value">{formatCurrency(payable.amountPayable)}</span>
             <span className="stat-hero-label">Amount payable</span>
           </div>
@@ -429,7 +504,61 @@ export default function FactoryPayables() {
                             earlier updatedAt-vs-createdAt-plus-60-seconds heuristic that missed
                             a real edit made within a minute of creation (LEARNING_LOG.md). */}
                         {entry.wasEdited && <span className="payment-history-edited">edited</span>}
+                        {/* Bill No. sits right next to the date, per this feature's own spec —
+                            the two together are how an owner locates a specific entry against
+                            paperwork. Debits only: a payment row has no billNo field at all.
+                            Note there is deliberately no "edited" marker for a billNo change —
+                            see updateFactoryDebitBillNo's comment on why wasEdited stays scoped
+                            to amount corrections. */}
+                        {entry.kind === 'debit' && billNoEditId !== entry.id && entry.billNo && (
+                          <span className="payment-history-billno">Bill No. {entry.billNo}</span>
+                        )}
+                        {entry.kind === 'debit' && billNoEditId !== entry.id && (
+                          <button
+                            type="button"
+                            className="link-button payment-history-billno-edit"
+                            onClick={() => startEditBillNo(entry)}
+                            disabled={rowActionsDisabled || billNoSaving}
+                          >
+                            {entry.billNo ? 'Edit bill no.' : '+ Bill no.'}
+                          </button>
+                        )}
                       </span>
+                      {entry.kind === 'debit' && billNoEditId === entry.id && (
+                        <span className="payment-history-billno-form">
+                          <input
+                            type="text"
+                            value={billNoDraft}
+                            onChange={(e) => setBillNoDraft(e.target.value)}
+                            placeholder="e.g. INV-2291"
+                            aria-label="Bill No."
+                            maxLength={BILL_NO_MAX_LENGTH}
+                            disabled={billNoSaving}
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => handleSaveBillNo(entry.id)}
+                            disabled={billNoSaving}
+                          >
+                            {billNoSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={cancelEditBillNo}
+                            disabled={billNoSaving}
+                          >
+                            Cancel
+                          </button>
+                          {billNoError && (
+                            <span className="payment-history-billno-error" role="alert">
+                              {billNoError}
+                            </span>
+                          )}
+                        </span>
+                      )}
                       {entry.note && <span className="payment-history-note">{entry.note}</span>}
                     </div>
                     {/* entry.amount is a raw Prisma Decimal — arrives as a STRING ("250.5"), not
@@ -513,6 +642,23 @@ export default function FactoryPayables() {
                     required
                   />
                 </label>
+
+                {/* Debit only — see the billNo state's own comment for why a payment never gets
+                    one. Rendered above Note because it identifies WHICH bill this is, which reads
+                    more naturally before free-text elaboration about it. */}
+                {activeForm === 'debit' && (
+                  <label className="field">
+                    <span className="field-label">Bill No. (optional)</span>
+                    <input
+                      type="text"
+                      value={billNo}
+                      onChange={(e) => setBillNo(e.target.value)}
+                      placeholder="e.g. INV-2291"
+                      maxLength={BILL_NO_MAX_LENGTH}
+                      disabled={submitting}
+                    />
+                  </label>
+                )}
 
                 <label className="field">
                   <span className="field-label">Note (optional)</span>
@@ -686,6 +832,26 @@ export default function FactoryPayables() {
           )}
         </>
       )}
+    </>
+  );
+
+  // Inside the Owner Dashboard the shell (DashboardLayout) already supplies the page chrome this
+  // screen would otherwise draw for itself: the title, the breadcrumb, and the surrounding
+  // padding. Rendering `.page` + ScreenHeader in there too would produce a second, competing
+  // header, and — worse — ScreenHeader's back arrow points at "/", which would silently eject the
+  // owner out of the dashboard entirely. So the dashboard gets the bare content and lets the
+  // shell frame it, exactly as every other dashboard page does.
+  //
+  // Only the OUTER WRAPPER differs. Nothing inside `content` is branched on shell, because
+  // everything in it (.stat-row, .stat-hero, .card, .payment-history-row, .sticky-action-bar) is
+  // shared app-wide vocabulary that already sizes off its container rather than a fixed width —
+  // the deliberately narrow 480px column is `.page`'s doing, not the content's.
+  if (inDashboard) return content;
+
+  return (
+    <div className="page">
+      <ScreenHeader icon={<WalletIcon size={20} />} title="Factory Payables" />
+      {content}
     </div>
   );
 }
