@@ -1,21 +1,22 @@
 import { useMemo, useRef } from 'react';
 import { useECharts } from '../hooks/useECharts';
 
-// Proof-of-concept echarts version of DonutChart.jsx (2026-09-03) — this app's FIRST use of an
-// external charting library. Deliberately validates just one thing before three more charts and a
-// new layout get built on top of it: does a real echarts pie, styled to match this app's own
-// tokens, actually look right here. Locations.jsx wires this up for the Stock value donut only;
-// Revenue/Profit stay on the hand-rolled DonutChart for a direct side-by-side comparison.
+// This app's only donut-rendering component, built on echarts (its first external charting
+// library). Introduced 2026-09-03 as a proof of concept for just the Stock value donut on
+// Locations.jsx, with Revenue/Profit deliberately left on a hand-rolled DonutChart.jsx for direct
+// side-by-side comparison. That comparison is done: as of 2026-09-04 (81b1f7a) all three
+// Locations donuts (Stock value, Revenue, Profit) render through this component, and
+// DonutChart.jsx was deleted since nothing else in the app used it.
 //
-// Same prop shape as DonutChart on purpose ({ slices, size, strokeWidth, centerLabel,
-// centerSubLabel, description }) — swapping which component a caller uses is meant to be a
-// one-line change, not a data-shape rewrite, if/when the rest of the donuts migrate later.
+// Prop shape ({ slices, size, strokeWidth, centerLabel, centerSubLabel, description }) matches
+// what DonutChart.jsx used to accept, by design — the point was for each caller's migration to be
+// a one-line swap, not a data-shape rewrite, and that's exactly how it played out.
 //
-// Center label is a real HTML overlay (reusing DonutChart's own .donut-chart-center CSS), not
-// echarts' internal text/graphic API — getting font-family/colour to match this app's tokens
-// exactly through echarts' own text-styling options would mean re-deriving CSS custom property
-// values in JS; a plain absolutely-positioned div over the chart gets pixel-identical typography
-// for free, and echarts has no idea it's there (pointer-events: none, same as the old component).
+// Center label is a real HTML overlay (reusing the shared .donut-chart-center CSS), not echarts'
+// internal text/graphic API — getting font-family/colour to match this app's tokens exactly
+// through echarts' own text-styling options would mean re-deriving CSS custom property values in
+// JS; a plain absolutely-positioned div over the chart gets pixel-identical typography for free,
+// and echarts has no idea it's there (pointer-events: none).
 export default function EChartsDonut({
   slices,
   size = 160,
