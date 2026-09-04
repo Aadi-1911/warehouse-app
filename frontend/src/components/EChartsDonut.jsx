@@ -69,12 +69,16 @@ export default function EChartsDonut({
           avoidLabelOverlap: false,
           label: { show: false },
           labelLine: { show: false },
-          // outerRadiusPercent is a full 100% of the container, no headroom — echarts' default
-          // hover "emphasis" state scales the hovered slice up, which at 100% has nowhere to grow
-          // but the container edge, clipping/redrawing on every small cursor move (the confirmed
-          // cause of the hover flashing; the temporary logging in useECharts.js ruled out the hook
-          // itself first). Tooltip stays working — only the scale animation is disabled.
-          emphasis: { scale: false },
+          // emphasis: { scale: false } (previous fix, 4add8a3) was NOT enough — a screen
+          // recording showed the whole data arc disappearing on hover, synced with rapid
+          // mouseenter/mouseleave at the slice boundary flipping the cursor to a pointer. The real
+          // cause isn't the scale-up specifically; it's echarts' entire hover state-transition
+          // machinery (emphasis AND the blur/opacity fade applied to the rest of the chart), which
+          // that boundary flicker retriggers over and over. `disabled: true` turns off that whole
+          // transition system for this series, not just its scale component. Tooltip stays
+          // working regardless — tooltip.trigger: 'item' is driven by echarts' own mouse event
+          // handling, independent of the emphasis/blur state model this disables.
+          emphasis: { disabled: true },
           // Rounded corners on every wedge (outer AND inner, all four corners) — the crisp,
           // not-bulbous style this whole component exists to validate. borderWidth/borderColor
           // (set to the card background) is the standard echarts technique for a visible gap
