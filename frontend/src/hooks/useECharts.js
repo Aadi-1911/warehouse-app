@@ -45,19 +45,14 @@ export function useECharts(containerRef, option) {
   // transition animation instead of letting echarts animate FROM the previous state TO the new
   // one, which is what setOption on an existing instance does for you.
   useEffect(() => {
-    console.log('[useECharts] chart init');
     if (!containerRef.current) return undefined;
     const chart = echarts.init(containerRef.current, undefined, { renderer: 'svg' });
     chartRef.current = chart;
 
-    const resizeObserver = new ResizeObserver(() => {
-      console.log('[useECharts] ResizeObserver fired, calling resize()');
-      chart.resize();
-    });
+    const resizeObserver = new ResizeObserver(() => chart.resize());
     resizeObserver.observe(containerRef.current);
 
     return () => {
-      console.log('[useECharts] chart disposed');
       resizeObserver.disconnect();
       chart.dispose();
       chartRef.current = null;
@@ -66,7 +61,6 @@ export function useECharts(containerRef, option) {
   }, []);
 
   useEffect(() => {
-    console.log('[useECharts] setOption called');
     if (!chartRef.current) return;
     // notMerge: false (the default) — each call merges into the existing option rather than
     // replacing it wholesale, which is what lets echarts animate a series' values changing
