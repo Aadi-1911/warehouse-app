@@ -3,21 +3,23 @@ import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '.
 import { PercentIcon } from '../../components/icons';
 import EChartsDonut from '../../components/EChartsDonut';
 
-// Donut slice colours, in display order — see index.css's own --chart-lime/--chart-violet comment
-// for the full collision check against every semantic/tile token already in use, including on
-// this exact page (dash-kpi-purple, immediately below this donut). Cycles via modulo if a third
-// location is ever added, rather than crashing on undefined — but only 2 colours exist today
-// because only 2 locations exist today (see this file's own header comment); a real 3rd location
-// would need a genuinely new colour picked with the same check, not just a silent 3rd cycle.
-const DONUT_COLORS = ['var(--chart-lime)', 'var(--chart-violet)'];
-
 // The three location-comparison donuts, in the same left-to-right order as the KPI grid above
 // them (Stock value / Revenue / Profit) so donut N visually corresponds to KPI card N — same
 // field names revenueData.locations already carries, no separate data shape per metric.
+//
+// Each metric's own `colors` pair is that metric's own KPI accent tokens (decided 2026-09-04):
+// Stock value matches dash-kpi-accent, Revenue matches dash-kpi-success, Profit matches
+// dash-kpi-purple. This replaces a flat --chart-lime/--chart-violet palette that used to exist
+// here specifically to AVOID colliding with those same KPI hues — the decision is now the
+// opposite, match on purpose, so each donut reads as visually tied to the KPI card above it.
+// Cycles via modulo if a third location is ever added, rather than crashing on undefined — but
+// only 2 colours exist per metric today because only 2 locations exist today (see this file's own
+// header comment); a real 3rd location would need a genuinely new colour picked for each metric's
+// own pair, not just a silent 3rd cycle.
 const DONUT_METRICS = [
-  { key: 'stockValue', title: 'Stock value by location' },
-  { key: 'revenue', title: 'Revenue by location' },
-  { key: 'profit', title: 'Profit by location' },
+  { key: 'stockValue', title: 'Stock value by location', colors: ['var(--accent-text)', 'var(--accent-border)'] },
+  { key: 'revenue', title: 'Revenue by location', colors: ['var(--success-text)', 'var(--success-border)'] },
+  { key: 'profit', title: 'Profit by location', colors: ['var(--purple-text)', 'var(--purple-border)'] },
 ];
 
 // Owner Dashboard — Locations (added 2026-08-20, beyond 07_UI_DESIGN_BRIEF.md §8's original nav —
@@ -400,7 +402,7 @@ export default function Locations() {
                           <span key={loc.locationId} className="dash-donut-legend-item">
                             <span
                               className={`dash-donut-legend-swatch${onRing ? '' : ' dash-donut-legend-swatch-hidden'}`}
-                              style={onRing ? { background: DONUT_COLORS[i % DONUT_COLORS.length] } : undefined}
+                              style={onRing ? { background: metric.colors[i % metric.colors.length] } : undefined}
                             />
                             <span className="dash-donut-legend-name">{loc.locationName}</span>
                             <span className="dash-donut-legend-value">{inr(loc[metric.key])}</span>
@@ -416,11 +418,11 @@ export default function Locations() {
                           DonutChart.jsx has been deleted (it had no other consumers in the app). */}
                       <EChartsDonut
                         size={180}
-                        strokeWidth={46}
+                        strokeWidth={20}
                         slices={revenueData.locations.map((loc, i) => ({
                           label: loc.locationName,
                           value: loc[metric.key],
-                          color: DONUT_COLORS[i % DONUT_COLORS.length],
+                          color: metric.colors[i % metric.colors.length],
                         }))}
                         centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
                         centerSubLabel="total"
