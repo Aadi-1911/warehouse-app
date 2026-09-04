@@ -3420,6 +3420,18 @@ body {
   gap: var(--space-5);
 }
 
+/* Locations' own 3-card KPI row (2026-09-04) — .dash-kpi-grid above is a FIXED 4-column grid
+   built for Overview's 8-card layout; reusing it here for only 3 cards left a dead 4th-column
+   gap on the right instead of spanning full width like .dash-donut-grid below it. Deliberately a
+   separate class rather than editing .dash-kpi-grid itself, which Overview still needs at 4
+   columns exactly as-is. Same gap as .dash-kpi-grid (--space-4, not --space-5) since these are
+   still .dash-kpi cards, not donut cards — only the column count changes. */
+.dash-locations-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+
 /* Modifier applied ALONGSIDE .dash-card (not a replacement) — .dash-card itself is shared by
    most other dashboard pages (Overview, Orders, Parties, History, Low stock, Live Stock,
    ComingSoon), so its own padding rule stays untouched; this only widens padding for these three

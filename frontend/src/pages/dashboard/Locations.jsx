@@ -348,7 +348,7 @@ export default function Locations() {
           {revenueStatus !== 'loaded' || !selectedLocationData ? (
             <p className="muted dash-empty">Loading…</p>
           ) : (
-            <div className="dash-kpi-grid">
+            <div className="dash-locations-kpi-grid">
               <div className="dash-kpi dash-kpi-accent">
                 <div className="dash-kpi-label">Stock value</div>
                 <div className="dash-kpi-value">{inrShort(selectedLocationData.stockValue)}</div>
@@ -377,9 +377,9 @@ export default function Locations() {
               always show ALL locations together, using revenueData.locations exactly as
               GET /api/locations/revenue already returns it (no new fetch, no dependency on
               selectedLocationData). Gated on revenueStatus/revenueData alone for that reason.
-              Uses its own .dash-donut-grid, NOT .dash-kpi-grid — the two grids no longer need to
-              align; see .dash-donut-grid's own comment in index.css for why that alignment was
-              dropped on purpose. */}
+              Uses its own .dash-donut-grid, NOT the KPI row's .dash-locations-kpi-grid above it —
+              the two grids no longer need to align; see .dash-donut-grid's own comment in
+              index.css for why that alignment was dropped on purpose. */}
           {revenueStatus === 'loaded' && revenueData && (
             <div className="dash-donut-grid">
               {DONUT_METRICS.map((metric) => {
