@@ -3407,13 +3407,20 @@ body {
 }
 
 /* Donut row's own grid (2026-09-02) — deliberately DOES NOT share a class with .dash-kpi-grid
-   above it any more. That sharing existed only so the donut columns lined up under the KPI
-   cards' columns; the donuts have since grown to their own larger, independent size (see
-   DonutChart's size/strokeWidth props in Locations.jsx) and that alignment is intentionally
-   dropped, not preserved — if a future reader is tempted to point this back at .dash-kpi-grid
-   "to keep them in sync", that sync is no longer the intent. Fixed at exactly 3 columns
-   (never auto-fit/auto-fill): this is a desktop-only OWNER screen, so a fixed 3-up layout is
-   correct rather than something that should reflow at narrower widths. */
+   above it: Overview also uses .dash-kpi-grid, fixed at 4 columns for its own unrelated 8-card
+   layout, so this donut row needs its own class regardless of any alignment question. Fixed at
+   exactly 3 columns (never auto-fit/auto-fill): this is a desktop-only OWNER screen, so a fixed
+   3-up layout is correct rather than something that should reflow at narrower widths.
+
+   REVERSED 2026-09-04 (75cbd34): this comment used to argue the opposite — that the KPI row's
+   and this donut row's column alignment "is intentionally dropped, not preserved" and warned a
+   future reader against re-syncing them. That's flipped now, same as the donut-slice-colour
+   collision-avoidance decision elsewhere in this file that also got reversed on purpose: rather
+   than reusing .dash-kpi-grid, Locations.jsx's KPI row got its own .dash-locations-kpi-grid
+   (below), deliberately ALSO fixed at repeat(3, 1fr) — so the two rows keep the same column count
+   and span full width together, columns aligned. Two separate classes remain correct (Overview's
+   needs stay unrelated to this page's), but "don't bother keeping them in sync" is no longer the
+   advice — the sync is back on purpose. */
 .dash-donut-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

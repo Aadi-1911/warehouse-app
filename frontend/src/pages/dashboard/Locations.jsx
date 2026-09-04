@@ -378,8 +378,12 @@ export default function Locations() {
               GET /api/locations/revenue already returns it (no new fetch, no dependency on
               selectedLocationData). Gated on revenueStatus/revenueData alone for that reason.
               Uses its own .dash-donut-grid, NOT the KPI row's .dash-locations-kpi-grid above it —
-              the two grids no longer need to align; see .dash-donut-grid's own comment in
-              index.css for why that alignment was dropped on purpose. */}
+              two separate classes, since Overview's own .dash-kpi-grid (unrelated to this page)
+              still needs a fixed 4 columns. Both are nonetheless deliberately kept at the same
+              repeat(3, 1fr) column count (2026-09-04, 75cbd34) so the KPI row and donut row align
+              and span full width together; see .dash-donut-grid's own comment in index.css for
+              why that's now the intent, reversed from what an earlier version of that comment
+              said. */}
           {revenueStatus === 'loaded' && revenueData && (
             <div className="dash-donut-grid">
               {DONUT_METRICS.map((metric) => {
