@@ -186,4 +186,8 @@ async function locationRevenueForPeriod(prisma, period, { now = new Date(), cust
   return { period: range.period, label: range.label, locations };
 }
 
-module.exports = { computeLocationRevenue, locationRevenueForPeriod };
+// SALE_TRANSACTION_WHERE is also exported for utils/factoryRevenue.js — a sibling module facing
+// the exact same "what counts as a sale" question, just grouped by product.factoryId instead of
+// stock.locationId. That definition must never drift between the two modules computing it two
+// different ways, so it's defined once, here, and imported rather than reimplemented.
+module.exports = { computeLocationRevenue, locationRevenueForPeriod, SALE_TRANSACTION_WHERE };

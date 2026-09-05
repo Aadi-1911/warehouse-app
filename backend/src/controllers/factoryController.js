@@ -3,6 +3,7 @@ const { sendError } = require('../utils/errors');
 // Moved to utils/piecesPerSet.js (2026-08-19) when the Owner Dashboard became a second caller —
 // same code, one home. Re-exported below so any existing importer of this controller is unaffected.
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
+const { factoryRevenueForPeriod, computeSoldVsSittingByFactory } = require('../utils/factoryRevenue');
 
 const prisma = new PrismaClient();
 
@@ -226,6 +227,33 @@ async function getFactoryPayable(req, res) {
   });
 }
 
+// GET /api/factories/analytics/revenue?period=month|six_months|fy|all — OWNER only (👑). Thin
+// wrapper around utils/factoryRevenue.js's factoryRevenueForPeriod, same "endpoint just supplies
+// a period name" shape as GET /api/locations/revenue — no revenue/profit math lives here.
+// `profit` is derived from `costPrice`, which CLAUDE.md's first rule says must never reach a
+// STAFF request under any circumstance, same reasoning as the Locations revenue endpoint's gating.
+const FACTORY_REVENUE_PERIODS = ['month', 'six_months', 'fy', 'all'];
+
+async function getFactoriesRevenue(req, res) {
+  const { period } = req.query;
+  if (!FACTORY_REVENUE_PERIODS.includes(period)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `period must be one of ${FACTORY_REVENUE_PERIODS.join(', ')}`);
+  }
+  const result = await factoryRevenueForPeriod(prisma, period);
+  res.json(result);
+}
+
+// GET /api/factories/analytics/sold-vs-sitting — OWNER only (👑). No period param — this is a
+// current-inventory-health snapshot (pieces sold all-time vs. pieces currently in Stock), not a
+// trend over a window; see computeSoldVsSittingByFactory's own comment for why. This particular
+// figure is piece counts only and doesn't expose costPrice, but it's gated OWNER-only anyway to
+// match the rest of the Owner Dashboard's factory analytics (revenue/profit above, payable
+// already OWNER-only) rather than carving out a mixed-access analytics surface.
+async function getFactoriesSoldVsSitting(req, res) {
+  const result = await computeSoldVsSittingByFactory(prisma);
+  res.json({ factories: result });
+}
+
 module.exports = {
   listFactories,
   createFactory,
@@ -233,5 +261,7 @@ module.exports = {
   deactivateFactory,
   reactivateFactory,
   getFactoryPayable,
+  getFactoriesRevenue,
+  getFactoriesSoldVsSitting,
   piecesPerSetFor,
 };

@@ -36,3 +36,13 @@ export function updateFactory(id, { name, contact, gstNo }) {
 export function getFactoryPayable(factoryId) {
   return apiFetch(`/api/factories/${factoryId}/payable`);
 }
+
+// GET /api/factories/analytics/revenue?period=month|six_months|fy|all -> { period, label,
+// factories: [{ factoryId, factoryName, isActive, revenue, profit }] }. OWNER only — `profit` is
+// derived from costPrice, same protection reasoning as everything else costPrice-adjacent. Every
+// factory's figures come back in one call, same "not scoped to a single id" shape
+// getLocationsRevenue already uses, for the same reason (the backend already computes every
+// factory in one pass).
+export function getFactoriesRevenue({ period }) {
+  return apiFetch(`/api/factories/analytics/revenue?period=${encodeURIComponent(period)}`);
+}

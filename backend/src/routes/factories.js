@@ -8,12 +8,19 @@ const {
   deactivateFactory,
   reactivateFactory,
   getFactoryPayable,
+  getFactoriesRevenue,
+  getFactoriesSoldVsSitting,
 } = require('../controllers/factoryController');
 
 const router = express.Router();
 
 router.get('/', requireAuth, listFactories);
 router.post('/', requireAuth, createFactory);
+// Static /analytics/* segments, placed before /:id so they can never be swallowed by a future
+// single-segment :id route — matches the defensive ordering already used for /:id/payable's own
+// literal suffix. OWNER only, same gating as GET /api/locations/revenue.
+router.get('/analytics/revenue', requireAuth, requireRole('OWNER'), getFactoriesRevenue);
+router.get('/analytics/sold-vs-sitting', requireAuth, requireRole('OWNER'), getFactoriesSoldVsSitting);
 router.patch('/:id', requireAuth, requireRole('OWNER'), updateFactory);
 // Any authenticated role — matches createFactory's own gating, not updateFactory's (deactivate
 // is a distinct action from editing GST/contact, same split userController.js draws between
