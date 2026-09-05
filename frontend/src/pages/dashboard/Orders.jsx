@@ -3,7 +3,7 @@ import { ChevronIcon } from '../../components/icons';
 import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
-import { preBillingTotal, computeBillingAmounts } from '../../utils/orderBilling';
+import { preBillingTotal, computeBillingAmounts, clampPercent } from '../../utils/orderBilling';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
@@ -567,7 +567,7 @@ export default function Orders() {
                     max="100"
                     step="0.01"
                     value={discountPercent}
-                    onChange={(e) => setDiscountPercent(e.target.value)}
+                    onChange={(e) => setDiscountPercent(clampPercent(e.target.value, 100))}
                     placeholder="e.g. 5"
                     autoFocus
                   />
@@ -592,7 +592,7 @@ export default function Orders() {
                     max="5"
                     step="0.01"
                     value={gstPercent}
-                    onChange={(e) => setGstPercent(e.target.value)}
+                    onChange={(e) => setGstPercent(clampPercent(e.target.value, 5))}
                     placeholder="e.g. 5"
                     autoFocus
                   />
