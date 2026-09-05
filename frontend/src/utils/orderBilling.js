@@ -40,3 +40,30 @@ export function computeBillingAmounts({ preTaxAmount, discountApplicable, discou
 
   return { discountAmount, finalAmount, gstAmount, actualPayable, hasDiscount, hasGst };
 }
+
+// Hard clamp client-side (0..max) for the discountPercent/gstPercent onChange handlers in both
+// billing entry points — same discipline PackOrderDetail.jsx's packed-quantity stepper already
+// uses (stepAdjust: Math.max(0, Math.min(ordered, ...))): the backend REJECTS an out-of-range
+// percent rather than clamping it (billOrder() returns 400 VALIDATION_ERROR), so the input itself
+// must never be able to produce one in the first place. This closes a real gap found in
+// investigation: a number input's `min`/`max` attributes only constrain the spinner arrows, not
+// raw keyboard/paste input, so typing "-5" reached computeBillingAmounts() above unclamped and
+// rendered a nonsensical preview (a negative discountAmount, so a "discounted" total higher than
+// the pre-tax amount).
+//
+// Passes the raw string through UNCHANGED whenever it doesn't yet parse to a number — an empty
+// field, or a transient state mid-typing like "-" or "5." (Number("5.") is 5, not NaN, so a
+// trailing decimal point survives; only a genuinely unparseable string like "-" hits this branch).
+// Without this, reformatting a valid in-range value via String(Number(value)) would strip the "."
+// the instant it's typed, making it impossible to ever type a decimal like "5.10" one keystroke
+// at a time — computeBillingAmounts() already treats a not-yet-parseable value as "not entered
+// yet" (hasDiscount/hasGst check discountPercent/gstPercent !== '' && !Number.isNaN(...)), so
+// letting it through here doesn't risk a bad value reaching the preview or the server.
+export function clampPercent(rawValue, max) {
+  if (rawValue === '') return '';
+  const num = Number(rawValue);
+  if (Number.isNaN(num)) return rawValue;
+  if (num < 0) return '0';
+  if (num > max) return String(max);
+  return rawValue;
+}

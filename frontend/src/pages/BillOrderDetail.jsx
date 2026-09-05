@@ -7,7 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
-import { preBillingTotal, computeBillingAmounts } from '../utils/orderBilling';
+import { preBillingTotal, computeBillingAmounts, clampPercent } from '../utils/orderBilling';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
@@ -474,7 +474,7 @@ export default function BillOrderDetail() {
                 max="100"
                 step="0.01"
                 value={discountPercent}
-                onChange={(e) => setDiscountPercent(e.target.value)}
+                onChange={(e) => setDiscountPercent(clampPercent(e.target.value, 100))}
                 placeholder="e.g. 5"
                 autoFocus
               />
@@ -499,7 +499,7 @@ export default function BillOrderDetail() {
                 max="5"
                 step="0.01"
                 value={gstPercent}
-                onChange={(e) => setGstPercent(e.target.value)}
+                onChange={(e) => setGstPercent(clampPercent(e.target.value, 5))}
                 placeholder="e.g. 5"
                 autoFocus
               />
