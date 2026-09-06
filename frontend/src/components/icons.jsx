@@ -374,3 +374,19 @@ export function PercentIcon({ size = 18 }) {
     </svg>
   );
 }
+
+// Three ascending bars on a baseline — Owner Dashboard nav for the new Analytics page (added
+// 2026-09-05). Same situation FactoryIcon was in: no mobile-app screen shows anything chart-like,
+// so there's no existing glyph to borrow, and this codebase's icon set had no chart/analytics
+// icon at all until now. Matches size/weight to GridIcon/FactoryIcon (strokeWidth 1.5, rect-based
+// shapes) so it reads as part of the same 17px rail set alongside them.
+export function BarChartIcon({ size = 17 }) {
+  return (
+    <svg {...baseProps} width={size} height={size} strokeWidth={1.5}>
+      <line x1="3" y1="21" x2="21" y2="21" />
+      <rect x="5" y="14" width="4" height="7" />
+      <rect x="11" y="9" width="4" height="12" />
+      <rect x="17" y="4" width="4" height="17" />
+    </svg>
+  );
+}

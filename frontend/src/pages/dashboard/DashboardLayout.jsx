@@ -17,6 +17,7 @@ import {
   FactoryIcon,
   ListIcon,
   LockIcon,
+  BarChartIcon,
 } from '../../components/icons';
 
 // Owner Desktop Dashboard — layout shell (07_UI_DESIGN_BRIEF.md §8, design bundle
@@ -95,6 +96,11 @@ const NAV_ITEMS = [
   // Added 2026-09-02, same "append at the end, never renumber" precedent as every addition
   // above. Same ListIcon the mobile Live Stock screen already uses.
   { to: '/dashboard/live-stock', label: 'Live Stock', Icon: ListIcon },
+  // Added 2026-09-05, same "append at the end, never renumber" precedent as every addition
+  // above. Unlike most other pages in this list, Analytics has no mobile-app equivalent screen
+  // to borrow an icon from — same situation FactoryIcon was in — so BarChartIcon is a new glyph
+  // drawn specifically for this nav entry (see icons.jsx).
+  { to: '/dashboard/analytics', label: 'Analytics', Icon: BarChartIcon },
 ];
 
 // Page title + breadcrumb per route, keyed by the same paths NAV_ITEMS uses so a renamed route
@@ -111,6 +117,7 @@ const PAGE_META = {
   '/dashboard/bills': ['Every billed order, chronologically', 'Bills'],
   '/dashboard/factories': ['Supplier details, editable', 'Factories'],
   '/dashboard/live-stock': ['Stock on hand, by factory and article', 'Live Stock'],
+  '/dashboard/analytics': ['Suppliers and buyers, compared', 'Analytics'],
 };
 
 function initialsOf(name) {

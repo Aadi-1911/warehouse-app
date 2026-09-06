@@ -33,6 +33,7 @@ import DashboardArticlePricing from './pages/dashboard/ArticlePricing';
 import DashboardBills from './pages/dashboard/Bills';
 import DashboardFactories from './pages/dashboard/Factories';
 import DashboardLiveStock from './pages/dashboard/LiveStock';
+import Analytics from './pages/dashboard/Analytics';
 
 export default function App() {
   return (
@@ -259,6 +260,12 @@ export default function App() {
                 API (safe here for the same reason History/Parties are — read-only, no write
                 path on this screen at all). */}
             <Route path="live-stock" element={<DashboardLiveStock />} />
+            {/* Added 2026-09-05, same "append at the end, never renumber" precedent as every
+    addition above. Needs no requireRole of its own: this page does fetch its own data
+    (GET /api/factories/analytics/revenue), but that endpoint is independently
+    OWNER-gated server-side (requireRole('OWNER'), confirmed live via curl), so no
+    separate frontend guard is needed here either. */}
+            <Route path="analytics" element={<Analytics />} />
           </Route>
           {/* Unknown URLs fall back home rather than rendering a blank screen. */}
           <Route path="*" element={<Navigate to="/" replace />} />
