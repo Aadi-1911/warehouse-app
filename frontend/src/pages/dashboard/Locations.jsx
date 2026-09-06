@@ -1,25 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { listLocations, getLocationsRevenue, updateLocationProfitShare } from '../../api/locations';
 import { PercentIcon } from '../../components/icons';
-import EChartsDonut from '../../components/EChartsDonut';
+import OfficialPieChart from '../../components/OfficialPieChart';
 
 // The three location-comparison donuts, in the same left-to-right order as the KPI grid above
 // them (Stock value / Revenue / Profit) so donut N visually corresponds to KPI card N — same
 // field names revenueData.locations already carries, no separate data shape per metric.
 //
-// Each metric's own `colors` pair is that metric's own KPI accent tokens (decided 2026-09-04):
-// Stock value matches dash-kpi-accent, Revenue matches dash-kpi-success, Profit matches
-// dash-kpi-purple. This replaces a flat --chart-lime/--chart-violet palette that used to exist
-// here specifically to AVOID colliding with those same KPI hues — the decision is now the
-// opposite, match on purpose, so each donut reads as visually tied to the KPI card above it.
-// Cycles via modulo if a third location is ever added, rather than crashing on undefined — but
-// only 2 colours exist per metric today because only 2 locations exist today (see this file's own
-// header comment); a real 3rd location would need a genuinely new colour picked for each metric's
-// own pair, not just a silent 3rd cycle.
+// No per-metric `colors` here (removed 2026-09-05) — these donuts used to hand-pick a KPI-accent
+// colour pair per metric (Stock value/Revenue/Profit matching dash-kpi-accent/-success/-purple),
+// but Aadi's direct browser feedback was that mixing custom colours into OfficialPieChart looked
+// bad. Reversed on purpose: these donuts now let echarts assign its own default categorical
+// palette, same as Factories' revenue chart already does — not preserved anywhere else, this
+// colour scheme is abandoned, not migrated.
 const DONUT_METRICS = [
-  { key: 'stockValue', title: 'Stock value by location', colors: ['var(--accent-text)', 'var(--accent-border)'] },
-  { key: 'revenue', title: 'Revenue by location', colors: ['var(--success-text)', 'var(--success-border)'] },
-  { key: 'profit', title: 'Profit by location', colors: ['var(--purple-text)', 'var(--purple-border)'] },
+  { key: 'stockValue', title: 'Stock value by location' },
+  { key: 'revenue', title: 'Revenue by location' },
+  { key: 'profit', title: 'Profit by location' },
 ];
 
 // Owner Dashboard — Locations (added 2026-08-20, beyond 07_UI_DESIGN_BRIEF.md §8's original nav —
@@ -387,53 +384,47 @@ export default function Locations() {
           {revenueStatus === 'loaded' && revenueData && (
             <div className="dash-donut-grid">
               {DONUT_METRICS.map((metric) => {
-                // DonutChart itself already excludes any slice with value <= 0 from the ring —
-                // correct, and untouched here. What was missing is that the LEGEND still gave
-                // every location a solid colour swatch regardless, implying a ring slice that
-                // doesn't actually exist for a zero/negative location (e.g. Revenue/Profit, both
-                // currently ₹0 for both locations — a solid swatch there falsely promises a
-                // slice of colour that's really just the bare grey track). hiddenLocations drives
-                // both the swatch variant below and the caption naming exactly which locations
-                // and real values are missing from the ring.
+                // hiddenLocations still drives the "not shown" caption below — that text stays
+                // meaningful (explains why fewer legend entries exist than locations) even though
+                // the custom swatch-legend it used to sit next to is gone (OfficialPieChart brings
+                // echarts' own built-in legend now, migrated 2026-09-05 — see this file's header
+                // comment for why: a location at ₹0 was never on the ring, so a solid swatch next
+                // to it would have falsely promised a slice of colour that doesn't exist).
                 const hiddenLocations = revenueData.locations.filter((loc) => loc[metric.key] <= 0);
+
+                // OfficialPieChart has no internal "exclude ≤0" filter the way EChartsDonut/
+                // DonutChart did (see the component's own header + this task's confirmed-consequence
+                // list) — the caller filters before handing over `data`, same as Analytics.jsx's
+                // Factories chart already does.
+                const visibleLocations = revenueData.locations.filter((loc) => loc[metric.key] > 0);
+                const chartData = visibleLocations.map((loc) => ({ name: loc.locationName, value: loc[metric.key] }));
+
                 return (
                   <div className="dash-card dash-donut-card" key={metric.key}>
                     <h2 className="dash-section-title">{metric.title}</h2>
-                    <div className="dash-donut-legend-top">
-                      {revenueData.locations.map((loc, i) => {
-                        const onRing = loc[metric.key] > 0;
-                        return (
-                          <span key={loc.locationId} className="dash-donut-legend-item">
-                            <span
-                              className={`dash-donut-legend-swatch${onRing ? '' : ' dash-donut-legend-swatch-hidden'}`}
-                              style={onRing ? { background: metric.colors[i % metric.colors.length] } : undefined}
-                            />
-                            <span className="dash-donut-legend-name">{loc.locationName}</span>
-                            <span className="dash-donut-legend-value">{inr(loc[metric.key])}</span>
-                          </span>
-                        );
-                      })}
-                    </div>
                     <div className="dash-donut-center-wrap">
-                      {/* All three metrics on EChartsDonut (migration finished 2026-09-04) — the
-                          2026-09-03 proof of concept above deliberately kept Revenue/Profit on the
-                          old hand-rolled DonutChart so Aadi could compare old vs new side by side
-                          before committing further; he's now decided to finish the migration, so
-                          DonutChart.jsx has been deleted (it had no other consumers in the app). */}
-                      <EChartsDonut
-                        size={180}
-                        strokeWidth={20}
-                        slices={revenueData.locations.map((loc, i) => ({
-                          label: loc.locationName,
-                          value: loc[metric.key],
-                          color: metric.colors[i % metric.colors.length],
-                        }))}
-                        centerLabel={inrShort(revenueData.locations.reduce((sum, l) => sum + l[metric.key], 0))}
-                        centerSubLabel="total"
+                      {/* Migrated from EChartsDonut to OfficialPieChart (2026-09-05), Option A's
+                          real echarts emphasis + built-in legend rather than a permanent HTML
+                          center label. No `colors` prop (removed same day, on Aadi's direct
+                          feedback after seeing it rendered) — these donuts use echarts' own
+                          default categorical palette now, same as Factories' revenue chart,
+                          instead of the abandoned per-metric KPI-accent pairs (see this file's
+                          header comment). centerFontSize is smaller than OfficialPieChart's own
+                          default (see that component's header) — this page's donut cards are far
+                          narrower than Factories' single wide card, and the default 40px hover
+                          label clipped past both edges at this width; confirmed by a real
+                          rendered screenshot before picking 22. The center total is hover-only
+                          (emphasis.label), not always-visible — an explicitly accepted change,
+                          not an oversight. */}
+                      <OfficialPieChart
+                        data={chartData}
+                        radius={['40%', '70%']}
+                        centerFontSize={22}
+                        seriesName={metric.title}
+                        valueFormatter={inr}
                         description={`${metric.title}: ${revenueData.locations
                           .map((loc) => `${loc.locationName} ${inr(loc[metric.key])}`)
                           .join(', ')}`}
-                        tooltipValueFormatter={inr}
                       />
                     </div>
                     {hiddenLocations.length > 0 && (

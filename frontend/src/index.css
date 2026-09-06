@@ -3460,82 +3460,27 @@ body {
   padding: var(--space-6);
 }
 
-/* Locations.jsx's location-comparison donut cards — the only current DonutChart caller. Kept here
-   rather than in DonutChart's own block above since this is this ONE page's layout choice, not
-   something the reusable component should know about.
-   Legend moved to a centered row ABOVE the donut (was beside it) — each location's swatch/name/
-   value sits together as one inline item, wrapping onto a second line if the card gets narrow
-   rather than overflowing. */
-/* padding: 25px added 2026-09-03 — a FIFTH manual edit bundled into cea06cd that this task's own
-   instructions didn't enumerate (Aadi's own direct edit, not made through a task prompt, reason
-   not recorded — found only while documenting the four the task DID list; flagged to Aadi
-   separately since the task's count was off by more than this one). Plausible (not certain)
-   explanation, given the evidence: .dash-donut-card's own padding is currently broken (see that
-   rule's own comment — its var(--space-8) is undefined, so it silently falls back to a much
-   smaller 8px/16px than intended), and this 25px inner padding happens to visually compensate,
-   giving the card reasonable-looking breathing room despite the outer bug. Checked live — reads
-   fine on all three donut cards, the only consumers (Locations.jsx). */
-.dash-donut-legend-top {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-bottom: var(--space-3);
-  padding: 25px;
-}
-
-.dash-donut-legend-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
+/* Locations.jsx's location-comparison donut cards. Kept here rather than in a chart component's
+   own block since this is this ONE page's layout choice, not something a reusable chart
+   component should know about.
+   The custom swatch-legend that used to live here (.dash-donut-legend-top and friends) was
+   REMOVED 2026-09-05 when these donuts migrated from EChartsDonut to OfficialPieChart.jsx —
+   OfficialPieChart brings echarts' own built-in legend, so a second, hand-rolled one is no
+   longer needed. Confirmed no other consumer of those classes existed before deleting them. */
 .dash-donut-center-wrap {
   display: flex;
   justify-content: center;
 }
 
-.dash-donut-legend-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-/* A location whose value is <= 0 has no slice on the ring (DonutChart itself already excludes
-   it) — this swatch variant marks that in the legend instead of a solid colour, which would
-   otherwise imply a ring slice that isn't there. Dashed + hollow + circular is deliberately
-   distinct from the solid, rounded-square "real slice" swatch above, not just a different
-   colour — --danger-border/text is this app's existing negative/bad-value semantic token
-   (§3.1), reused rather than inventing a new one for this one case. */
-.dash-donut-legend-swatch-hidden {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1.5px dashed var(--danger-border);
-  background: none;
-  flex-shrink: 0;
-}
-
-/* padding: 25px added 2026-09-03 — a SIXTH manual edit bundled into cea06cd, same situation as
-   .dash-donut-legend-top's own comment above (not in the task's enumerated four, found while
-   documenting them, reason not recorded, plausibly compensating for the same .dash-donut-card
-   padding bug). Checked live — reads fine, only consumer is Locations.jsx. */
+/* padding: 25px added 2026-09-03 — a SIXTH manual edit bundled into cea06cd (not in that task's
+   own enumerated four, found while documenting them, reason not recorded, plausibly compensating
+   for the same .dash-donut-card padding bug .dash-card.dash-donut-card's own comment describes).
+   Checked live — reads fine, only consumer is Locations.jsx. */
 .dash-donut-caption {
   margin: var(--space-2) 0 0;
   font-size: 12px;
   color: var(--danger-text);
   padding: 25px;
-}
-
-.dash-donut-legend-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dash-donut-legend-value {
-  color: var(--text-secondary);
-  margin-left: var(--space-2);
 }
 
 /* --- Sections and the activity feed. */
@@ -4188,6 +4133,18 @@ body {
    rows). Only two consumers, both the Location and Period chip rows on this same
    dashboard/Locations.jsx screen (checked live) — low blast radius, and both read fine. */
 .dash-location-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: 15px;
+}
+
+/* Identical properties to .dash-location-toggle-row above, deliberately duplicated rather than
+   reused (2026-09-05, Analytics page's Factories/Parties tab switcher) — that class's rule set
+   is generic, but its name is location-specific, and this one has nothing to do with Location.
+   A shared name that no longer describes what it's for is more misleading than a short CSS
+   duplicate. Keep both in sync if this shape ever changes. */
+.dash-tab-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
