@@ -130,6 +130,15 @@ export default function PackOrderDetail() {
   const [justPacked, setJustPacked] = useState(false);
 
   const SWIPE_CONFIRM_RATIO = 0.7;
+  // Mirrors .pack-swipe-thumb's own `left: 8px` / `top: 8px` in index.css. The thumb doesn't sit
+  // flush at the track's edge — it rests 8px in, then `transform: translateX(dragX)` moves it
+  // further right on top of that static offset. So the thumb's right edge is really at
+  // `THUMB_INSET_PX + dragX + thumbWidth`, never just `dragX + thumbWidth` — maxTravel below has
+  // to account for that same 8px twice: once so the thumb's right edge doesn't sail past the
+  // track's own right edge (clipped invisibly by .pack-swipe-track's overflow: hidden), and again
+  // so the gap left on the right at full travel matches the 8px gap already fixed on the left,
+  // per this control's own symmetric-inset design (see index.css's comment on .pack-swipe-thumb).
+  const THUMB_INSET_PX = 8;
 
   // Once packing succeeds, the thumb should visibly finish its journey to the end of the track
   // rather than sitting wherever a drag left it (a tap/keyboard trigger leaves dragX at 0 the
@@ -142,7 +151,7 @@ export default function PackOrderDetail() {
     if (!track || !thumb) return;
     const trackWidth = track.getBoundingClientRect().width;
     const thumbWidth = thumb.getBoundingClientRect().width;
-    setDragX(Math.max(0, trackWidth - thumbWidth));
+    setDragX(Math.max(0, trackWidth - thumbWidth - THUMB_INSET_PX * 2));
   }, [justPacked]);
 
   function handleThumbPointerDown(e) {
@@ -153,7 +162,7 @@ export default function PackOrderDetail() {
     suppressTrackClickRef.current = false;
     const trackWidth = track.getBoundingClientRect().width;
     const thumbWidth = thumb.getBoundingClientRect().width;
-    dragRef.current = { active: true, moved: false, startX: e.clientX, maxTravel: Math.max(0, trackWidth - thumbWidth), x: 0 };
+    dragRef.current = { active: true, moved: false, startX: e.clientX, maxTravel: Math.max(0, trackWidth - thumbWidth - THUMB_INSET_PX * 2), x: 0 };
     setDragging(true);
     thumb.setPointerCapture(e.pointerId);
   }
