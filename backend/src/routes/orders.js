@@ -7,6 +7,7 @@ const {
   getOrder,
   packOrder,
   billOrder,
+  previewOrderFulfillment,
   shipOrder,
   updateOrderLines,
   cancelOrderLine,
@@ -24,6 +25,12 @@ router.patch('/:id/pack', requireAuth, packOrder);
 // owner-only and must never be offered to STAFF. Gated by real middleware, not a comment —
 // this project has shipped a role-gate mistake before (POST /api/bundles, see LEARNING_LOG.md).
 router.patch('/:id/bill', requireAuth, requireRole('OWNER'), billOrder);
+// Read-only companion to the bill endpoint above, deliberately carrying the IDENTICAL auth gate
+// (requireAuth + OWNER) — it reports per-location stock for a specific order, which is the same
+// billing-desk information the bill call itself acts on. A preview reachable by a role that
+// cannot bill would be both useless and a small information leak. Distinct path segment, so it
+// never collides with GET '/:id' above.
+router.get('/:id/fulfillment-preview', requireAuth, requireRole('OWNER'), previewOrderFulfillment);
 // OWNER-only for the same reason billing itself is, and because billNo must never be readable or
 // writable by STAFF at all (it's stripped from every STAFF response server-side too — see
 // orderDetailSelect). No requirePin: this endpoint cannot change any amount, only the reference
