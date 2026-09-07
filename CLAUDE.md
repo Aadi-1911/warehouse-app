@@ -17,6 +17,7 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 - Article numbers are unique per Factory, never globally — all lookups/matches must be scoped to the selected Factory.
 - Order status is exactly four stages: Placed → Packed → Billed → Shipped. Don't collapse or reorder these.
 - Before installing any new npm package, check its `engines` field (`npm view <package> engines`) against this machine's Node version. This has caused real problems three times already (Prisma 7, Vite 7, jsdom) — check proactively, don't wait to hit the error.
+- After any task that changes code, schema, or live data — including manual/SQL actions run outside the app itself — update the relevant doc(s) before considering the task done: `LEARNING_LOG.md` (Decisions & Reasoning or Mistakes & Fixes, as applicable), `06_ROADMAP.md` if a feature's status changed, and `CLAUDE.md` itself if a project convention changed. This applies every time, not only when a task obviously calls for it — the existing same-commit and continuous-update rules already say this; this line exists because they've been missed anyway.
 
 ## Working style
 - One task at a time, scoped to a single resource, endpoint, or screen. Don't build multiple pieces in one session.
