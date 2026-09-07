@@ -43,8 +43,25 @@ export function packOrder(id, lineItems) {
 // `billNo` (optional, 2026-08-30) rides along in the same body: a display-only reference tag for
 // the bill this order was billed under. It takes no part in any of the amount arithmetic above,
 // and unlike those amounts it stays correctable afterwards via updateOrderBillNo below.
+// `locationId` and `locationConfirmed: true` (2026-09-07) are BOTH REQUIRED in the body — the
+// server 400s without them, deliberately with no default location. Billing draws stock from
+// exactly one explicitly-chosen location; it no longer walks every location alphabetically and can
+// no longer split one line across two of them. Callers must send the owner's real toggle choice
+// and their real checkbox state, never a hardcoded `true`.
 export function billOrder(id, billing = {}) {
   return apiFetch(`/api/orders/${id}/bill`, { method: 'PATCH', body: billing });
+}
+
+// GET /api/orders/:id/fulfillment-preview?locationId=... -> { orderId, locationId, locationName,
+// canFulfill, lines: [{ lineItemId, bundleId, needed, available, sufficient, articleNo,
+// productName, colorName }] }. OWNER only, same gate as billOrder itself.
+//
+// Read-only and takes no lock — it answers "if I billed from here right now, what would happen?"
+// so a wrong-location mistake is visible in the form instead of arriving as a 409 after the
+// irreversible button. It is a SNAPSHOT: stock can move between previewing and billing, and
+// billOrder re-checks atomically at commit time regardless of what this said.
+export function getOrderFulfillmentPreview(id, locationId) {
+  return apiFetch(`/api/orders/${id}/fulfillment-preview?locationId=${encodeURIComponent(locationId)}`);
 }
 
 // PATCH /api/orders/:id/bill-no -> the updated order, same shape as getOrder. OWNER ONLY, no PIN.

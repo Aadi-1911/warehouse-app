@@ -3,6 +3,8 @@ const { sendError } = require('../utils/errors');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
+const { applyStockMovement } = require('../utils/stock');
+const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
 
 const prisma = new PrismaClient();
 
@@ -545,10 +547,28 @@ async function billOrder(req, res) {
     discountPercent = null,
     gstApplicable = false,
     gstPercent = null,
+    locationId = null,
+    locationConfirmed = false,
   } = req.body || {};
 
   if (typeof discountApplicable !== 'boolean' || typeof gstApplicable !== 'boolean') {
     return sendError(res, 400, 'VALIDATION_ERROR', 'discountApplicable and gstApplicable must be booleans');
+  }
+  // Fulfillment location (2026-09-07, replacing the previous alphabetical walk across every
+  // location). Required, with no default: there is deliberately no "if omitted, pick one for you"
+  // branch, because a silently-chosen location is precisely the failure this change exists to
+  // remove. An older client that doesn't send it gets a 400 rather than a quietly-guessed
+  // location — a loud break is the correct outcome for a caller that hasn't been told which
+  // physical place the goods are leaving from.
+  if (typeof locationId !== 'string' || locationId.trim() === '') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'locationId is required — billing must specify exactly one fulfillment location');
+  }
+  // Deliberately `!== true`, not a truthy check: a stray "false" string, 1, or {} must NOT count
+  // as a confirmation. This is the server half of a double-enforced guard whose client half is a
+  // required checkbox — the client's disabled button is a usability affordance, this is the
+  // actual rule, and neither is trusted to do the other's job.
+  if (locationConfirmed !== true) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'locationConfirmed must be exactly true — the fulfillment location has to be explicitly confirmed before billing');
   }
   if (discountApplicable && (typeof discountPercent !== 'number' || discountPercent < 0 || discountPercent > 100)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'discountPercent must be a number between 0 and 100 when discountApplicable is true');
@@ -563,6 +583,19 @@ async function billOrder(req, res) {
   const billNo = normalizeBillNo(req.body?.billNo);
   if (!billNo.ok) {
     return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
+  }
+
+  // Resolved before the order is even fetched — an unusable location makes the whole request
+  // invalid regardless of what the order looks like. A 400 (not 404) for both "no such location"
+  // and "archived location" deliberately: from this endpoint's point of view they are the same
+  // client mistake — a locationId that isn't a valid choice to bill from — and rule-wise an
+  // archived location is not a place goods currently ship out of.
+  const location = await prisma.location.findUnique({
+    where: { id: locationId },
+    select: { id: true, name: true, isActive: true },
+  });
+  if (!location || !location.isActive) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `locationId must be a real, active location — ${locationId} is not`);
   }
 
   const order = await prisma.order.findUnique({
@@ -627,47 +660,30 @@ async function billOrder(req, res) {
   // Cancelled lines are excluded outright: nothing is deducted for them, and they consequently
   // can't make an order un-billable either — cancelling a line whose stock ran short is exactly
   // how an owner unblocks the rest of the order.
-  const linesToDeduct = order.lineItems.filter((li) => !li.isCancelled && li.qtySetsPacked > 0);
+  const linesToDeduct = deductibleLinesOf(order);
 
-  const bundleIds = [...new Set(linesToDeduct.map((li) => li.bundleId))];
-  const stockRows = await prisma.stock.findMany({
-    where: { bundleId: { in: bundleIds }, qtySets: { gt: 0 } },
-    select: { id: true, bundleId: true, qtySets: true, location: { select: { name: true } } },
-  });
-  const stockByBundle = new Map();
-  for (const s of stockRows) {
-    if (!stockByBundle.has(s.bundleId)) stockByBundle.set(s.bundleId, []);
-    stockByBundle.get(s.bundleId).push(s);
-  }
-  for (const rows of stockByBundle.values()) {
-    rows.sort((a, b) => a.location.name.localeCompare(b.location.name));
-  }
-
-  // Everything-or-nothing pre-check — if any single line can't be fully covered by total available
-  // stock across its locations, reject the WHOLE request before touching the database, rather than
-  // partially deducting some lines and then discovering a later one comes up short. Same atomicity
-  // guarantee order creation already makes.
+  // Everything-or-nothing pre-check, now scoped to the ONE chosen location — if any line can't be
+  // covered by that location alone, reject the WHOLE request before touching the database, rather
+  // than partially deducting some lines and then discovering a later one comes up short. Same
+  // atomicity guarantee order creation already makes.
   //
   // Unlike at pack time, this genuinely CAN fire in normal use: stock may have moved between
   // packing and billing (another order billed first, a transfer, a correction). That's exactly the
-  // race this rejects cleanly instead of silently overselling.
+  // race this rejects cleanly instead of silently overselling. It now also fires for the new,
+  // more common case: the goods are real and in stock, just at the OTHER location — which is a
+  // genuine mistake worth blocking, not a shortage.
+  //
   // EVERY line is checked before returning, not just up to the first failure. Returning on the
   // first one made a multi-line shortage feel like whack-a-mole: the caller fixes one line, retries,
   // and discovers the next one — with no way to see the true scope of the problem up front. The
-  // full list costs nothing extra here (the stock is already resolved in memory) and lets a client
-  // show all of it at once.
-  const insufficientLines = [];
-  for (const li of linesToDeduct) {
-    const available = (stockByBundle.get(li.bundleId) || []).reduce((sum, s) => sum + s.qtySets, 0);
-    if (available < li.qtySetsPacked) {
-      insufficientLines.push({
-        lineItemId: li.id,
-        bundleId: li.bundleId,
-        needed: li.qtySetsPacked,
-        available,
-      });
-    }
-  }
+  // full list costs nothing extra here and lets a client show all of it at once.
+  //
+  // Same checkLocationAvailability() the preview endpoint calls, deliberately — see
+  // utils/orderFulfillment.js for why these must never be two separately-written checks.
+  const { insufficientLines } = await checkLocationAvailability(prisma, {
+    lineItems: linesToDeduct,
+    locationId: location.id,
+  });
   if (insufficientLines.length > 0) {
     const count = insufficientLines.length;
     return sendError(
@@ -687,48 +703,35 @@ async function billOrder(req, res) {
   try {
     updated = await prisma.$transaction(async (tx) => {
       for (const li of linesToDeduct) {
-        let remaining = li.qtySetsPacked;
-        const rows = stockByBundle.get(li.bundleId) || [];
+        // One line, one location, one movement — no walk, no split, no partial draw. Where the
+        // previous version could satisfy a single line from two locations in sequence, a line now
+        // either comes entirely out of the chosen location or the whole bill fails.
+        //
+        // applyStockMovement (utils/stock.js) is the same shared helper every other stock-moving
+        // endpoint already uses (transfers, returns, corrections, receipts) — billing was the last
+        // path still hand-rolling its own guarded decrement, precisely because it was the only one
+        // that didn't know its own location. Now that it does, it uses the shared path like
+        // everything else: the decrement and its "is there enough?" guard are one atomic statement,
+        // so a genuine concurrent race (another bill landing between the pre-check above and this
+        // write) can't drive stock negative. It throws isInsufficientStock when the guard rejects,
+        // which the catch below maps to a 409 — the whole transaction rolls back rather than
+        // applying a partial deduction.
+        const stock = await applyStockMovement(tx, {
+          bundleId: li.bundleId,
+          locationId: location.id,
+          type: 'STOCK_OUT',
+          qtySets: li.qtySetsPacked,
+        });
 
-        for (const stockRow of rows) {
-          if (remaining <= 0) break;
-          const draw = Math.min(remaining, stockRow.qtySets);
-          if (draw <= 0) continue;
-
-          // Same guarded-decrement idiom as Transfer (transferController.js) — the "is there
-          // enough?" check and the decrement are one atomic statement via the qtySets: { gte }
-          // WHERE clause, so a genuine concurrent race (another bill landing between our read
-          // above and this write) can't drive stock negative. count === 0 means the pre-check's
-          // read went stale; that's what this guard exists to catch, and the whole transaction
-          // rolls back rather than applying a partial deduction.
-          const decremented = await tx.stock.updateMany({
-            where: { id: stockRow.id, qtySets: { gte: draw } },
-            data: { qtySets: { decrement: draw } },
-          });
-          if (decremented.count === 0) {
-            const err = new Error(`Stock at a location for line ${li.id} changed concurrently — billing aborted`);
-            err.isInsufficientStock = true;
-            throw err;
-          }
-
-          await tx.transaction.create({
-            data: {
-              stockId: stockRow.id,
-              userId: req.user.id,
-              type: 'STOCK_OUT',
-              qtySets: draw,
-              orderLineItemId: li.id,
-            },
-          });
-
-          remaining -= draw;
-        }
-
-        if (remaining > 0) {
-          const err = new Error(`Stock for line ${li.id} changed concurrently — billing aborted`);
-          err.isInsufficientStock = true;
-          throw err;
-        }
+        await tx.transaction.create({
+          data: {
+            stockId: stock.id,
+            userId: req.user.id,
+            type: 'STOCK_OUT',
+            qtySets: li.qtySetsPacked,
+            orderLineItemId: li.id,
+          },
+        });
       }
 
       await tx.order.update({
@@ -777,6 +780,91 @@ async function billOrder(req, res) {
   }
 
   res.json(orderDetailToResponse(updated, req.user.role));
+}
+
+// GET /api/orders/:id/fulfillment-preview?locationId=... — OWNER only, matching billOrder's own
+// auth exactly (routes/orders.js). Added 2026-09-07 alongside the single-location billing change.
+//
+// Read-only: it performs no write of any kind and takes no lock. Deliberately so — this exists to
+// answer "if I billed this from here right now, what would happen?" a moment BEFORE committing,
+// so the owner sees a wrong-location mistake in the form rather than discovering it as a 409 after
+// pressing the irreversible button. It is a snapshot, explicitly not a reservation: stock can and
+// does move between previewing and billing, and billOrder re-runs this same check inside its own
+// transaction with an atomic guard. A preview that said "fine" is never treated as permission.
+//
+// OWNER-gated rather than any-role because it reports live per-location stock for a specific
+// order, which is billing-desk information — and because a preview for an endpoint STAFF can't
+// call would be of no use to STAFF anyway.
+async function previewOrderFulfillment(req, res) {
+  const { id } = req.params;
+  const { locationId } = req.query;
+
+  // Same validation shape as billOrder's own, for the same reason: a preview that silently
+  // defaulted to some location would recreate, in the UI layer, exactly the invisible-choice
+  // problem this whole change removes.
+  if (typeof locationId !== 'string' || locationId.trim() === '') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'locationId query parameter is required');
+  }
+  const location = await prisma.location.findUnique({
+    where: { id: locationId },
+    select: { id: true, name: true, isActive: true },
+  });
+  if (!location || !location.isActive) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `locationId must be a real, active location — ${locationId} is not`);
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      isCancelled: true,
+      lineItems: {
+        select: {
+          id: true,
+          bundleId: true,
+          qtySetsPacked: true,
+          isCancelled: true,
+          productNameSnapshot: true,
+          bundle: { select: { color: { select: { name: true } }, product: { select: { articleNo: true, name: true } } } },
+        },
+      },
+    },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  // Mirrors billOrder's own guards so the preview can never claim a bill would succeed when the
+  // order isn't in a state to be billed at all.
+  if (order.status !== 'PACKED') {
+    return sendError(res, 409, 'ORDER_NOT_PACKED', `Order must be PACKED to bill — current status is ${order.status}`);
+  }
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
+  }
+
+  const linesToDeduct = deductibleLinesOf(order);
+  const { lines } = await checkLocationAvailability(prisma, { lineItems: linesToDeduct, locationId: location.id });
+
+  // Line identity (article/colour) is joined on here purely for display — the check function
+  // itself deals only in ids, and the frontend needs something a person can actually read when a
+  // line is flagged short.
+  const byId = new Map(linesToDeduct.map((li) => [li.id, li]));
+  res.json({
+    orderId: order.id,
+    locationId: location.id,
+    locationName: location.name,
+    canFulfill: lines.every((l) => l.sufficient),
+    lines: lines.map((l) => {
+      const li = byId.get(l.lineItemId);
+      return {
+        ...l,
+        articleNo: li?.bundle?.product?.articleNo ?? null,
+        productName: li?.productNameSnapshot ?? li?.bundle?.product?.name ?? null,
+        colorName: li?.bundle?.color?.name ?? null,
+      };
+    }),
+  });
 }
 
 // PATCH /api/orders/:id/ship — any authenticated role (🔒). Same staff-primary reasoning as
@@ -1205,6 +1293,7 @@ module.exports = {
   getOrder,
   packOrder,
   billOrder,
+  previewOrderFulfillment,
   shipOrder,
   updateOrderLines,
   cancelOrderLine,

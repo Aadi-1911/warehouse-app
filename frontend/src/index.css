@@ -1726,6 +1726,91 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* --- Fulfilment location picker inside the bill-confirm modal (components/BillFulfillmentPicker
+   .jsx, 2026-09-07). Shared by BOTH billing entry points, so this styling is deliberately written
+   once here rather than per-screen. Sits above the discount/GST questions and is separated from
+   them by its own bottom rule — it answers a different kind of question (which physical stock
+   leaves) than the money fields below it. */
+.bill-fulfillment {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.bill-fulfillment-heading {
+  margin: 0 0 6px;
+}
+
+/* Segmented toggle, same pill idiom as the dashboard's own period chips — familiar shape for
+   "pick exactly one of these," which is precisely the constraint billing now enforces. */
+.bill-fulfillment-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.bill-fulfillment-option {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bill-fulfillment-option-active {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: #fff;
+}
+
+.bill-fulfillment-preview {
+  margin-top: var(--space-3);
+}
+
+.bill-fulfillment-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bill-fulfillment-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 12px;
+  padding: 4px 0;
+  color: var(--text-secondary);
+}
+
+/* A short line is called out in the danger role, matching how blocked pack lines already read —
+   this is the signal that makes the preview worth having at all. */
+.bill-fulfillment-line-short {
+  color: var(--danger-text);
+  font-weight: 700;
+}
+
+.bill-fulfillment-line-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bill-fulfillment-line-qty {
+  white-space: nowrap;
+}
+
+/* accent-color overrides .checkbox-field's danger-red default: this box is a required
+   affirmative confirmation, not a damage flag. */
+.bill-fulfillment-confirm {
+  margin-top: var(--space-3);
+}
+
+.bill-fulfillment-confirm input {
+  accent-color: var(--text-primary);
+}
+
 /* Billing breakdown inside an expanded Owner Dashboard order row (rule 103). Reuses the modal's
    .bill-pricing-line/.bill-pricing-final type treatment so a billed order reads the same way in
    both places, but overrides their geometry: those margins are tuned to sit under a percent input

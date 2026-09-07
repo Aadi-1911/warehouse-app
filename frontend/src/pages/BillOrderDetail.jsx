@@ -8,6 +8,7 @@ import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
 import { preBillingTotal, computeBillingAmounts, clampPercent } from '../utils/orderBilling';
+import BillFulfillmentPicker from '../components/BillFulfillmentPicker';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
@@ -84,6 +85,12 @@ export default function BillOrderDetail() {
   // the amount arithmetic below, and leaving it blank never blocks billing (see
   // billingInputIncomplete, which deliberately doesn't consider it).
   const [billNo, setBillNo] = useState('');
+  // Fulfilment location (2026-09-07). Both are REQUIRED by the server — billing 400s without a
+  // locationId and without locationConfirmed === true. Starts null rather than defaulting to a
+  // location id here: BillFulfillmentPicker resolves the real GGN id from the API and calls back,
+  // so this file never hardcodes a location id that a reseed could invalidate.
+  const [fulfillLocationId, setFulfillLocationId] = useState(null);
+  const [locationConfirmed, setLocationConfirmed] = useState(false);
 
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -157,6 +164,11 @@ export default function BillOrderDetail() {
         discountPercent: discountApplicable ? Number(discountPercent) : null,
         gstApplicable,
         gstPercent: gstApplicable ? Number(gstPercent) : null,
+        // The owner's real toggle choice and real checkbox state — never a hardcoded true. The
+        // server independently rejects locationConfirmed !== true, so sending a literal here
+        // would defeat the point of the checkbox rather than satisfy the requirement.
+        locationId: fulfillLocationId,
+        locationConfirmed,
         // Omitted entirely when blank rather than sent as '' — optional means optional, and the
         // order simply ends up with a null tag it can be given later.
         ...(cleanBillNo(billNo) ? { billNo: cleanBillNo(billNo) } : {}),
@@ -189,6 +201,11 @@ export default function BillOrderDetail() {
     setGstApplicable(false);
     setGstPercent('');
     setBillNo('');
+    // The confirmation resets, the location choice does NOT. Re-opening must never carry over a
+    // stale "yes I checked it" — that tick has to be earned again every time. The location itself
+    // is a harmless starting point to re-show (the picker re-previews it live on open anyway), and
+    // clearing it would just make the owner re-pick GGN every time for no safety gain.
+    setLocationConfirmed(false);
   }
 
   if (orderStatus !== 'loaded') {
@@ -276,7 +293,12 @@ export default function BillOrderDetail() {
   // but no usable percent has been typed yet. Same guard shape as blockedLines.length above:
   // the trigger button and the modal's own confirm button share this so an owner can't get from
   // a checked-but-empty state into the modal expecting to just press through it.
-  const billingInputIncomplete = (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst);
+  // A location must be chosen AND explicitly confirmed before the confirm button unlocks — same
+  // "can't press through a half-answered question" guard the discount/GST fields already use,
+  // extended to the fulfilment location. The server enforces both independently; this is the
+  // affordance that stops the owner reaching a 400 in the first place.
+  const billingInputIncomplete =
+    (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst) || !fulfillLocationId || !locationConfirmed;
 
   return (
     <div className="page">
@@ -456,6 +478,18 @@ export default function BillOrderDetail() {
       >
         <div className="bill-pricing-questions">
           <p className="muted bill-pricing-pretax">Order total: {formatCurrency(preTaxAmount)}</p>
+
+          {/* Fulfilment location first, above the money questions — it decides which physical
+              stock leaves the building, which is the more consequential of the two decisions and
+              the one that used to be made invisibly. */}
+          <BillFulfillmentPicker
+            orderId={id}
+            locationId={fulfillLocationId}
+            onLocationChange={setFulfillLocationId}
+            confirmed={locationConfirmed}
+            onConfirmedChange={setLocationConfirmed}
+          />
+
 
           <label className="checkbox-field">
             <input

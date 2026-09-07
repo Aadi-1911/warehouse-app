@@ -4,6 +4,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
 import { preBillingTotal, computeBillingAmounts, clampPercent } from '../../utils/orderBilling';
+import BillFulfillmentPicker from '../../components/BillFulfillmentPicker';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
@@ -153,6 +154,11 @@ export default function Orders() {
   const [discountPercent, setDiscountPercent] = useState('');
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstPercent, setGstPercent] = useState('');
+  // Fulfilment location (2026-09-07) — REQUIRED by the server on every bill, same as mobile's
+  // BillOrderDetail. Null until BillFulfillmentPicker resolves the real GGN id from the API, so
+  // no location id is hardcoded on this screen either.
+  const [fulfillLocationId, setFulfillLocationId] = useState(null);
+  const [locationConfirmed, setLocationConfirmed] = useState(false);
 
   // Independent of the fetched data — a pure calendar fact, computed once at mount, so it never
   // resets back to "this month" on a refetch (e.g. after billing an order) if the owner had
@@ -223,6 +229,10 @@ export default function Orders() {
         discountPercent: discountApplicable ? Number(discountPercent) : null,
         gstApplicable,
         gstPercent: gstApplicable ? Number(gstPercent) : null,
+        // Owner's real toggle + checkbox state, never a hardcoded true — the server rejects
+        // locationConfirmed !== true independently of anything this screen does.
+        locationId: fulfillLocationId,
+        locationConfirmed,
       });
       setBillTarget(null);
       // Reflect the new status immediately in both the collapsed row (from the list refetch,
@@ -249,6 +259,9 @@ export default function Orders() {
     setDiscountPercent('');
     setGstApplicable(false);
     setGstPercent('');
+    // Confirmation resets every time; the location choice persists (see BillOrderDetail's
+    // identical reasoning) — a stale tick must never carry into the next order.
+    setLocationConfirmed(false);
   }
 
   // One row's markup, shared by both sections — only the order and which date to show for it
@@ -472,7 +485,11 @@ export default function Orders() {
     gstApplicable,
     gstPercent,
   });
-  const billingInputIncomplete = (discountApplicable && !billAmounts.hasDiscount) || (gstApplicable && !billAmounts.hasGst);
+  const billingInputIncomplete =
+    (discountApplicable && !billAmounts.hasDiscount) ||
+    (gstApplicable && !billAmounts.hasGst) ||
+    !fulfillLocationId ||
+    !locationConfirmed;
 
   return (
     <>
@@ -549,6 +566,15 @@ export default function Orders() {
           ) : (
             <>
               <p className="muted bill-pricing-pretax">Order total: {formatCurrency(billPreTaxAmount)}</p>
+
+              {/* Fulfilment location above the money questions, same order as mobile. */}
+              <BillFulfillmentPicker
+                orderId={billTarget.id}
+                locationId={fulfillLocationId}
+                onLocationChange={setFulfillLocationId}
+                confirmed={locationConfirmed}
+                onConfirmedChange={setLocationConfirmed}
+              />
 
               <label className="checkbox-field">
                 <input
