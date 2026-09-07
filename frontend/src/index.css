@@ -2712,88 +2712,18 @@ body {
    editing .btn-primary/.btn-danger themselves, which BillOrderDetail.jsx and presumably other
    screens also use; touching those directly would have silently changed every one of them. */
 
-/* Mark as packed — swipe-to-confirm (added 2026-09-02, replacing the flat solid-fill button this
-   comment used to describe). KEEPS .btn-primary in its className for the same shared LAYOUT this
-   file's own header comment already states (width/min-height/radius/type scale) — only colour
-   AND now structure (position/overflow/padding, for the thumb to lay out inside it) are
-   overridden here, via this more-specific class declared after .btn-primary in source order,
-   same override mechanism .pack-mark-packed-btn relied on before it. Neutral track (--section-
-   fill), not a bold fill — the track itself no longer carries the "primary action" signal alone;
-   the dark thumb + its own drag affordance now do that job instead. */
-.pack-swipe-track {
-  position: relative;
-  overflow: hidden;
-  background: var(--section-fill);
-  border: 1px solid var(--card-border);
-  color: var(--text-secondary);
-  padding: 0;
-  /* Scaled up (2026-09-02 design pass) from the original 48px — comfortably past .btn-primary's
-     44px floor either way, but now with real room to spare rather than just clearing it. Pill
-     shape (999px) matches the approved design; the 60px thumb (below) still insets symmetrically
-     inside it. */
-  min-height: 76px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Success state (2026-09-02) — toast-style tint, applied ALONGSIDE .pack-swipe-track (not
-   instead of it) once packOrder() actually succeeds; see PackOrderDetail.jsx's justPacked.
-   Declared after .pack-swipe-track in source order so its background/border win the tie at
-   equal specificity, same idiom .dash-pricing-row-editing already uses over .dash-pricing-row-alt. */
-.pack-swipe-track-success {
-  background: var(--success-bg);
-  border-color: var(--success-border);
-  color: var(--success-text);
-}
-
-.pack-swipe-label {
-  font-size: 17px;
-  font-weight: 700;
-  /* The label never receives pointer events itself — dragging only ever starts on the thumb
-     (see PackOrderDetail.jsx's handleThumbPointerDown), and a plain tap anywhere, label included,
-     is meant to bubble up to the track <button>'s own onClick exactly like tapping bare track
-     background does. */
-  pointer-events: none;
-}
-
-/* The draggable thumb — absolutely positioned so its CSS `transform: translateX(...)` (set
-   inline, from PackOrderDetail.jsx's live drag state) moves it WITHOUT shifting any layout
-   property, per this task's own requirement. Dark fill, same --text-primary token (#1C1B19)
-   every other deliberate dark-neutral accent in this app already uses (e.g. the focus rings a
-   few rules above), not a new colour invented for this one control. Inset (8px) scales with the
-   track/thumb size pair above — same symmetric margin ratio the original 4px-on-48px track had. */
-.pack-swipe-thumb {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 60px;
-  height: 60px;
-  border-radius: 999px;
-  background: var(--text-primary);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-}
-
-.pack-swipe-thumb-success {
-  background: var(--success-text);
-}
-
-.pack-swipe-thumb-icon {
-  display: inline-flex;
-  /* ChevronIcon points down by default (the accordion caret shape) — rotated to point right,
-     matching the direction this thumb actually travels. */
-  transform: rotate(-90deg);
-}
-
-/* CheckCircleIcon is already upright — unlike ChevronIcon, it has no "resting" rotation to
-   inherit, so the success state overrides the rotation back off rather than adding one. */
-.pack-swipe-thumb-icon-success {
-  transform: none;
+/* Mark as packed (reverted 2026-09-07 — see LEARNING_LOG.md for why the swipe-to-confirm version
+   this comment used to describe was removed: it cost repeated debugging — an 8px overshoot fix,
+   then an unresolved border-box/content-box gap discrepancy found during that fix's own live
+   verification — for a non-essential interaction change. Deliberate simplification back to the
+   plain button, not a regression). Stays the one deliberately bold thing on the screen — it's the
+   real, frequent, primary action, and last round's own guidance said keep the boldness here. Only
+   the exact shade softens, a hair off the raw --accent-text token via color-mix, so it reads as
+   considered rather than a flat heavy wall of colour now that everything above it is quiet — not
+   "less bold," just less inky. */
+.pack-mark-packed-btn {
+  background: color-mix(in srgb, var(--accent-text) 85%, white);
+  border-color: color-mix(in srgb, var(--accent-text) 85%, white);
 }
 
 /* Cancel this order: same "quiet by default, full weight only on real interaction" principle as
@@ -2817,7 +2747,7 @@ body {
 
 /* Same neutral deliberate focus ring as the per-line controls above, not the browser's default
    blue box — see .pack-line-tap:focus-visible's comment for the full reasoning. */
-.pack-swipe-track:focus-visible,
+.pack-mark-packed-btn:focus-visible,
 .pack-order-cancel-btn:focus-visible {
   outline: 2px solid var(--text-primary);
   outline-offset: 2px;

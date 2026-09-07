@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   PackageIcon,
@@ -98,121 +98,6 @@ export default function PackOrderDetail() {
   // Non-null only while the "some lines are still unconfirmed" warning is up; holds the exact
   // lines being warned about so the copy can name them rather than just counting them.
   const [unconfirmedWarning, setUnconfirmedWarning] = useState(null);
-
-  // --- "Mark as packed" swipe-to-confirm (added 2026-09-02) ---
-  // Purely a new INPUT GESTURE for the exact same action — handleMarkPackedClick below is called
-  // by all three paths (drag-past-threshold, plain tap, keyboard) and is completely unchanged
-  // itself; this block owns nothing about validation, submission, or the warning modal.
-  //
-  // dragX (state, drives the visible transform) and dragRef (a ref, the authoritative live value
-  // during a gesture) are deliberately separate: reading dragRef.current inside
-  // handleThumbPointerUp avoids any risk of that handler closing over a stale `dragX` from an
-  // earlier render, the same "ref for synchronous truth, state for what re-renders" split this
-  // app already uses wherever a value needs to be read back mid-gesture rather than next render.
-  const trackRef = useRef(null);
-  const thumbRef = useRef(null);
-  const dragRef = useRef({ active: false, moved: false, startX: 0, maxTravel: 0, x: 0 });
-  // True only while an actual drag is in progress — disables the snap-back CSS transition so the
-  // thumb follows the pointer instantly, then re-enabled on release so the return-to-start (or
-  // the brief moment before this bar unmounts on success) animates instead of jumping.
-  const [dragging, setDragging] = useState(false);
-  const [dragX, setDragX] = useState(0);
-  // A drag that crossed the "this was a real drag" movement threshold ends with a native `click`
-  // event likely still firing on the button afterwards (pointer capture redirects move/up
-  // events, but not the browser's own click synthesis) — this flag makes that follow-up click a
-  // no-op exactly once, so a completed drag can never ALSO fire handleMarkPackedClick a second
-  // time via the button's own onClick.
-  const suppressTrackClickRef = useRef(false);
-  // True from the moment packOrder() actually succeeds until navigation fires (see doMarkPacked's
-  // setTimeout below) — drives the toast-style success visual and keeps the track inert, same as
-  // `submitting` does, for that whole window. Only ever set true on the success path; a failed
-  // submit leaves this false and falls back to the existing submitError banner.
-  const [justPacked, setJustPacked] = useState(false);
-
-  const SWIPE_CONFIRM_RATIO = 0.7;
-
-  // Once packing succeeds, the thumb should visibly finish its journey to the end of the track
-  // rather than sitting wherever a drag left it (a tap/keyboard trigger leaves dragX at 0 the
-  // whole time) — same dragX/transform mechanism the live drag already drives, just measured
-  // once here instead of read from pointer position.
-  useEffect(() => {
-    if (!justPacked) return;
-    const track = trackRef.current;
-    const thumb = thumbRef.current;
-    if (!track || !thumb) return;
-    const trackWidth = track.getBoundingClientRect().width;
-    const thumbWidth = thumb.getBoundingClientRect().width;
-    setDragX(Math.max(0, trackWidth - thumbWidth));
-  }, [justPacked]);
-
-  function handleThumbPointerDown(e) {
-    if (submitting || justPacked) return;
-    const track = trackRef.current;
-    const thumb = thumbRef.current;
-    if (!track || !thumb) return;
-    suppressTrackClickRef.current = false;
-    const trackWidth = track.getBoundingClientRect().width;
-    const thumbWidth = thumb.getBoundingClientRect().width;
-    dragRef.current = { active: true, moved: false, startX: e.clientX, maxTravel: Math.max(0, trackWidth - thumbWidth), x: 0 };
-    setDragging(true);
-    thumb.setPointerCapture(e.pointerId);
-  }
-
-  function handleThumbPointerMove(e) {
-    const d = dragRef.current;
-    if (!d.active) return;
-    const delta = e.clientX - d.startX;
-    // A few px of jitter on what was meant as a tap shouldn't count as "moved" — only real
-    // drag distance should suppress the click path below.
-    if (Math.abs(delta) > 3) d.moved = true;
-    const clamped = Math.max(0, Math.min(d.maxTravel, delta));
-    d.x = clamped;
-    setDragX(clamped);
-  }
-
-  // Shared by pointerup AND pointercancel (a real device can cancel a gesture mid-drag, e.g. a
-  // scroll takeover) — both mean "the gesture ended," and cancel should never leave the thumb
-  // stranded mid-track or leave dragRef.active stuck true.
-  function handleThumbPointerEnd(e) {
-    const d = dragRef.current;
-    if (!d.active) return;
-    d.active = false;
-    const thumb = thumbRef.current;
-    if (thumb && thumb.hasPointerCapture?.(e.pointerId)) thumb.releasePointerCapture(e.pointerId);
-    setDragging(false);
-
-    if (!d.moved) {
-      // No real drag happened — a plain tap on the thumb. Let the button's own onClick handle it
-      // exactly like a tap anywhere else on the track; nothing to suppress.
-      setDragX(0);
-      return;
-    }
-
-    // A real drag happened, threshold crossed or not — either way this gesture is "spent," so
-    // the click the browser may still synthesize from this same down/up pair must not also fire
-    // handleMarkPackedClick.
-    suppressTrackClickRef.current = true;
-    setDragX(0);
-
-    const passedThreshold = d.maxTravel > 0 && d.x >= d.maxTravel * SWIPE_CONFIRM_RATIO;
-    if (passedThreshold) {
-      // Calls handleMarkPackedClick — NEVER doMarkPacked directly — so a drag confirm goes
-      // through the exact same unconfirmed-lines check a tap or keyboard Enter would.
-      handleMarkPackedClick();
-    }
-  }
-
-  // The track's own onClick — fires for a plain tap/click anywhere on the button AND for
-  // keyboard Enter/Space (native <button> behavior, not reimplemented here). This is the primary
-  // accessible path, not a fallback: dragging is an alternative way to reach the same call, not
-  // the other way around.
-  function handleTrackClick() {
-    if (suppressTrackClickRef.current) {
-      suppressTrackClickRef.current = false;
-      return;
-    }
-    handleMarkPackedClick();
-  }
 
   // One target for both cancel actions, same shape Parties.jsx uses for its archive/reactivate
   // confirm — { kind: 'line', line } or { kind: 'order' }. A single ConfirmModal serves both, with
@@ -380,17 +265,12 @@ export default function PackOrderDetail() {
       const shortCount = liveForOutcome.filter(
         (li) => (confirmed[li.id] ?? li.qtySetsRequested) < li.qtySetsRequested
       ).length;
-      // Toast-style success visual holds on screen for a beat before handing off — see the
-      // justPacked block near the top of this component for what renders during this window.
-      setJustPacked(true);
-      setTimeout(() => {
-        navigate('/pack-orders', {
-          replace: true,
-          state: {
-            packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
-          },
-        });
-      }, 700);
+      navigate('/pack-orders', {
+        replace: true,
+        state: {
+          packedOutcome: { partyName: order.partyName, lineCount: liveForOutcome.length, shortCount },
+        },
+      });
     } catch (err) {
       // Deliberately not resetting `confirmed` — someone else packing this order first
       // (ORDER_NOT_PLACED) must never cost staff the row-by-row confirmations they just worked
@@ -706,40 +586,13 @@ export default function PackOrderDetail() {
 
       <div className="sticky-action-bar">
         <p className="muted pack-order-tally">{tallyText}</p>
-        {/* Swipe-to-confirm (added 2026-09-02) — tap-anywhere, drag, and keyboard Enter/Space all
-            call the identical handleMarkPackedClick, so all three reach the same validation/
-            warning-modal path as before; nothing about WHAT "Mark as packed" does changed here,
-            only how a person can trigger it. The track itself IS the <button> (real focus +
-            Enter/Space + click, for free, from native <button> semantics) — the thumb is a
-            purely visual, pointer-tracked child layered inside it. See the handler block above
-            (near dragRef) for the click-vs-drag disambiguation this relies on. */}
         <button
           type="button"
-          ref={trackRef}
-          className={`btn-primary pack-swipe-track${justPacked ? ' pack-swipe-track-success' : ''}`}
-          onClick={handleTrackClick}
-          disabled={submitting || justPacked}
+          className="btn-primary pack-mark-packed-btn"
+          onClick={handleMarkPackedClick}
+          disabled={submitting}
         >
-          <span className="pack-swipe-label">
-            {justPacked ? 'Order marked as packed' : submitting ? 'Marking as packed…' : 'Slide to mark packed'}
-          </span>
-          <span
-            ref={thumbRef}
-            className={`pack-swipe-thumb${justPacked ? ' pack-swipe-thumb-success' : ''}`}
-            style={{
-              transform: `translateX(${dragX}px)`,
-              transition: dragging ? 'none' : 'transform 0.2s ease',
-              touchAction: 'none',
-            }}
-            onPointerDown={handleThumbPointerDown}
-            onPointerMove={handleThumbPointerMove}
-            onPointerUp={handleThumbPointerEnd}
-            onPointerCancel={handleThumbPointerEnd}
-          >
-            <span className={`pack-swipe-thumb-icon${justPacked ? ' pack-swipe-thumb-icon-success' : ''}`}>
-              {justPacked ? <CheckCircleIcon size={20} /> : <ChevronIcon size={18} />}
-            </span>
-          </span>
+          {submitting ? 'Marking as packed…' : 'Mark as packed'}
         </button>
         {/* Visually separated from "Mark as packed" and from the per-line links: cancelling the
             whole order is a different scale of action, and the two must never be tapped by
