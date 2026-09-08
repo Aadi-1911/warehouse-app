@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CopyIcon, CheckCircleIcon } from '../../components/icons';
 import { listParties, getPartyRevenue, getPartyPayable } from '../../api/parties';
 import { createPartyPayment } from '../../api/partyPayments';
-import { listOrders, updateOrderBillNo } from '../../api/orders';
+import { listOrders, updateOrderBillNo, correctOrderBilling } from '../../api/orders';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../utils/orderStatus';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../../utils/billNo';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -331,6 +331,145 @@ export default function Parties() {
     }
   }
 
+  // --- Billing correction (rule 105) — DELIBERATELY SEPARATE STATE from the bill-no edit above,
+  // not another mode on the same `billNoEditId`. The two controls sit on the same row and look
+  // similar, which is exactly why merging them would be a mistake: a bill-no edit is a no-PIN
+  // reference-tag change, and this one is an OWNER+PIN change to what a party actually owes.
+  // Sharing one piece of state would mean one `Save` handler branching on which mode it was in,
+  // with the PIN requirement decided by that branch — precisely the shape where a future edit
+  // accidentally lets a money write through the no-PIN path. Two independent states cannot do
+  // that: this one's submit function is the only one that calls correctOrderBilling, and it is
+  // physically unreachable without a PIN.
+  //
+  // Two-step, mirroring the payment flow already on this screen: fill in the percentages and a
+  // reason, review a plain-language summary of the resulting amount, then enter the PIN. The
+  // review step exists because this write is not visually reversible — an owner should see the
+  // new figure BEFORE authorising it, not discover it in the row afterwards.
+  const [correctionOrderId, setCorrectionOrderId] = useState(null);
+  const [correctionDiscountApplicable, setCorrectionDiscountApplicable] = useState(false);
+  const [correctionDiscountPercent, setCorrectionDiscountPercent] = useState('');
+  const [correctionGstApplicable, setCorrectionGstApplicable] = useState(false);
+  const [correctionGstPercent, setCorrectionGstPercent] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionNote, setCorrectionNote] = useState('');
+  const [correctionError, setCorrectionError] = useState(null);
+  // 'form' while entering values, 'pin' once the owner has reviewed and moved to authorise.
+  const [correctionStep, setCorrectionStep] = useState('form');
+
+  // Seeds the form from the order's CURRENT billing state rather than from blank, so an owner
+  // correcting one of the two percentages doesn't have to re-enter the other from memory and
+  // accidentally wipe it — the endpoint takes the complete desired end state, not a patch, so a
+  // blank field here would really mean "remove it".
+  function startCorrectBilling(order) {
+    setCorrectionOrderId(order.id);
+    setCorrectionDiscountApplicable(!!order.discountApplicable);
+    setCorrectionDiscountPercent(order.discountPercent != null ? String(order.discountPercent) : '');
+    setCorrectionGstApplicable(!!order.gstApplicable);
+    setCorrectionGstPercent(order.gstPercent != null ? String(order.gstPercent) : '');
+    setCorrectionReason('');
+    setCorrectionNote('');
+    setCorrectionError(null);
+    setCorrectionStep('form');
+  }
+
+  function cancelCorrectBilling() {
+    setCorrectionOrderId(null);
+    setCorrectionStep('form');
+    setCorrectionError(null);
+  }
+
+  // Same hard clamp the two billing screens already apply to these exact fields (rule 101's ranges,
+  // see utils/orderBilling.js's clampPercent) — the server rejects out-of-range rather than
+  // clamping, so the input must never be able to produce one.
+  function clampPercentInput(raw, max) {
+    if (raw === '') return '';
+    const num = Number(raw);
+    if (Number.isNaN(num)) return raw;
+    if (num < 0) return '0';
+    if (num > max) return String(max);
+    return raw;
+  }
+
+  const correctionOrder = orders.find((o) => o.id === correctionOrderId) ?? null;
+
+  // Live preview of what the correction will produce, computed for DISPLAY ONLY — the server
+  // recomputes all of this itself and its answer is the one that gets stored (same relationship
+  // the Bill Order screen's preview already has to billOrder). Uses the order's real stored
+  // preTaxAmount, which rule 23 guarantees cannot change.
+  const correctionPreview = (() => {
+    if (!correctionOrder || correctionOrder.preTaxAmount == null) return null;
+    const preTax = Number(correctionOrder.preTaxAmount);
+    const dPct = Number(correctionDiscountPercent);
+    const gPct = Number(correctionGstPercent);
+    const dOk = correctionDiscountApplicable && correctionDiscountPercent !== '' && !Number.isNaN(dPct);
+    const gOk = correctionGstApplicable && correctionGstPercent !== '' && !Number.isNaN(gPct);
+    // Same order as rule 101: discount off pre-tax first, then GST on the post-discount figure.
+    const finalAmount = dOk ? preTax - (preTax * dPct) / 100 : preTax;
+    const actualPayable = gOk ? finalAmount + (finalAmount * gPct) / 100 : finalAmount;
+    return { preTax, finalAmount, actualPayable, previous: Number(correctionOrder.totalValue) };
+  })();
+
+  // Blocks the Review step until the form is actually complete — a percent is required whenever
+  // its own flag is on, a reason is always required, and OTHER additionally requires a note (the
+  // same three conditions the server enforces, mirrored here so the failure is visible before a
+  // PIN is typed rather than after).
+  const correctionIncomplete =
+    !correctionReason ||
+    (correctionReason === 'OTHER' && !correctionNote.trim()) ||
+    (correctionDiscountApplicable && correctionDiscountPercent === '') ||
+    (correctionGstApplicable && correctionGstPercent === '');
+
+  async function handleSubmitCorrection(pin) {
+    setCorrectionError(null);
+    try {
+      const updated = await correctOrderBilling(correctionOrderId, {
+        discountApplicable: correctionDiscountApplicable,
+        // Number(), not the raw string — the server type-checks these as numbers and would 400 on
+        // a string. Only sent when the flag is on; the server ignores/nulls them otherwise.
+        ...(correctionDiscountApplicable ? { discountPercent: Number(correctionDiscountPercent) } : {}),
+        gstApplicable: correctionGstApplicable,
+        ...(correctionGstApplicable ? { gstPercent: Number(correctionGstPercent) } : {}),
+        reason: correctionReason,
+        ...(correctionNote.trim() ? { note: correctionNote.trim() } : {}),
+        pin,
+      });
+      // Patch the row in place from the server's own response. Unlike the bill-no edit (which can
+      // patch one field because nothing on screen derives from it), this changes the order's VALUE
+      // — so `totalValue` has to come back from the server too, since rule 103 makes it a function
+      // of actualPayable rather than something this screen can recompute.
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === correctionOrderId
+            ? {
+                ...o,
+                discountApplicable: updated.discountApplicable,
+                discountPercent: updated.discountPercent,
+                gstApplicable: updated.gstApplicable,
+                gstPercent: updated.gstPercent,
+                preTaxAmount: updated.preTaxAmount,
+                finalAmount: updated.finalAmount,
+                actualPayable: updated.actualPayable,
+                totalValue: updated.actualPayable ?? o.totalValue,
+              }
+            : o
+        )
+      );
+      cancelCorrectBilling();
+      // The party's Amount Due is derived server-side from these same amounts (rule 103's
+      // computeRevenue reads actualPayable), so it is genuinely stale the moment this succeeds.
+      // Refetched rather than patched locally — the exact precedent handleConfirmPayment already
+      // sets two functions below ("trust a fresh server computation over local arithmetic").
+      if (selectedPartyId) {
+        await loadPayable(selectedPartyId);
+      }
+    } catch (err) {
+      // Re-thrown, not swallowed: PinPrompt's own catch is what renders an INVALID_PIN message and
+      // its attempts-remaining counter, and it only sees the error if this rejects.
+      setCorrectionError(err.message);
+      throw err;
+    }
+  }
+
   const [copiedGstin, setCopiedGstin] = useState(false);
   const [copyError, setCopyError] = useState(null);
 
@@ -444,6 +583,11 @@ export default function Parties() {
     // An open inline Bill No. edit belonged to a row from the previous party's order list, which
     // is about to be replaced — same reasoning as every other per-party reset here.
     cancelEditBillNo();
+    // Same reasoning, and load-bearing rather than tidy: an open billing correction holds an
+    // orderId from the OUTGOING party's list. Left open across a party switch it would sit there
+    // ready to submit a PIN-authorised money write against an order belonging to a party no longer
+    // on screen.
+    cancelCorrectBilling();
     setPaymentFormOpen(false);
     setPaymentAmount('');
     setPaymentDate(todayIso());
@@ -752,6 +896,157 @@ export default function Parties() {
                           {o.billNo ? 'Edit' : '+ Bill no.'}
                         </button>
                       </span>
+                    )}
+                    {/* Discount/GST correction (rule 105) — same row as Bill No. above, as asked,
+                        but its own separate action with its own separate state: that one is a
+                        no-PIN reference-tag edit, this one is an OWNER+PIN change to what the
+                        party owes. The current rates are shown inline so an owner can see what
+                        they're correcting FROM without opening the form.
+                        Gated on `preTaxAmount != null`, not just `billedAt`: an order billed
+                        before rule 101 (2026-08-25) has no stored pre-tax figure and the server
+                        409s ORDER_HAS_NO_BILLING_SNAPSHOT, so offering the control there would be
+                        showing a button that cannot succeed — the same "never offer a control the
+                        server will reject" reasoning the Bill No. control's own billedAt gate
+                        already applies. */}
+                    {o.billedAt && !o.isCancelled && o.preTaxAmount != null && correctionOrderId !== o.id && (
+                      <span className="dash-party-order-billing">
+                        <span className="dash-party-order-billing-rates">
+                          {o.discountApplicable ? `${Number(o.discountPercent)}% disc` : 'no disc'}
+                          {' · '}
+                          {o.gstApplicable ? `${Number(o.gstPercent)}% GST` : 'no GST'}
+                        </span>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => startCorrectBilling(o)}
+                        >
+                          Correct billing
+                        </button>
+                      </span>
+                    )}
+                    {correctionOrderId === o.id && (
+                      <div className="dash-party-order-correction">
+                        {correctionStep === 'form' ? (
+                          <>
+                            <p className="dash-party-order-correction-title">
+                              Correct discount / GST — pre-tax {inr(o.preTaxAmount)} stays unchanged
+                            </p>
+                            <label className="checkbox-field">
+                              <input
+                                type="checkbox"
+                                checked={correctionDiscountApplicable}
+                                onChange={(e) => setCorrectionDiscountApplicable(e.target.checked)}
+                              />
+                              Discount applicable
+                            </label>
+                            {correctionDiscountApplicable && (
+                              <label className="field bill-pricing-percent-field">
+                                <span className="field-label">Discount %</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="0.01"
+                                  value={correctionDiscountPercent}
+                                  onChange={(e) => setCorrectionDiscountPercent(clampPercentInput(e.target.value, 100))}
+                                  placeholder="e.g. 5"
+                                />
+                              </label>
+                            )}
+                            <label className="checkbox-field">
+                              <input
+                                type="checkbox"
+                                checked={correctionGstApplicable}
+                                onChange={(e) => setCorrectionGstApplicable(e.target.checked)}
+                              />
+                              GST applicable
+                            </label>
+                            {correctionGstApplicable && (
+                              <label className="field bill-pricing-percent-field">
+                                <span className="field-label">GST %</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="5"
+                                  step="0.01"
+                                  value={correctionGstPercent}
+                                  onChange={(e) => setCorrectionGstPercent(clampPercentInput(e.target.value, 5))}
+                                  placeholder="e.g. 5"
+                                />
+                              </label>
+                            )}
+                            <label className="field">
+                              <span className="field-label">Reason</span>
+                              <select value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)}>
+                                <option value="">Select a reason…</option>
+                                <option value="GST_ADDED_RETROACTIVELY">GST added retroactively</option>
+                                <option value="GST_PERCENT_CORRECTED">GST rate corrected</option>
+                                <option value="DISCOUNT_ADDED_RETROACTIVELY">Discount added retroactively</option>
+                                <option value="DISCOUNT_PERCENT_CORRECTED">Discount rate corrected</option>
+                                <option value="OTHER">Other</option>
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span className="field-label">
+                                Note {correctionReason === 'OTHER' ? '' : '(optional)'}
+                              </span>
+                              <input
+                                type="text"
+                                value={correctionNote}
+                                onChange={(e) => setCorrectionNote(e.target.value)}
+                                placeholder={correctionReason === 'OTHER' ? 'Required for "Other"' : 'Optional'}
+                              />
+                            </label>
+                            {/* The new figure, shown BEFORE the PIN step — this write is not
+                                visually reversible, so the amount an owner is about to commit to
+                                should be on screen while they decide, not after. */}
+                            {correctionPreview && (
+                              <p className="dash-party-order-correction-preview">
+                                {inr(correctionPreview.previous)} → <strong>{inr(correctionPreview.actualPayable)}</strong>
+                                {correctionPreview.actualPayable > correctionPreview.previous
+                                  ? ' (party owes more)'
+                                  : correctionPreview.actualPayable < correctionPreview.previous
+                                    ? ' (party owes less)'
+                                    : ' (no change)'}
+                              </p>
+                            )}
+                            {correctionError && (
+                              <p className="error-banner" role="alert">
+                                {correctionError}
+                              </p>
+                            )}
+                            <div className="dash-party-order-correction-actions">
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                disabled={correctionIncomplete}
+                                onClick={() => setCorrectionStep('pin')}
+                              >
+                                Review and enter PIN
+                              </button>
+                              <button type="button" className="link-button" onClick={cancelCorrectBilling}>
+                                Cancel
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="dash-party-order-correction-title">
+                              Changing this order from {inr(correctionPreview?.previous ?? 0)} to{' '}
+                              <strong>{inr(correctionPreview?.actualPayable ?? 0)}</strong>. Enter your PIN to confirm.
+                            </p>
+                            <PinPrompt
+                              submitLabel="Correct billing"
+                              submittingLabel="Correcting…"
+                              autoFocus
+                              onSubmit={handleSubmitCorrection}
+                            />
+                            <button type="button" className="link-button" onClick={() => setCorrectionStep('form')}>
+                              Change details
+                            </button>
+                          </>
+                        )}
+                      </div>
                     )}
                     {billNoEditId === o.id && (
                       <span className="dash-party-order-billno-form">

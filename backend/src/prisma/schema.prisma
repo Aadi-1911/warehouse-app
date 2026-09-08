@@ -129,6 +129,35 @@ enum TransferCorrectionReason {
   OTHER  // escape hatch — makes `note` mandatory (app layer), same convention as every other reason enum here
 }
 
+// Why an already-BILLED order's discount/GST needed revising after the fact (rule 105, added
+// 2026-09-08). Its own reason set rather than a reuse of either correction enum above, for the
+// same reason those two are separate from each other: the mistakes are different in kind. Nothing
+// here is about quantity, location, or article — an order's CONTENTS stay frozen by rule 23, and
+// this correction provably cannot touch them (see OrderBillingCorrection below). These are all
+// about the two percentages layered on top of a preTaxAmount that never moves.
+//
+// GST_ADDED_RETROACTIVELY is deliberately distinct from GST_PERCENT_CORRECTED even though both
+// end up writing a gstPercent: "we billed this without GST and shouldn't have" and "the GST rate
+// on this was wrong" are different business events, and an audit trail that collapsed them would
+// lose exactly the distinction an owner is reading the log to find.
+//
+// RECONFIRMED_NO_CHANGE added 2026-09-08, same day, after a real no-op correction was submitted
+// during verification (all six new* values equal to the pre-existing old* values) and correctly
+// went through — a no-op is a deliberate re-confirmation, not an error, so it is allowed rather
+// than rejected. But it must not be stored under one of the four business-event reasons above:
+// none of them is true of a row where nothing changed, and a future reader of the History feed or
+// this table directly must be able to tell "GST was really added here" apart from "an owner
+// re-submitted the same values" without cross-referencing the old*/new* columns by hand. The
+// stored reason is self-describing on its own, same as every other value in this enum.
+enum OrderBillingCorrectionReason {
+  GST_ADDED_RETROACTIVELY     // was billed with no GST at all; GST now applies
+  GST_PERCENT_CORRECTED       // GST applied, but at the wrong rate
+  DISCOUNT_ADDED_RETROACTIVELY // was billed with no discount; one was agreed after the fact
+  DISCOUNT_PERCENT_CORRECTED  // discount applied, but at the wrong rate
+  RECONFIRMED_NO_CHANGE       // submitted values are identical to the order's current billing state — no note required, see OTHER's own comment for the contrast
+  OTHER                       // escape hatch — makes `note` mandatory (app layer), same convention as every other reason enum here
+}
+
 model User {
   id                  String   @id @default(cuid())
   name                String
@@ -149,6 +178,7 @@ model User {
   orderAdjustments    OrderAdjustment[]  // adjustments this user made (OrderAdjustment.changedById)
   transactionCorrections TransactionCorrection[] // Receive Stock receipt corrections this OWNER made
   transferCorrections TransferCorrection[] // Transfer corrections this OWNER made
+  orderBillingCorrections OrderBillingCorrection[] // post-billing discount/GST revisions this OWNER made (rule 105)
 }
 
 model Factory {
@@ -498,6 +528,74 @@ model TransactionCorrection {
   createdAt     DateTime                      @default(now())
 }
 
+model OrderBillingCorrection {
+  // Revises the discount/GST on an ALREADY-BILLED order (rule 105, added 2026-09-08) — the
+  // deliberate, named exception to rules 23 and 101. OWNER + PIN, always (unlike
+  // TransactionCorrection's conditional PIN): every field this can write is a money field, so
+  // there is no PIN-free path through it the way a bill-no edit has.
+  //
+  // WHY THIS ONE MUTATES ITS TARGET, WHEN THE OTHER TWO NEVER DO. TransactionCorrection and
+  // TransferCorrection both leave the original row untouched and link it to a freshly-created
+  // REPLACEMENT row; History reconstructs "old → new" by comparing the two at read time. That
+  // shape is unavailable here, and not by preference: there is no such thing as a replacement
+  // Order. An Order owns line items, billing snapshots, a party, a status and the stock
+  // Transactions that fulfilled it — duplicating one to express "the same order, billed
+  // differently" would fork all of that and leave two rows competing to be the same real-world
+  // order. So this correction UPDATEs Order.discountApplicable/discountPercent/gstApplicable/
+  // gstPercent/finalAmount/actualPayable in place.
+  //
+  // That inversion is exactly why the six old*/new* columns below exist while neither sibling
+  // model has an equivalent. Once the Order row is overwritten, THIS ROW IS THE ONLY SURVIVING
+  // RECORD of what the order was billed at before — rule 9's audit trail would otherwise be
+  // destroyed by the very write that needs auditing. The siblings can omit these columns only
+  // because their originals are still sitting there to be read.
+  //
+  // preTaxAmount is deliberately NOT stored or copied here, and never written by this correction:
+  // rule 23 freezes an order's contents at billing, so the pre-tax figure is immutable by
+  // construction and is read live from Order.preTaxAmount. Recording a second copy would invite
+  // exactly the drift rule 103's own bug was made of — two stored numbers for one fact.
+  id            String                        @id @default(cuid())
+  orderId       String
+  order         Order                         @relation(fields: [orderId], references: [id])
+  // NOT @unique, unlike TransactionCorrection.originalId/TransferCorrection.originalTransferId.
+  // Those two cap corrections at one per original because a second correction re-targets the
+  // REPLACEMENT row they created — a linear chain with a new head each time. This model creates no
+  // replacement row, so there is no new head to re-target: a unique constraint here would mean an
+  // order whose GST was added retroactively could never afterwards have a wrong rate on that same
+  // GST corrected, which is a real sequence (add, then fix) this feature exists to support. Each
+  // row records its own old → new delta, so a chain of them reads as a complete history in order.
+
+  // The billing state BEFORE this correction — the audit trail's whole point. Nullable to match
+  // Order's own columns exactly: an order billed before rule 101 (2026-08-25) legitimately carries
+  // nulls for every one of these, and forcing a 0 here would fabricate a "0% discount was applied"
+  // fact that was never recorded.
+  oldDiscountApplicable Boolean
+  oldDiscountPercent    Decimal?
+  oldGstApplicable      Boolean
+  oldGstPercent         Decimal?
+  oldFinalAmount        Decimal?
+  oldActualPayable      Decimal?
+
+  // The billing state AFTER — recomputed server-side from the untouched Order.preTaxAmount by
+  // utils/orderBillingAmounts.js, the SAME function billOrder() itself calls. Stored rather than
+  // left to be re-derived so that a later correction's `old*` values and this one's `new*` values
+  // can be compared directly, and so History never has to recompute money to describe it.
+  newDiscountApplicable Boolean
+  newDiscountPercent    Decimal?
+  newGstApplicable      Boolean
+  newGstPercent         Decimal?
+  newFinalAmount        Decimal
+  newActualPayable      Decimal
+
+  reason        OrderBillingCorrectionReason
+  note          String?                       // required at the app layer only when reason == OTHER, same convention as every other reason enum here
+  correctedById String
+  correctedBy   User                          @relation(fields: [correctedById], references: [id])
+  createdAt     DateTime                      @default(now())
+
+  @@index([orderId]) // every read of these is "all corrections for this order, oldest first"
+}
+
 model PartyStockReturn {
   // A simple event log, NOT a pending/settled workflow — whole sets returned by a Party
   // (damage, sizing, other reason), logged after the fact. No lifecycle, no line-by-line
@@ -623,6 +721,9 @@ model Order {
 
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
+  // Post-billing discount/GST revisions (rule 105). A list, not an optional one-to-one, for the
+  // reason OrderBillingCorrection.orderId's own comment gives: corrections genuinely can stack.
+  billingCorrections OrderBillingCorrection[]
 }
 // Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
 // status value (rule 23) — see OrderAdjustment below.

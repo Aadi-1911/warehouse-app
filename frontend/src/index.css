@@ -3878,6 +3878,13 @@ body {
 .dash-party-order-row {
   display: flex;
   align-items: center;
+  /* flex-wrap added 2026-09-08 (rule 105). This row already had TWO children written with
+     `flex-basis: 100%` intending to sit on their own line — .dash-party-order-billno-error, and
+     now .dash-party-order-correction — but without wrap enabled, `flex-basis: 100%` doesn't move a
+     child to a new line at all: it just makes it demand the full width as a flex item on the SAME
+     line, squeezing every sibling. Confirmed visually before fixing: the correction form rendered
+     with the date/status column crushed into a narrow strip beside it. */
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: 10px 0;
   font-size: 14px;
@@ -3938,6 +3945,64 @@ body {
   font-size: 10px;
   color: var(--danger-text);
   flex-basis: 100%;
+}
+
+/* --- Billing correction (rule 105, 2026-09-08) — the discount/GST control sitting beside Bill No.
+   in a party's order row, plus the form it opens. Sibling classes to .dash-party-order-billno*
+   above rather than a reuse of them: the two controls are deliberately separate actions (no-PIN
+   tag edit vs OWNER+PIN money change), and sharing styling would visually merge two things whose
+   difference is the point. */
+.dash-party-order-billing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The order's current rates, shown inline so "correcting FROM what?" is answerable without
+   opening the form. Muted and small — context for the action beside it, not a headline figure. */
+.dash-party-order-billing-rates {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Breaks to its own full-width line inside the flex row rather than squeezing in beside the
+   date/status/amount — this is a multi-field form, not an inline single input like the Bill No.
+   edit it sits next to. */
+.dash-party-order-correction {
+  flex-basis: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-3) 14px;
+  background: var(--section-fill);
+  border-radius: 10px;
+}
+
+.dash-party-order-correction-title {
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The before → after amount, shown before the PIN step. Uses the same --accent-text weight the
+   billing modal's own .bill-pricing-final total uses, since it answers the same question. */
+.dash-party-order-correction-preview {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dash-party-order-correction-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The primary button in this form is one action among several, not a full-width page submit —
+   overrides .btn-primary's own width: 100% the same way other inline dashboard buttons do. */
+.dash-party-order-correction-actions .btn-primary {
+  width: auto;
+  padding: 0 var(--space-4);
 }
 
 /* Same "struck through, never hidden" convention as the Orders page's own cancelled rows

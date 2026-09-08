@@ -75,6 +75,28 @@ export function updateOrderBillNo(id, billNo) {
   return apiFetch(`/api/orders/${id}/bill-no`, { method: 'PATCH', body: { billNo } });
 }
 
+// PATCH /api/orders/:id/billing-correction -> the updated order, same shape as getOrder.
+// OWNER **and** PIN (rule 105, 2026-09-08) — unlike updateOrderBillNo above, which takes no PIN
+// because it cannot move money. Every field this writes is money, so `pin` is always required.
+//
+// Revises discount/GST on an order that has ALREADY been billed. The server recomputes
+// finalAmount/actualPayable from the order's own untouched preTaxAmount (rule 23 keeps line items
+// frozen, so the pre-tax figure never moves) using the same function billing itself uses — nothing
+// computed client-side is ever sent or trusted.
+//
+// Both flags can be flipped in either direction: false -> true is the main case (an order billed
+// without GST that now needs it), and true -> false is equally valid. The resulting amount can go
+// UP or DOWN — a retroactive discount legitimately lowers it (rule 103's own warning against
+// assuming billing only ever increases a total).
+//
+// `reason` is required and must be one of GST_ADDED_RETROACTIVELY / GST_PERCENT_CORRECTED /
+// DISCOUNT_ADDED_RETROACTIVELY / DISCOUNT_PERCENT_CORRECTED / OTHER; `note` is required only when
+// reason is OTHER. 409 ORDER_NOT_BILLED on an unbilled order, 409 ORDER_HAS_NO_BILLING_SNAPSHOT on
+// one billed before rule 101 shipped (no stored preTaxAmount to correct against).
+export function correctOrderBilling(id, correction) {
+  return apiFetch(`/api/orders/${id}/billing-correction`, { method: 'PATCH', body: correction });
+}
+
 // PATCH /api/orders/:id/ship -> the updated order, same shape as getOrder. Any authenticated
 // role (rule 63). No body, no stock or line-item consequence — purely records that the order left.
 export function shipOrder(id) {

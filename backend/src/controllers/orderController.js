@@ -5,6 +5,7 @@ const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
 const { applyStockMovement } = require('../utils/stock');
 const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
+const { computeBillingAmounts } = require('../utils/orderBillingAmounts');
 
 const prisma = new PrismaClient();
 
@@ -275,7 +276,26 @@ async function listOrders(req, res) {
       actualPayable: true,
       // OWNER-only, same never-fetch-for-STAFF reasoning as orderDetailSelect above — this is an
       // any-role endpoint and STAFF's Pack/Dispatch worklists read it.
-      ...(req.user.role === 'OWNER' ? { billNo: true } : {}),
+      //
+      // The four rule-101 billing fields joined billNo here on 2026-09-08 (rule 105): the Parties
+      // dashboard's "Correct billing" control needs an order's CURRENT discount/GST state to seed
+      // its form and to decide whether to offer itself at all (an order with a null preTaxAmount
+      // was billed before rule 101 and cannot be corrected). Deliberately gated to OWNER rather
+      // than added for everyone, even though these are selling-side figures a STAFF worklist
+      // arguably could see: this endpoint's STAFF payload has no use for them, and the narrowest
+      // change that makes the feature work is the correct one. preTaxAmount specifically must NOT
+      // become a STAFF-visible field by accident — the dashboard consuming it is OWNER-gated end
+      // to end.
+      ...(req.user.role === 'OWNER'
+        ? {
+            billNo: true,
+            preTaxAmount: true,
+            discountApplicable: true,
+            discountPercent: true,
+            gstApplicable: true,
+            gstPercent: true,
+          }
+        : {}),
       // The real cancellation moment — investigated 2026-08-20 for the Owner Dashboard Orders
       // page's month bucketing. A cancelled order can have been cancelled while PLACED (no
       // packedAt/billedAt/shippedAt at all), so those stage timestamps can't reliably date it.
@@ -329,8 +349,20 @@ async function listOrders(req, res) {
     // one place that reads the fallback chain, not left implicit).
     cancelledAt: o.isCancelled ? (o.adjustments[0]?.changedAt ?? o.billedAt ?? o.packedAt ?? o.createdAt) : null,
     // Present only for OWNER — mirrors the conditional select above, so a STAFF row has no
-    // billNo to read in the first place.
-    ...(req.user.role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
+    // billNo (or billing figures) to read in the first place.
+    ...(req.user.role === 'OWNER'
+      ? {
+          billNo: o.billNo ?? null,
+          // Rule 105's "Correct billing" control reads all five: preTaxAmount decides whether the
+          // control is offered at all, and the other four seed its form with the order's current
+          // state so correcting one percentage can't silently wipe the other.
+          preTaxAmount: o.preTaxAmount,
+          discountApplicable: o.discountApplicable,
+          discountPercent: o.discountPercent,
+          gstApplicable: o.gstApplicable,
+          gstPercent: o.gstPercent,
+        }
+      : {}),
     // Cancelled lines are excluded (see the query's where above) — a fully-cancelled order
     // reports 0 lines / ₹0, not an error, since an empty array reduces to 0 cleanly.
     lineItemCount: o.lineItems.length,
@@ -650,8 +682,19 @@ async function billOrder(req, res) {
   // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
   // never the original preTaxAmount. Never trusts a client-computed final number; these are the
   // only figures actually written below.
-  const finalAmount = discountApplicable ? preTaxAmount - (preTaxAmount * discountPercent) / 100 : preTaxAmount;
-  const actualPayable = gstApplicable ? finalAmount + (finalAmount * gstPercent) / 100 : finalAmount;
+  //
+  // Moved into utils/orderBillingAmounts.js on 2026-09-08 (rule 105) so the post-billing
+  // correction endpoint computes these through the IDENTICAL code path rather than a second copy
+  // of the same two lines — see that file's own header for why money arithmetic in particular
+  // gets the shared-function treatment. Behaviour here is unchanged: same operands, same order,
+  // same absence of rounding.
+  const { finalAmount, actualPayable } = computeBillingAmounts({
+    preTaxAmount,
+    discountApplicable,
+    discountPercent,
+    gstApplicable,
+    gstPercent,
+  });
 
   // Deduct against qtySetsPacked, NOT qtySetsRequested — packing is the physical count of what
   // actually went in the box, so that's the number billing commits against. A short-packed line
@@ -1287,6 +1330,249 @@ async function updateOrderBillNo(req, res) {
   res.json(orderDetailToResponse(updated, req.user.role));
 }
 
+// PATCH /api/orders/:id/billing-correction — OWNER + PIN (rule 105, added 2026-09-08).
+//
+// Revises the discount/GST on an order that has ALREADY been billed, recomputing finalAmount and
+// actualPayable from the order's untouched preTaxAmount. This is the deliberate, named exception
+// to rules 23 and 101, not a loophole in either — see 05_BUSINESS_RULES.md rule 105 for the
+// business case (an order billed without GST that a party later needs a GST bill for, or a rate
+// entered wrong) and LEARNING_LOG.md for the design reasoning.
+//
+// WHAT THIS PROVABLY CANNOT DO, which is what keeps rule 23 intact rather than merely claiming to.
+// Rule 23 freezes a billed order's MONEY and CONTENTS. Contents stay frozen here by construction:
+// the `data` payload below names six columns and none of them is a line item, a quantity, a price,
+// a status, a party, or a stock movement — there is no request shape that reaches this handler and
+// changes what was sold. `preTaxAmount` is deliberately NOT in that payload either and is only ever
+// READ, so the figure the corrected amounts are derived from is the same one billing computed from
+// real packed quantities. What this endpoint revises is strictly the two percentages layered on
+// top of that frozen figure, which is the narrow thing rule 105 authorises.
+//
+// PIN IS UNCONDITIONAL, unlike POST /api/transaction-corrections (which PIN-gates only the
+// price-touching branch) and unlike PATCH /api/orders/:id/bill-no (no PIN at all, because it
+// provably cannot move money). Every field this endpoint writes IS money, so there is no
+// PIN-free branch to carve out — the gate is on the route, not conditional in here.
+//
+// THE AMOUNT CAN GO UP OR DOWN, and nothing here assumes otherwise. Rule 103 records a real
+// production bug born of assuming billing only ever increases a total: an order whose discount
+// outweighs its GST is legitimately worth LESS than its pre-tax figure. Adding GST retroactively
+// raises what a party owes; correcting a too-high GST rate, or adding a discount that was agreed
+// after the fact, lowers it. Both run through the identical formula below with no directional
+// special-casing.
+const VALID_BILLING_CORRECTION_REASONS = [
+  'GST_ADDED_RETROACTIVELY',
+  'GST_PERCENT_CORRECTED',
+  'DISCOUNT_ADDED_RETROACTIVELY',
+  'DISCOUNT_PERCENT_CORRECTED',
+  'RECONFIRMED_NO_CHANGE',
+  'OTHER',
+];
+
+async function correctOrderBilling(req, res) {
+  const { id } = req.params;
+
+  const {
+    discountApplicable = false,
+    discountPercent = null,
+    gstApplicable = false,
+    gstPercent = null,
+    reason,
+    note = null,
+  } = req.body || {};
+
+  // Identical validation to billOrder's own, deliberately — the same two percentages are being
+  // written to the same two columns, so accepting anything here that billing would have rejected
+  // would let this endpoint create a state billing itself could never have produced.
+  if (typeof discountApplicable !== 'boolean' || typeof gstApplicable !== 'boolean') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountApplicable and gstApplicable must be booleans');
+  }
+  if (discountApplicable && (typeof discountPercent !== 'number' || discountPercent < 0 || discountPercent > 100)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'discountPercent must be a number between 0 and 100 when discountApplicable is true');
+  }
+  if (gstApplicable && (typeof gstPercent !== 'number' || gstPercent < 0 || gstPercent > 5)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'gstPercent must be a number between 0 and 5 when gstApplicable is true');
+  }
+  if (!reason) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'reason is required');
+  }
+  if (!VALID_BILLING_CORRECTION_REASONS.includes(reason)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `reason must be one of: ${VALID_BILLING_CORRECTION_REASONS.join(', ')}`);
+  }
+  // The "OTHER makes note mandatory" check moved below (2026-09-08) — it now has to run AFTER
+  // no-op detection, since a genuine no-op skips the note requirement regardless of which reason
+  // was submitted (see the isNoOp block for why). Checking it here, before the order is even
+  // fetched, would reject a no-op resubmitted as OTHER with no note before this handler ever
+  // learns it was a no-op.
+
+  const order = await prisma.order.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      isCancelled: true,
+      billedAt: true,
+      preTaxAmount: true,
+      discountApplicable: true,
+      discountPercent: true,
+      gstApplicable: true,
+      gstPercent: true,
+      finalAmount: true,
+      actualPayable: true,
+    },
+  });
+  if (!order) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', `No order with id ${id}`);
+  }
+  // A cancelled order is rejected outright rather than silently corrected: cancellation is only
+  // possible while PLACED or PACKED (rule 23), so a cancelled order was never billed and has no
+  // amount to revise — the same guard billOrder itself applies for the same reason.
+  if (order.isCancelled) {
+    return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and has no billing to correct');
+  }
+  // Two separate conditions, checked separately rather than collapsed, because they fail for
+  // genuinely different reasons and a person reading the error needs to know which. An order can
+  // be unbilled (no billedAt — nothing to correct yet, use the bill endpoint), or it can be billed
+  // but carry a null preTaxAmount because it was billed BEFORE rule 101 shipped on 2026-08-25 —
+  // in which case there is no stored pre-tax figure to apply a percentage to, and inventing one by
+  // recomputing from today's line items would be exactly the fabricated-history mistake this
+  // codebase has refused elsewhere.
+  if (!order.billedAt) {
+    return sendError(res, 409, 'ORDER_NOT_BILLED', 'Billing can only be corrected on an order that has been billed');
+  }
+  if (order.preTaxAmount == null) {
+    return sendError(
+      res,
+      409,
+      'ORDER_HAS_NO_BILLING_SNAPSHOT',
+      'This order was billed before discount/GST amounts were recorded, so there is no stored pre-tax amount to correct against'
+    );
+  }
+
+  // The one number everything else derives from, read live and never rewritten. Number() because
+  // Prisma hands back a Decimal object, and the arithmetic below is plain JS — the same conversion
+  // orderValueOf() already does for exactly this reason.
+  const preTaxAmount = Number(order.preTaxAmount);
+
+  // The SAME function billOrder() calls — not a second copy of the formula. See
+  // utils/orderBillingAmounts.js's header for why this specific calculation is shared rather than
+  // duplicated.
+  const { finalAmount, actualPayable } = computeBillingAmounts({
+    preTaxAmount,
+    discountApplicable,
+    discountPercent,
+    gstApplicable,
+    gstPercent,
+  });
+
+  // No-op detection (rule 105, 2026-09-08) — explicitly ALLOWED, not rejected, as a deliberate
+  // re-confirmation (e.g. an owner re-entering their PIN to confirm a rate that's already
+  // correct). Comparing the four real inputs against the order's CURRENT stored state is
+  // sufficient and equivalent to comparing all six old*/new* columns: finalAmount/actualPayable
+  // are pure functions of these four plus the unchanged preTaxAmount, so if the four inputs match,
+  // the two derived figures are mathematically guaranteed to match too. Percent is normalised to
+  // `null` whenever its own flag is false on BOTH sides before comparing — the same convention
+  // billOrder's own write and this handler's own correction-row insert already use — so e.g.
+  // `discountApplicable: false, discountPercent: 5` (a stale percent alongside a false flag)
+  // correctly compares as "no discount" on either side, not as a mismatch on the percent value.
+  const oldDiscountPercentNormalized = order.discountApplicable ? Number(order.discountPercent) : null;
+  const newDiscountPercentNormalized = discountApplicable ? discountPercent : null;
+  const oldGstPercentNormalized = order.gstApplicable ? Number(order.gstPercent) : null;
+  const newGstPercentNormalized = gstApplicable ? gstPercent : null;
+  const isNoOp =
+    order.discountApplicable === discountApplicable &&
+    oldDiscountPercentNormalized === newDiscountPercentNormalized &&
+    order.gstApplicable === gstApplicable &&
+    oldGstPercentNormalized === newGstPercentNormalized;
+
+  let storedReason;
+  if (isNoOp) {
+    // Overridden regardless of what was submitted — see schema.prisma's own comment on
+    // RECONFIRMED_NO_CHANGE. A row where nothing actually changed cannot honestly be stored under
+    // one of the four business-event reasons (the exact bug this override exists to prevent: an
+    // earlier real submission stored GST_ADDED_RETROACTIVELY on a request that changed nothing,
+    // because GST was already applied at the same rate). This makes the STORED reason
+    // self-describing on its own — the History rendering below additionally derives its own
+    // wording from the old*/new* columns directly, as an independent second safeguard that holds
+    // even for any already-stored row whose reason predates this fix.
+    storedReason = 'RECONFIRMED_NO_CHANGE';
+    // No note required for a no-op, regardless of which reason was actually submitted — including
+    // OTHER. If the caller did supply a note anyway (e.g. "reconfirming after a phone call with
+    // the party"), it is still stored below; only the requirement is lifted, not the field itself.
+  } else if (reason === 'RECONFIRMED_NO_CHANGE') {
+    // The inverse mistake, caught rather than silently accepted: claiming no change when the
+    // submitted values genuinely differ from the order's current billing state would make this
+    // reason value dishonest — defeating the exact self-describing guarantee it exists to provide.
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      'reason cannot be RECONFIRMED_NO_CHANGE — the submitted values differ from the order’s current billing state'
+    );
+  } else {
+    storedReason = reason;
+    // Same "OTHER makes note mandatory" convention every other reason enum in this schema uses,
+    // enforced here (not earlier) because a genuine no-op is now known to have already bypassed
+    // this branch entirely.
+    if (reason === 'OTHER' && !note) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'note is required when reason is OTHER');
+    }
+  }
+
+  // Order UPDATE and correction row INSERT in one transaction, same shape as
+  // transactionCorrectionController's own create: the audit row and the mutation it describes must
+  // both land or neither. Here that atomicity is load-bearing in a way it is not for the sibling
+  // corrections — because this UPDATE overwrites the only other copy of the pre-correction values,
+  // an update that committed without its correction row would destroy the record of what the order
+  // was billed at, unrecoverably.
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.orderBillingCorrection.create({
+      data: {
+        orderId: id,
+        // Captured from the row fetched above, BEFORE the update below overwrites them.
+        oldDiscountApplicable: order.discountApplicable,
+        oldDiscountPercent: order.discountPercent,
+        oldGstApplicable: order.gstApplicable,
+        oldGstPercent: order.gstPercent,
+        oldFinalAmount: order.finalAmount,
+        oldActualPayable: order.actualPayable,
+        newDiscountApplicable: discountApplicable,
+        // Percent stored null whenever its own flag is false, matching billOrder's own write
+        // exactly — so a stray percent in a request body can never later read as "applied".
+        newDiscountPercent: discountApplicable ? discountPercent : null,
+        newGstApplicable: gstApplicable,
+        newGstPercent: gstApplicable ? gstPercent : null,
+        newFinalAmount: finalAmount,
+        newActualPayable: actualPayable,
+        reason: storedReason,
+        note: note || null,
+        correctedById: req.user.id,
+      },
+    });
+
+    await tx.order.update({
+      where: { id },
+      data: {
+        discountApplicable,
+        discountPercent: discountApplicable ? discountPercent : null,
+        gstApplicable,
+        gstPercent: gstApplicable ? gstPercent : null,
+        // preTaxAmount is deliberately absent — see this handler's header. Only the two derived
+        // figures move, and both were computed from the order's own unchanged pre-tax amount.
+        finalAmount,
+        actualPayable,
+      },
+    });
+
+    return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
+  });
+
+  // No OrderAdjustment row, deliberately, and for the opposite reason to the bill-no endpoint's.
+  // That one writes none because a reference tag is a non-event. This one writes none because the
+  // event is already fully recorded — in OrderBillingCorrection, with old and new values, a
+  // reason, an actor and a timestamp, which is strictly more than OrderAdjustment's
+  // field/oldValue/newValue triple could carry. Writing both would put the same event in the
+  // History feed twice from two different sources.
+  res.json(orderDetailToResponse(updated, req.user.role));
+}
+
 module.exports = {
   createOrder,
   listOrders,
@@ -1299,4 +1585,5 @@ module.exports = {
   cancelOrderLine,
   cancelOrder,
   updateOrderBillNo,
+  correctOrderBilling,
 };

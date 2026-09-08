@@ -1,6 +1,7 @@
 const express = require('express');
 const requireAuth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
+const { requirePin } = require('../middleware/requirePin');
 const {
   createOrder,
   listOrders,
@@ -13,6 +14,7 @@ const {
   cancelOrderLine,
   cancelOrder,
   updateOrderBillNo,
+  correctOrderBilling,
 } = require('../controllers/orderController');
 
 const router = express.Router();
@@ -36,6 +38,14 @@ router.get('/:id/fulfillment-preview', requireAuth, requireRole('OWNER'), previe
 // orderDetailSelect). No requirePin: this endpoint cannot change any amount, only the reference
 // tag — see the handler's own comment.
 router.patch('/:id/bill-no', requireAuth, requireRole('OWNER'), updateOrderBillNo);
+// Post-billing discount/GST revision (rule 105). OWNER **and** PIN, both unconditionally — the
+// deliberate contrast with the bill-no route directly above, which takes no PIN because it
+// provably cannot move money. Every column this one writes is a money column, so there is no
+// PIN-free branch to carve out the way routes/products.js's requirePinForPriceEdits and
+// routes/transactionCorrections.js's requirePinForPriceCorrection both do (those two wrap
+// requirePin conditionally because their endpoints have genuine non-price paths; this one has
+// none). Chained directly rather than wrapped, so the gate is unmissable when reading the route.
+router.patch('/:id/billing-correction', requireAuth, requireRole('OWNER'), requirePin, correctOrderBilling);
 router.patch('/:id/ship', requireAuth, shipOrder);
 // OWNER-only, no PIN — closer to "modifying committed order data" than to order creation, which
 // is deliberately any-role. Matches the existing line-cancellation endpoint's own gating below.

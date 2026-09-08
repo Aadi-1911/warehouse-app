@@ -123,6 +123,30 @@ const TRANSFER_CORRECTION_REASON_LABELS = {
   WRONG_TO_LOCATION: 'Wrong to-location',
   OTHER: 'Other',
 };
+// Rupee formatting for the billing-correction description below — the only place this feed states
+// an amount (see that loop's own comment for why it must). Deliberately matches the frontend's own
+// `inr()` (e.g. dashboard/Parties.jsx:65) character for character — same ₹ prefix, same
+// Math.round, same en-IN grouping — so a figure read in History is visually identical to the same
+// figure on the Orders and Party Payables screens rather than subtly differently formatted.
+//
+// Rounded for DISPLAY only. The stored actualPayable keeps its full precision (see
+// utils/orderBillingAmounts.js on why no rounding happens at write time); this rounds the string a
+// person reads, never a number anything computes with.
+function inr(amount) {
+  return `₹${Math.round(Number(amount)).toLocaleString('en-IN')}`;
+}
+
+// Post-billing discount/GST revisions (rule 105). Its own table again, same reasoning as the two
+// above — these reasons describe money on an already-billed order, and share no value with either
+// of the other correction types beyond the OTHER escape hatch every reason enum here has.
+const BILLING_CORRECTION_REASON_LABELS = {
+  GST_ADDED_RETROACTIVELY: 'GST added retroactively',
+  GST_PERCENT_CORRECTED: 'GST rate corrected',
+  DISCOUNT_ADDED_RETROACTIVELY: 'Discount added retroactively',
+  DISCOUNT_PERCENT_CORRECTED: 'Discount rate corrected',
+  RECONFIRMED_NO_CHANGE: 'Reconfirmed, no change',
+  OTHER: 'Other',
+};
 
 // "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order dispatched" without
 // a separate lookup table that would need updating every time OrderStatus gains a value.
@@ -171,9 +195,11 @@ async function listHistory(req, res) {
   // through a still-valid token.
   const viewerRole = req.user.role;
 
-  // Seven independent reads, run concurrently — they share no data, so there's no reason to
-  // serialise them.
-  const [orders, adjustments, transfers, returns, receipts, corrections, transferCorrections] = await Promise.all([
+  // Eight independent reads, run concurrently — they share no data, so there's no reason to
+  // serialise them. (Was seven until 2026-09-08, when rule 105's billing corrections became the
+  // eighth source.)
+  const [orders, adjustments, transfers, returns, receipts, corrections, transferCorrections, billingCorrections] =
+    await Promise.all([
     prisma.order.findMany({
       where: { ...actorScope('createdBy', viewerRole) },
       select: {
@@ -382,6 +408,42 @@ async function listHistory(req, res) {
         },
       },
     }),
+
+    // Order Billing Corrections (rule 105, added 2026-09-08) — one entry per correction event.
+    // The eighth source.
+    //
+    // Unlike the two corrections above, this one reads its old/new values from the correction row
+    // itself rather than by joining an original and a replacement row: this correction UPDATEs the
+    // Order in place (there is no replacement Order — see OrderBillingCorrection's schema comment),
+    // so the row's own old*/new* columns are the only record of what changed.
+    //
+    // Same actorScope treatment as its two siblings, and for the same stated reason: the route is
+    // already OWNER+PIN gated, so in practice every row here has an OWNER actor and this query
+    // returns nothing for a STAFF viewer — but scoping it here means the query states its own
+    // visibility rule rather than depending on a gate in a different file staying OWNER-only.
+    prisma.orderBillingCorrection.findMany({
+      where: { ...actorScope('correctedBy', viewerRole) },
+      select: {
+        id: true,
+        reason: true,
+        note: true,
+        createdAt: true,
+        oldDiscountApplicable: true,
+        oldDiscountPercent: true,
+        oldGstApplicable: true,
+        oldGstPercent: true,
+        oldActualPayable: true,
+        newDiscountApplicable: true,
+        newDiscountPercent: true,
+        newGstApplicable: true,
+        newGstPercent: true,
+        newActualPayable: true,
+        correctedBy: { select: { id: true, name: true, role: true } },
+        // Party name for the feed row, resolved the same snapshot-first way every other
+        // order-derived entry in this file does (see Order.partyNameSnapshot's schema comment).
+        order: { select: { party: { select: { name: true } }, partyNameSnapshot: true } },
+      },
+    }),
   ]);
 
   const entries = [];
@@ -515,6 +577,99 @@ async function listHistory(req, res) {
       actorRole: c.correctedBy.role,
       partyName: null,
       description: `Transfer corrected — ${changes.join(', ')} (${TRANSFER_CORRECTION_REASON_LABELS[c.reason] ?? c.reason})`,
+    });
+  }
+
+  // --- Order Billing Corrections: one entry per correction event (rule 105).
+  //
+  // This is the one entry type in this feed that states real rupee amounts. That is deliberate and
+  // is not the costPrice leak this file's header warns about: these are SELLING-side figures — what
+  // a party owes — of exactly the kind Party Payables and the Orders list already show. Cost price
+  // is nowhere near this table. It matters that the amount appears here because the whole point of
+  // the entry is that what a party owes CHANGED after their bill was already issued; an entry that
+  // said only "billing corrected" would leave an owner unable to see, from the log, whether they
+  // now owe more or less.
+  for (const c of billingCorrections) {
+    const changes = [];
+
+    // Percent transitions, described as the four real state changes rather than a bare number
+    // diff, because "off → 5%" and "3% → 5%" are different events to a reader even though both
+    // end at 5%. Number() on both sides — Prisma hands back Decimal objects, and comparing two
+    // Decimals with !== compares object identity, which is always true and would report every
+    // field as changed on every correction.
+    const oldDiscount = c.oldDiscountApplicable ? Number(c.oldDiscountPercent) : null;
+    const newDiscount = c.newDiscountApplicable ? Number(c.newDiscountPercent) : null;
+    if (oldDiscount !== newDiscount) {
+      if (oldDiscount == null) changes.push(`discount ${newDiscount}% applied`);
+      else if (newDiscount == null) changes.push(`${oldDiscount}% discount removed`);
+      else changes.push(`discount ${oldDiscount}% → ${newDiscount}%`);
+    }
+
+    const oldGst = c.oldGstApplicable ? Number(c.oldGstPercent) : null;
+    const newGst = c.newGstApplicable ? Number(c.newGstPercent) : null;
+    if (oldGst !== newGst) {
+      if (oldGst == null) changes.push(`GST ${newGst}% applied`);
+      else if (newGst == null) changes.push(`${oldGst}% GST removed`);
+      else changes.push(`GST ${oldGst}% → ${newGst}%`);
+    }
+
+    const newAmount = inr(Number(c.newActualPayable));
+    const partyName = c.order.partyNameSnapshot ?? c.order.party.name;
+
+    // Whether anything actually changed is decided HERE, from the row's own old*/new* columns
+    // (discount/gst above) — deliberately never from `c.reason` (2026-09-08). A stored `reason` is
+    // an operator's claim about what happened; comparing the real values is a fact about what
+    // happened, and this entry must describe the fact. This also makes the rendering correct for
+    // any row already in the table whose stored reason predates the server-side no-op override
+    // (rule 105) — a defense that holds independent of when the row was written.
+    if (changes.length === 0) {
+      // No percent actually moved. A distinct message, never the normal "corrected" phrasing —
+      // "GST added retroactively" or "GST rate corrected" would both be false claims about a
+      // request that changed nothing, which is exactly the bug a real no-op submission surfaced
+      // during verification (a row correctly recorded no change but rendered as if GST had just
+      // been added). `newAmount` still appears even though it's unchanged from `oldActualPayable`
+      // — a reconfirmation is a real, PIN-authorised event a person performed, and omitting the
+      // figure would make it look like nothing was reviewed at all.
+      const gstDescription = newGst != null ? `GST ${newGst}%` : 'no GST';
+      const discountDescription = newDiscount != null ? `${newDiscount}% discount` : 'no discount';
+      entries.push({
+        id: `BILLING_CORRECTION:${c.id}`,
+        type: 'BILLING_CORRECTION',
+        label: 'Corrected',
+        timestamp: c.createdAt,
+        actorId: c.correctedBy.id,
+        actorName: c.correctedBy.name,
+        actorRole: c.correctedBy.role,
+        partyName,
+        description: `Billing re-confirmed — no change (${gstDescription}, ${discountDescription}, amount ${newAmount})${
+          c.note ? ` — "${c.note}"` : ''
+        }`,
+      });
+      continue;
+    }
+
+    // The amount line always appears in the real-change case too, even when neither percent moved
+    // on its own (e.g. a correction that recomputes to the same figure via an intermediate step —
+    // this loop reaches here only when discount or GST genuinely differs, but the derived amount
+    // could still coincidentally match; naming it is still informative either way).
+    // oldActualPayable is nullable — an order billed before rule 101 has no stored snapshot — so
+    // it degrades to naming only the new figure rather than printing "null → x".
+    changes.push(
+      c.oldActualPayable != null ? `amount ${inr(Number(c.oldActualPayable))} → ${newAmount}` : `amount now ${newAmount}`
+    );
+
+    entries.push({
+      id: `BILLING_CORRECTION:${c.id}`,
+      type: 'BILLING_CORRECTION',
+      label: 'Corrected',
+      timestamp: c.createdAt,
+      actorId: c.correctedBy.id,
+      actorName: c.correctedBy.name,
+      actorRole: c.correctedBy.role,
+      partyName,
+      description: `Billing corrected — ${changes.join(', ')} (${
+        BILLING_CORRECTION_REASON_LABELS[c.reason] ?? c.reason
+      })${c.note ? ` — "${c.note}"` : ''}`,
     });
   }
 
