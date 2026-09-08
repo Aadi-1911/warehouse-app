@@ -737,7 +737,9 @@ body {
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
   padding: 11px var(--space-3);
-  font-size: 14px;
+  /* 16px minimum (not 14px) — below 16px, iOS Safari auto-zooms the whole page on focus and the
+     zoom doesn't reliably reset afterward, forcing a manual pinch-zoom-out after every field. */
+  font-size: 16px;
   font-family: inherit;
   background: var(--card-bg);
   color: var(--text-primary);
@@ -756,7 +758,8 @@ body {
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
   padding: 11px var(--space-3);
-  font-size: 14px;
+  /* 16px minimum — same iOS Safari auto-zoom-on-focus reasoning as .field input above. */
+  font-size: 16px;
   font-family: inherit;
   background: var(--card-bg);
   color: var(--text-primary);
@@ -2046,7 +2049,8 @@ body {
   width: 140px;
   min-height: 30px;
   padding: var(--space-1) var(--space-2);
-  font-size: 12px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   border: 1px solid var(--card-border);
   border-radius: 8px;
@@ -3383,7 +3387,11 @@ body {
   width: auto;
   min-height: 22px;
   padding: 0 var(--space-1);
-  font-size: 10px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. Was 10px, the
+     largest jump of any control this fix touches — see LEARNING_LOG.md/task summary: this sits
+     inline next to .dash-kpi-label (still 10px) in a 22px-min-height row, so it now visibly reads
+     larger than its own label and may need min-height/padding attention; flagged, not fixed here. */
+  font-size: 16px;
   font-weight: 600;
   border: 0;
   background: transparent;
@@ -3626,7 +3634,8 @@ body {
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
   padding: 6px 10px;
-  font-size: 14px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   background: var(--card-bg);
   color: var(--text-primary);
@@ -3912,7 +3921,8 @@ body {
   width: 140px;
   min-height: 28px;
   padding: 3px var(--space-2);
-  font-size: 12px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   border: 1px solid var(--card-border);
   border-radius: 8px;
@@ -4178,7 +4188,8 @@ body {
   border: 1.5px solid var(--card-border);
   border-radius: 10px;
   padding: var(--space-2) 10px;
-  font-size: 14px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   background: var(--card-bg);
   color: var(--text-primary);
@@ -4297,7 +4308,8 @@ body {
   padding: 6px var(--space-2);
   border: 1.5px solid var(--card-border);
   border-radius: 8px;
-  font-size: 14px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   text-align: center;
 }
@@ -4312,7 +4324,8 @@ body {
   padding: 6px var(--space-2);
   border: 1.5px solid var(--card-border);
   border-radius: 8px;
-  font-size: 14px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   box-sizing: border-box;
 }
@@ -4381,7 +4394,8 @@ body {
   padding: 6px var(--space-2);
   border: 1.5px solid var(--card-border);
   border-radius: 8px;
-  font-size: 14px;
+  /* 16px minimum — iOS Safari auto-zoom-on-focus, same reasoning as .field input. */
+  font-size: 16px;
   font-family: inherit;
   box-sizing: border-box;
 }
