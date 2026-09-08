@@ -72,6 +72,12 @@
 
 ---
 
+## Open Items
+
+Small, known doc/code discrepancies that don't block any phase — tracked here so they don't get lost, not because they're urgent.
+
+- **`05_BUSINESS_RULES.md` rule 64's text is stale.** It still says stock deducts on "Mark as packed" (Placed→Packed). The real code moved the deduction point to Bill on 2026-08-17 (`orderController.js`: `packOrder()` does no stock write at all; `billOrder()` is "THE STOCK-DEDUCTION POINT"). Surfaced 2026-09-09 during a Production Party investigation/deletion (see `LEARNING_LOG.md`). Needs a doc-only correction pass to rule 64's text — not done here, out of scope for that task.
+
 ## Document Index
 
 | Doc | Purpose |
