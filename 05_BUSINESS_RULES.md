@@ -238,3 +238,37 @@ Ground-truth rules derived from extensive stress-testing against the real busine
     **Corrections are visible to OWNER only**, as a `BILLING_CORRECTION` entry in `GET /api/history`. This needs no separate rule: rule 104 scopes History by actor, and the endpoint is OWNER-gated, so every such row necessarily has an OWNER actor and never reaches a STAFF request.
 
     **Downstream figures follow automatically** via rule 103's `orderValueOf` — a corrected `actualPayable` flows to the Orders list, Party Payables' per-order values, `totalBilled`/`amountDue` and the revenue KPIs with no per-screen change, because all of them already read the stored snapshot rather than recomputing.
+
+107. **A Stock row at `qtySets = 0` is suppressed from every normal browsing surface, immediately and per-row.** Designed 2026-09-09, not yet built.
+
+    **What's suppressed, and where.** Any single Stock row — one Article + one Colour + one Location — sitting at `qtySets = 0` is excluded from Live Stock's default view, both Low Stock screens, and every picker that lists current stock (Transfer's source list, Pack Order, New Order). It is treated exactly as a combination that has never held stock: not shown greyed out, not shown at zero, simply absent.
+
+    **Per-row and immediate, with no cross-row rescue.** The suppression applies the instant any movement brings that one row to zero, regardless of context — whether the same Colour still holds stock at another Location, or every other Colour of the same Article is fully stocked. Each Stock row is judged alone.
+
+    **Nothing is deleted.** The `Stock` row itself and its complete `Transaction` history are untouched — this is a browsing filter, not a data change, and the row reappears the moment stock returns to it.
+
+    **Independent of rule 56's low-stock threshold, and the two never interact.** A row at exactly 1 set still renders and still carries rule 56's red badge; a row at 0 never renders at all, so it can never carry a badge. The suppression rule is about existence on screen, rule 56 is about decoration of what's on screen.
+
+    **A suppressed row is also excluded from search** — there is nothing to find, because nothing is there. (Rule 108 defines the one deliberate exception, and it operates at whole-Article level, not on individual zeroed rows.)
+
+108. **An Article that is globally out of stock is tracked from the moment it dies, and auto-archives after a configurable threshold (default 60 days).** Designed 2026-09-09, not yet built.
+
+    **The crossing, and what "globally" means.** An Article is out of stock the moment the sum of `qtySets` across every Colour and every Location reaches zero simultaneously. This is an Article-level fact, never a Colour-level or Location-level one — a single zeroed Colour, or an Article with nothing left in Delhi but stock still in Gurgaon, does not qualify.
+
+    **`Product.wentOutOfStockAt` is stamped at that instant.** It records a real state transition and is deliberately not derivable from current stock alone: today's `qtySets` tells you an Article is dead, never *when* it died. That makes it an irreducible snapshot, the same category of field as `priceAtReturn` — recorded because the moment cannot be reconstructed afterwards.
+
+    **Any stock coming back clears it immediately.** Stock received, or transferred back in, sets `wentOutOfStockAt` to null and returns the Article to normal display everywhere, with no manual step.
+
+    **A later death starts a fresh countdown.** If an Article crosses back to zero again, the timer restarts from that new crossing — no credit is carried over for time already spent dead in an earlier period. Each dead period is judged on its own.
+
+    **An "Out of Stock" tab surfaces the dead list**, following the same UI pattern as the existing "Show Archived" toggle rather than introducing a new one. It lists every currently-dead Article, grouped by Article, with every Colour/Location shown at its real value, sorted closest-to-archive first, and days remaining displayed per Article.
+
+    **Auto-archive at the threshold, reusing rule 85 exactly.** Once `wentOutOfStockAt` exceeds the configured threshold (default 60 days), the Article archives itself through the existing Article-level archive of rule 85 — the same `isActive: false`, whole-article, never-per-colour mechanism, with no second archive concept introduced.
+
+    **The check is lazy, never scheduled.** It is evaluated only when the Out of Stock tab is loaded, or when that Article's stock next changes. There is no background job, no cron, and no daily sweep — an Article can therefore sit briefly past its threshold until something actually looks at it, which is accepted.
+
+    **Receiving stock into an auto-archived Article reactivates it automatically**, with no manual step — a deliberate difference from today's archive, which is only ever triggered and reversed by hand.
+
+    **Globally-dead Articles stay findable by direct search — the one deliberate exception to rule 107.** An Article that is dead everywhere remains reachable by typing its article number into Live Stock's main search, and ranks at the top of those results, even though it is excluded from all passive browsing. The exception is scoped to whole-Article search only; it does not resurrect individually-zeroed Stock rows under rule 107.
+
+    **The threshold is a stored, owner-editable setting, not a hardcoded number** — see `03_DATABASE_SCHEMA.md`'s `AppSetting` table. Changing it requires OWNER but **no PIN**: it is an operational tuning value, not a money field, so rule 11's PIN gate does not apply.

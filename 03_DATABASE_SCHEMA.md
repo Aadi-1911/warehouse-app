@@ -122,6 +122,9 @@ model Product {
 }
 // A Product with null costPrice/sellingPrice shows a "pending price" badge everywhere it
 // appears until the owner sets both values (PIN-gated write, see 02_ARCHITECTURE.md §4.3).
+//
+// PLANNED, not present in this model yet: `wentOutOfStockAt DateTime?` (rules 107-108,
+// designed 2026-09-09). Defined in §1.2 below — move it up into this block when migrated.
 
 model ProductSize {
   id        String   @id @default(cuid())
@@ -528,6 +531,48 @@ model PartyPayment {
   - Deliberately **not** applied to `Transaction` itself: no API response or screen ever renders a product *name* off a Transaction (History builds its entries from `articleNo` + colour only, verified across every `entries.push` in `historyController.js`), so there is nothing there for a rename to corrupt.
   - Deliberately **not** applied to `Stock`: Live Stock / Low Stock are current-state views, not historical records — they *should* follow a rename immediately, and do.
   - `articleNo` needs no equivalent snapshot: it is immutable after creation (the write endpoint rejects any attempt to patch it), so it can never drift from what a historical record recorded.
+
+---
+
+### 1.2 Designed, not yet built (out-of-stock tracking — rules 107–108)
+
+Everything in this subsection is **designed and agreed, but not migrated and not built** as of 2026-09-09. It is kept separate from §1's model blocks above deliberately: those describe the schema as it actually exists, and inlining an unbuilt column into `model Product` would make this document disagree with `schema.prisma` in a way that reads as drift rather than as a plan. Move each piece up into §1 when it is actually migrated.
+
+**Addition to `model Product`:**
+
+```prisma
+  // Stamped the instant an Article's stock reaches zero across EVERY colour and EVERY
+  // location simultaneously; cleared back to null the instant any stock returns (rule 108).
+  // Deliberately stored rather than derived: current qtySets can tell you an Article is
+  // dead, but never WHEN it died, and the auto-archive countdown needs the crossing time.
+  // Same irreducible-snapshot reasoning as priceAtReturn / costPriceSnapshot.
+  // A later re-death overwrites this with the NEW crossing time — countdowns never resume.
+  wentOutOfStockAt DateTime?
+```
+
+**New table — `AppSetting`:**
+
+```prisma
+model AppSetting {
+  // A general-purpose key-value store for small operational settings, deliberately NOT
+  // single-purpose. It exists because rule 108's out-of-stock archive threshold must be
+  // owner-editable rather than hardcoded, but it is shaped so that any future setting of
+  // the same shape (a scalar the owner can tune) needs a row here, not a new table and a
+  // new migration each time.
+  //
+  // Values are stored as String regardless of their logical type — the reading code parses
+  // (e.g. parseInt for a day count). This keeps one table viable for mixed-type settings;
+  // the trade-off accepted is that the database cannot type-check a value, so the endpoint
+  // that writes a setting must validate it.
+  key       String   @id   // e.g. "outOfStockArchiveThresholdDays" — the unique identifier
+  value     String         // e.g. "60"
+  updatedAt DateTime @updatedAt
+}
+```
+
+**Seed:** one row, `key: "outOfStockArchiveThresholdDays"`, `value: "60"`.
+
+**Gating (rule 108):** writing this setting requires `role == OWNER` but **no PIN** — it is an operational tuning value, not a price field, so the rule 11 / `priceEditPinHash` gate deliberately does not apply here.
 
 ---
 
