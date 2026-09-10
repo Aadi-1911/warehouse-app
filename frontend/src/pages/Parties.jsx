@@ -315,7 +315,7 @@ export default function Parties() {
     <div className="page">
       <ScreenHeader icon={<PartyIcon size={20} />} title="Manage Parties" />
 
-      <div className="card accordion-section">
+      <div className="card accordion-section party-create-card">
         <button
           type="button"
           className="accordion-header"

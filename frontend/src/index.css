@@ -2158,6 +2158,23 @@ body {
   overflow: hidden;
 }
 
+/* The "Add new party" card (Parties.jsx) — the one place an .accordion-section wraps a
+   Combobox (components/Combobox.jsx). Combobox's own dropdown is `position: absolute`, sized to
+   float on top of whatever's below it (z-index 20, its own background/shadow) — it's meant to be
+   unconstrained by its container's height. .accordion-section's overflow: hidden above exists to
+   keep OTHER screens' content clipped to the card's rounded corners (Live Stock/Low Stock/etc,
+   none of which have an overlay child), but it has the side effect of clipping this dropdown too,
+   since an absolutely-positioned child that extends past its ancestor's box still gets cut by that
+   ancestor's overflow: hidden. Never visible with Color/Factory/Location's short option lists
+   (they fit within the remaining card height); the State field's 36 options (rule 105) is the
+   first list long enough, and positioned last-before-submit, for the clipped part to matter —
+   most of the list becomes invisible and the Create party button ends up hidden behind the
+   truncated dropdown. Scoped to this one card (not a blanket change to .accordion-section, which
+   ~10 other screens rely on for corner-clipping) so nothing else is affected. */
+.party-create-card {
+  overflow: visible;
+}
+
 /* Nested (Article-level) sections sit inside an already-bordered Factory card, so they use a
    plain divider instead of their own card border/shadow — a card-inside-a-card would be visual
    noise the brief's "resizing panel" language doesn't call for.
