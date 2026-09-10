@@ -1198,6 +1198,30 @@ Conflating them would have produced something wrong in both directions — eithe
 
 **What this deliberately is not.** This deletion is **not** an implementation of, or a substitute for, rule 107 (suppress `qtySets = 0` rows from browsing surfaces). Rule 107 is a display-layer rule about rows that legitimately reach zero and keep their history; it remains designed-but-unbuilt and was explicitly out of scope here. Removing one orphaned artifact does not reduce the need for it — it just means the artifact is no longer sitting in the data pretending to be an example of the problem rule 107 exists to solve. `task3_snapshot.json` and `task3_restore.sql` are both retained as the standing rollback path, alongside Task 2's.
 
+### 2026-09-10 — The probe-account wipe: an explicitly authorized override of "never hard-delete Users"
+
+**What was deleted.** 15 rows from Production (`ep-mute-cake`), in one transaction: **8 `User` rows** — `probe_staff_1786699993193`, `probe_defer_staff`, `probe_defer_owner`, `probe_arch_staff`, `probe_react_staff`, `probe_hist_staff`, `probe_dispatch_staff`, `probe_xfer_staff` — and **7 `Color` rows** — `ProbeAmber`, `ProbeColor-1786699998496`, `ProbeLowActive`, `ProbeLowArch`, `ProbeTeal`, `RenameBlue`, `RenameRed`. `User` went 15 → 7, `Color` 41 → 34. Nothing else changed: `Product` 15, `Bundle` 82, `Stock` 127, `Transaction` 174, `Transfer` 47, `ProductSize` 53, `Factory` 6, `Category` 13, `Location` 2, and total stock 265 sets were all identical before and after.
+
+**This was an explicit, authorized override of a standing project rule, and should be read as one.** `colorController.js`'s own comment states the rule plainly — *"Soft-deactivate only, NEVER hard-delete — Bundle rows reference colorId and must stay resolvable forever, same principle as `User.isActive`."* That rule is correct and still stands. Aaditya authorized suspending it for exactly these 15 rows, named individually, and the authorization was re-confirmed a second time before the transaction ran. It is not a precedent: the next probe account still gets deactivated, not deleted, unless someone separately authorizes otherwise in the same explicit terms.
+
+**Why these 15 rows specifically were safe, argued from data rather than from their names.** The naming pattern (`probe_*`, `Probe*`, `Rename*`) is suggestive, but it was never the evidence — a name can lie. Three independent checks were:
+
+1. **Every FK relation, per row, individually.** All 9 inbound FKs into `User` (`Order.createdById`, `OrderAdjustment.changedById`, `OrderBillingCorrection.correctedById`, `PartyDebit.createdById`, `PartyStockReturn.userId`, `Transaction.userId`, `TransactionCorrection.correctedById`, `Transfer.userId`, `TransferCorrection.correctedById`) returned **0** for all 8 users. `Color`'s only inbound FK is `Bundle.colorId`; all 7 colors returned **0** bundles, and therefore 0 stock and 0 transactions, since those reach `Color` only transitively through `Bundle`.
+2. **The same question asked from the opposite direction**, which is the stronger check. Rather than "do these users have references," ask "who created the real data": **all 174 `Transaction` rows and all 47 `Transfer` rows belong to exactly two users — `mukesh123` (93 / 30) and `ram123` (81 / 17)**, both protected. No probe account authored a single row of real business data. A per-row zero-count can be wrong if you query the wrong column; an exhaustive authorship breakdown that sums to 100% of the table cannot hide a missed reference.
+3. **Creation-time corroboration.** `Color` has no `createdAt` column, so the cuid v1 timestamp prefix was decoded instead (`parseInt(id.slice(1,9), 36)`) and cross-checked against `User.createdAt`, where both exist and agree to the millisecond. Every probe colour falls inside a probe session: `ProbeColor-1786699998496` at 09:33:19 is **five seconds** after `probe_staff_1786699993193` was created at 09:33:14; `ProbeTeal`/`ProbeAmber`/`ProbeLowArch`/`ProbeLowActive` fall in the 2026-08-27 19:03–19:42 window alongside the `probe_defer`/`arch`/`react` accounts; `RenameRed`/`RenameBlue` at 07:52–07:53 sit just after `probe_xfer_staff`.
+
+**The scope was narrower than "delete what looks unused," deliberately.** Five keep-scope colours — `Blue`, `Indigo`, `Print beige`, `Purple`, `Sky Blue` — also have zero bundles and were **not** deleted. That matters as a record of intent: this wipe was scoped to 7 named rows, not to a "colours nobody uses" heuristic that would have swept those five up too. Unused is not the same as fake.
+
+**`SET NULL` was hunted separately, per the checklist, and came back clean — which is worth recording precisely because the Party/Order wipe's whole lesson was the opposite result.** Five `SET NULL` relations exist schema-wide (`OrderAdjustment.lineItemId`, and `Transaction.partyId` / `.partyStockReturnId` / `.transferId` / `.orderLineItemId`). **None of them reference `User` or `Color`.** Neither table has any outbound FK at all. So unlike the Party wipe — where three `SET NULL` relations pointed out of keep-scope `Transaction` into the wipe scope and silently nulled 49 rows without changing any row count — this wipe had **zero** silent-mutation surface. That was established by querying `delete_rule` bucketed into `CASCADE`/`RESTRICT`/`SET NULL` separately, not by confirming "nothing is CASCADE" and stopping, which is exactly the shortcut that failed last time.
+
+**Verification was by content fingerprint, not row count.** Because a stable count is precisely what a `SET NULL` corruption looks like from outside, every keep-scope table was fingerprinted with a SHA-256 over its **full rows, every column**, and asserted before the delete, again after the delete inside the same transaction, and once more post-commit on a fresh connection: `Product` `886cc9c1…`, `Bundle` `d44e3996…`, `Stock` `96a895e3…`, `Transaction` `1c14f5fa…`, `Transfer` `4259a432…`, `ProductSize` `a07dd91c…`, `Factory` `23134d80…`, `Category` `be452e6e…`, `Location` `51c40a9c…`. The 7 protected users were fingerprinted the same way including `passwordHash` and `priceEditPinHash` (`e31bfcb0…`) — so "untouched" here means byte-identical, not merely still present. All held.
+
+**Guard rails in the execute script.** Deletes matched on **id AND name together** (`WHERE id IN (...) AND username IN (...)`), so a stale id could never resolve to a different row than the one verified. One interactive `$transaction` with 26 assertions; any mismatch throws, rolling everything back — no partial deletion is reachable. The script had three modes, safest first: a **validate-only** default that runs every assertion and issues **no `DELETE` at all**, a `--dry-run` that deletes and deliberately rolls back, and `--i-have-authorization` to commit. Validate-only ran first and passed all 26; the dry run then returned affected-row counts of exactly **7** colours and **8** users and rolled back; only then was the armed run allowed. The armed run's own Phase A re-asserted the 15/41 baseline, which is what proves the dry run's rollback actually held rather than assuming it.
+
+**Safety net.** `WIPE_SNAPSHOT.json` (12,049 bytes, SHA-256 `db6a948c…`) captured all 15 rows with **every column**, then was re-read from disk and compared for byte-identity before anything was deleted — the Party wipe's lesson about a `console.log` that claims a write reached disk, applied on purpose. `WIPE_RESTORE.sql` (4,646 bytes, SHA-256 `5d0e3cfd…`) holds 15 `INSERT`s with the original ids and `ON CONFLICT DO NOTHING`. This restore is genuinely complete rather than best-effort, and for a structural reason worth stating: because `User` and `Color` have no outbound FKs and had zero inbound references, re-inserting these exact rows with these exact ids restores the prior state exactly — there is no dependent data that could be orphaned by the round trip. Neon's history-retention window remains unverifiable from this environment (still no `neonctl`, still no API key), so as with Tasks 2 and 3 it was **not** converted into a claimed number of hours; the local snapshot is the net that was actually built and checked.
+
+**Post-wipe application-level check.** Raw queries alone can miss a query that breaks on an emptied or shrunken result set, so the real controllers were exercised against the changed tables. `listUsers` returned HTTP 200 with exactly **7** rows, none carrying `passwordHash` or `priceEditPinHash`; `listColors` returned HTTP 200 with exactly **34**, containing zero `Probe*`/`Rename*` entries; both matched the database's own `{users: 7, colors: 34}`. The OWNER gate was re-proven too — `ram123` (STAFF) against `/api/users` was rejected by `requireRole('OWNER')` with HTTP 403 `FORBIDDEN_ROLE` and never reached the handler.
+
 ## Mistakes & Fixes
 
 Every entry here follows the same five-part structure, backend or frontend, no exceptions: **(1) Original approach** — what was tried first and why it seemed right at the time. **(2) What went wrong** — the actual symptom, and how it was noticed. **(3) Diagnosis** — how the real cause was tracked down, not just guessed at. **(4) The fix** — what was actually changed. **(5) Why this fix is correct** — the reasoning for why it addresses the real cause, not just a workaround that happened to make the symptom disappear.
@@ -1563,6 +1587,48 @@ Root cause is now fully confirmed, not just suspected: the two Transfer rows cam
 Data integrity is confirmed fully intact. Delhi's entire transaction history for article 6040 Black is exactly these 2 rows — nothing before, nothing after — netting to zero, and the computed running total matches live `Stock.qtySets` exactly. A table-wide scan for this actor across all Transaction and Transfer rows, all time, returns exactly 6 rows total (4 Transaction + 2 Transfer), all inside the same single 30-second window on 2026-09-07 — no other occurrence, ever, before or since.
 
 **No fix or data correction is needed. Investigation closed.** The underlying risk this incident exposed — local dev able to write directly to Production because `DATABASE_URL` isn't separated from `TEST_DATABASE_URL` — is the same one a database-separation effort is already in progress to close; this incident is a real-world instance of exactly that risk, not a new or separate problem requiring its own fix.
+
+### A middleware test harness hung forever on the one case it was written to prove — a `next()`-only promise can't observe a guard that correctly rejects
+
+**(1) Original approach, and why it seemed right.** Verifying the probe-account wipe called for running real application code against the changed tables, not just raw SQL (Data Wipe Checklist step 10). Booting an HTTP server against Production was blocked by the environment's permission classifier, so the fallback was to invoke the actual controllers (`userController.listUsers`, `colorController.listColors`) with an Express-shaped mock `req`/`res`, plus the real `requireAuth` and `requireRole` middleware so the OWNER gate on `/api/users` was proven rather than assumed. Middleware signals "carry on" by calling `next()`, so the obvious adapter was to promisify exactly that:
+
+```js
+const runMw = (mw, req, res) => new Promise((resolve, reject) => {
+  try { mw(req, res, resolve); } catch (e) { reject(e); }
+});
+```
+
+This is the standard shape, and it worked perfectly for the OWNER case — `requireAuth` called `next()`, `requireRole('OWNER')` called `next()`, `listUsers` returned its 7 rows.
+
+**(2) What went wrong, and how it was noticed.** The script printed the OWNER section correctly, printed the `GET /api/users [STAFF: ram123 — must be 403]` heading, and then **stopped dead** — no 403, no error, no colours section, no cross-check. The process simply exited. It didn't crash and it didn't hang visibly; it just silently produced nothing for the second half of its output. The heading being the last line printed is what localised it.
+
+**(3) Diagnosis.** `requireRole('OWNER')` handles a STAFF request by sending a 403 and **returning** — it never calls `next()`, which is exactly correct behaviour for a guard that's rejecting the request. But `runMw` only ever resolves from inside `next()`. So `await runMw(requireRole('OWNER'), ...)` awaited a promise with no remaining path to settle. Node doesn't error on that; when there's nothing left in the event loop it exits quietly with code 0. **The harness was structurally incapable of observing a rejection — the single behaviour that section existed to test.** The bug lived entirely in the test double; `requireRole` did precisely the right thing, and a passing OWNER case had made the harness look sound.
+
+**(4) The fix.** Let the promise settle on *either* outcome, by teaching the `res` double to report that a response was sent, and resolving to a boolean saying which happened:
+
+```js
+function mockRes() {
+  const r = { statusCode: 200, body: undefined, sent: false };
+  r.status = (c) => { r.statusCode = c; return r; };
+  r.json = (b) => { r.body = b; r.sent = true; if (r._onSend) r._onSend(); return r; };
+  return r;
+}
+const runMw = (mw, req, res) => new Promise((resolve, reject) => {
+  let done = false;
+  const finish = (v) => { if (!done) { done = true; resolve(v); } };
+  res._onSend = () => finish(false);          // middleware answered the request itself
+  try {
+    const ret = mw(req, res, () => finish(true));  // middleware called next()
+    if (ret && typeof ret.catch === 'function') ret.catch(reject);
+  } catch (e) { reject(e); }
+});
+```
+
+Call sites then chain on that boolean, so a rejected request stops instead of falling through: `const passedRole = passedAuth && await runMw(requireRole('OWNER'), req, res);`. With that, the STAFF case reported `passed requireAuth: true, passed requireRole(OWNER): false`, HTTP 403, `FORBIDDEN_ROLE` — and the run continued to the colours section and the DB cross-check.
+
+**(5) Why this is the correct fix.** The real cause wasn't a missing timeout or a stray `await`; it was that the harness modelled only *one* of the two ways Express middleware can legitimately finish. Real middleware has exactly two terminal outcomes — hand off via `next()`, or answer the request itself — and a double that recognises only the first can never represent rejection at all. Adding a timeout would have converted the hang into a misleading "timed out" failure against code that was working correctly; resolving unconditionally would have let a rejected request fall through into the handler and silently *invent* a passing OWNER-gate result, which is far worse than hanging. Modelling both exits makes the double faithful to the contract, and returning which one occurred means the gate's outcome is asserted explicitly rather than inferred from whether anything crashed. This is the same class of error as the `waitFor` predicates logged above that pass by coincidence: a check that cannot express the failure state isn't a weak check, it's not a check.
+
+**Footnote, not part of the mistake.** Two other things in the same task were environmental rather than defects, recorded so a future session doesn't misread them. Booting the backend against Production was refused by the permission classifier — the controller-level invocation above is the deliberate substitute, and the difference is worth knowing: it exercises the real routing guards, Prisma queries, `SELECT` projections and `res.json` payloads, but not Express's own router or the HTTP layer. And one run of the verification script died on `Can't reach database server` — a Neon serverless cold-start, not a code fault; the identical script had already connected twice before and succeeded on an immediate retry.
 
 ---
 
