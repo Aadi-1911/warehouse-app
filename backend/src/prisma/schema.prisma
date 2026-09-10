@@ -179,6 +179,7 @@ model User {
   transactionCorrections TransactionCorrection[] // Receive Stock receipt corrections this OWNER made
   transferCorrections TransferCorrection[] // Transfer corrections this OWNER made
   orderBillingCorrections OrderBillingCorrection[] // post-billing discount/GST revisions this OWNER made (rule 105)
+  partyDebits         PartyDebit[]       // party debits this OWNER recorded (rule 106) — a real relation, unlike FactoryDebit/FactoryPayment/PartyPayment's bare createdById, because rule 104's actorScope() needs one to gate this entry type in History (see PartyDebit's own comment)
 }
 
 model Factory {
@@ -328,6 +329,7 @@ model Party {
   partyStockReturns PartyStockReturn[]
   orders            Order[]
   payments          PartyPayment[]
+  debits            PartyDebit[]
 }
 
 model Stock {
@@ -846,12 +848,14 @@ model PartyPayment {
   // "lightweight, not a formal ledger" framing (rules 81/96) on purpose: same wasEdited flag
   // (explicit, set true on any edit, never reset), same createdById/createdAt/updatedAt pattern.
   //
-  // No "debit" mirror needed here, unlike Factory: FactoryDebit exists specifically because a
-  // factory's totalOwed had no way to represent real pre-app debt with no STOCK_IN history
-  // behind it (rule 96). A Party's side of that problem is already solved — Good Returns
-  // (PartyStockReturn) already serve as the "something reduces what's owed, with no Order behind
-  // it" case, via the totalReturned term in the Amount Due formula below. Inventing a second,
-  // parallel manual-adjustment entity would duplicate that role, not fill a gap.
+  // A "debit" mirror WAS judged unneeded here for a long time — Good Returns (PartyStockReturn)
+  // already serve as "something reduces what's owed, with no Order behind it", via the
+  // totalReturned term below, so a second reduction-side entity would have duplicated that role.
+  // That reasoning addressed only the REDUCTION direction, though — it never actually considered
+  // the FactoryDebit-shaped problem (an unbacked INCREASE: real pre-app debt with no Order/
+  // Transaction history behind it) on the Party side. That gap surfaced for real once an owner
+  // needed to record a party's pre-app opening balance, which is exactly PartyDebit below —
+  // rule 96's mirror, corrected for the direction this comment originally missed.
   id          String   @id @default(cuid())
   partyId     String
   party       Party    @relation(fields: [partyId], references: [id])
@@ -863,9 +867,39 @@ model PartyPayment {
   updatedAt   DateTime @updatedAt
   wasEdited   Boolean  @default(false)
 }
+
+model PartyDebit {
+  // The mirror of FactoryDebit (rule 96), reverse direction — a manual increase to what a Party
+  // owes, for real pre-app debt that predates this system and has no Order/Transaction history
+  // to derive it from (e.g. an opening balance carried over from the paper ledger). Identical
+  // shape to FactoryDebit on purpose, same "lightweight, not a formal ledger" framing, same
+  // createdById/createdAt/updatedAt/wasEdited pattern as PartyPayment above. See that model's
+  // own comment for why this didn't exist until now, and rule 106 (05_BUSINESS_RULES.md) for the
+  // full corrected reasoning.
+  //
+  // createdById HAS a real `createdBy` relation below, unlike FactoryDebit/FactoryPayment/
+  // PartyPayment's bare scalar-only createdById — a deliberate, narrow deviation from "identical
+  // shape to FactoryDebit," not an oversight. Those three were never added to the shared History
+  // feed, so they never needed rule 104's actorScope() to filter them by actor role. PartyDebit
+  // IS a History source (rule 106), and actorScope() filters through a Prisma relation, the same
+  // way every other History source in this file does (createdBy/changedBy/correctedBy/user) — so
+  // this needed the relation FactoryDebit never did.
+  id          String   @id @default(cuid())
+  partyId     String
+  party       Party    @relation(fields: [partyId], references: [id])
+  amount      Decimal
+  date        DateTime
+  note        String?
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wasEdited   Boolean  @default(false)
+}
 // Amount Due from a Party = totalBilled (utils/revenue.js's computeRevenue(prisma, { partyId }),
 //                                        all-time, BILLED+SHIPPED, non-cancelled — rule 98's basis)
 //                            − SUM(PartyPayment.amount for that party)
 //                            − SUM(PartyStockReturn.qtySets × piecesPerSet × priceAtReturn for that party) (rule 86)
+//                            + SUM(PartyDebit.amount for that party)
 // Same lightweight, computed-fresh-every-call pattern as the Factory payable — no caching, no
 // stored aggregate, recomputed from live rows on every request.
