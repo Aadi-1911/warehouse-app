@@ -38,6 +38,48 @@ enum PartyTier {
   ONE_OFF
 }
 
+// The real, current (2026) list of 28 Indian states + 8 union territories (rule 105). Fixed and
+// closed — unlike Color/Factory/Location, this is never grown via a "+ add new" UI action, since
+// the set of Indian states/UTs isn't something this business's users add to.
+enum PartyState {
+  ANDHRA_PRADESH
+  ARUNACHAL_PRADESH
+  ASSAM
+  BIHAR
+  CHHATTISGARH
+  GOA
+  GUJARAT
+  HARYANA
+  HIMACHAL_PRADESH
+  JHARKHAND
+  KARNATAKA
+  KERALA
+  MADHYA_PRADESH
+  MAHARASHTRA
+  MANIPUR
+  MEGHALAYA
+  MIZORAM
+  NAGALAND
+  ODISHA
+  PUNJAB
+  RAJASTHAN
+  SIKKIM
+  TAMIL_NADU
+  TELANGANA
+  TRIPURA
+  UTTAR_PRADESH
+  UTTARAKHAND
+  WEST_BENGAL
+  ANDAMAN_NICOBAR_ISLANDS
+  CHANDIGARH
+  DADRA_NAGAR_HAVELI_DAMAN_DIU
+  DELHI
+  JAMMU_KASHMIR
+  LADAKH
+  LAKSHADWEEP
+  PUDUCHERRY
+}
+
 enum OrderStatus {
   PLACED
   PACKED
@@ -291,6 +333,15 @@ model Party {
   gstNo             String?
   runningDueBalance Decimal    @default(0) // added by the Phase 2 Order migration (03_DATABASE_SCHEMA.md §2) — was deliberately absent until the Order system existed to compute against
   tier              PartyTier? // nullable, deviating from 03_DATABASE_SCHEMA.md's literal `tier PartyTier` (non-nullable, no default) — the real table already had 9 rows, including a genuine party ("SAI"), and nothing in any doc specifies a tier for them. See LEARNING_LOG.md.
+  // Added 2026-09-09 (rule 105). DELIBERATELY NULLABLE at the database level, unlike what "state
+  // is required" might suggest — every existing Party row (confirmed real production data, not
+  // test fixtures) predates this field and has no state value, so a NOT NULL column would fail
+  // this migration against live data. "Required" is enforced at the application layer instead:
+  // POST /api/parties rejects a missing/invalid state with 400 (partyController.js), the same
+  // create-only, not-retroactive split `tier` above never needed but `wentOutOfStockAt`-style
+  // additive migrations in this schema always take. No default value, no backfill — an existing
+  // party with state: null just stays null until someone edits it in.
+  state             PartyState?
   isActive          Boolean    @default(true) // archived, not deleted — hidden from daily pickers, fully accessible when needed
   createdAt         DateTime   @default(now())
 
