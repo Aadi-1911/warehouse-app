@@ -584,10 +584,53 @@ model AppSetting {
 
 **On the real `Party` model:** the model that used to sit here (`runningDueBalance`, `tier`, a `PartyTier` enum) does not match the real, already-migrated `Party` in §1 — it never got updated after rule 83 pulled Party forward into Phase 1 in minimal form, deliberately *without* those two fields, since both depend on the Order/Bill system that didn't exist yet. That dependency is resolved now: the actual migration (2026-08-16) `ALTER TABLE`d the real `Party` to add `runningDueBalance Decimal @default(0)` and `tier PartyTier?` (enum below), plus an `orders Order[]` back-relation for the new FK — not a second, divergent model. **`tier` is nullable** (`PartyTier?`), which deviates from this doc's own earlier literal spec (`tier PartyTier`, no default) — the real table already had 9 rows when the migration ran, including a genuine party ("SAI"), and nothing in any doc specifies a tier for any of them. Confirmed at migration time rather than guessed; see `LEARNING_LOG.md`.
 
+**A second real addition, same pattern (rule 109, 2026-09-09):** the migration `20260909145648_add_party_state` `ALTER TABLE`d the real `Party` to add `state PartyState?` (enum below). **Nullable at the database level on purpose, even though state is required going forward** — every Party row that already existed has no state value, so a `NOT NULL` column would have failed this migration against live data. "Required" is enforced only in `POST /api/parties`'s own validation (rule 109), never in the schema; `PATCH /api/parties/:id` does not require it, so an existing party stays fully editable without being forced to backfill a state it may not have on file. No default, no backfill — see rule 109 for the full reasoning.
+
 ```prisma
 enum PartyTier {
   REGULAR
   ONE_OFF
+}
+
+// The real, current (2026) list of 28 states + 8 union territories (rule 109). Fixed and closed
+// — never grown via a "+ add new" UI action the way Color/Factory/Location are.
+enum PartyState {
+  ANDHRA_PRADESH
+  ARUNACHAL_PRADESH
+  ASSAM
+  BIHAR
+  CHHATTISGARH
+  GOA
+  GUJARAT
+  HARYANA
+  HIMACHAL_PRADESH
+  JHARKHAND
+  KARNATAKA
+  KERALA
+  MADHYA_PRADESH
+  MAHARASHTRA
+  MANIPUR
+  MEGHALAYA
+  MIZORAM
+  NAGALAND
+  ODISHA
+  PUNJAB
+  RAJASTHAN
+  SIKKIM
+  TAMIL_NADU
+  TELANGANA
+  TRIPURA
+  UTTAR_PRADESH
+  UTTARAKHAND
+  WEST_BENGAL
+  ANDAMAN_NICOBAR_ISLANDS
+  CHANDIGARH
+  DADRA_NAGAR_HAVELI_DAMAN_DIU
+  DELHI
+  JAMMU_KASHMIR
+  LADAKH
+  LAKSHADWEEP
+  PUDUCHERRY
 }
 
 enum OrderStatus {

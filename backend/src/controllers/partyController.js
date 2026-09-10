@@ -20,8 +20,23 @@ const SELECT = {
   contact: true,
   gstNo: true,
   tier: true,
+  state: true,
   isActive: true,
 };
+
+// Mirrors VALID_TIERS' own convention just below (and GoodReturnReason/TransactionCorrectionReason
+// before it) — a plain array, not imported from Prisma's generated enum, so a bad `state` produces
+// a clean 400 with the valid values listed rather than a raw Prisma error surfacing as a 500. The
+// real, current (2026) list of 28 states + 8 union territories (rule 109) — fixed and closed,
+// never grown via a "+ add new" UI action the way Color/Factory/Location are.
+const VALID_STATES = [
+  'ANDHRA_PRADESH', 'ARUNACHAL_PRADESH', 'ASSAM', 'BIHAR', 'CHHATTISGARH', 'GOA', 'GUJARAT',
+  'HARYANA', 'HIMACHAL_PRADESH', 'JHARKHAND', 'KARNATAKA', 'KERALA', 'MADHYA_PRADESH',
+  'MAHARASHTRA', 'MANIPUR', 'MEGHALAYA', 'MIZORAM', 'NAGALAND', 'ODISHA', 'PUNJAB', 'RAJASTHAN',
+  'SIKKIM', 'TAMIL_NADU', 'TELANGANA', 'TRIPURA', 'UTTAR_PRADESH', 'UTTARAKHAND', 'WEST_BENGAL',
+  'ANDAMAN_NICOBAR_ISLANDS', 'CHANDIGARH', 'DADRA_NAGAR_HAVELI_DAMAN_DIU', 'DELHI',
+  'JAMMU_KASHMIR', 'LADAKH', 'LAKSHADWEEP', 'PUDUCHERRY',
+];
 
 // GET /api/parties — any authenticated role (🔒), matching Location/Factory/Color's own GET
 // gating. No isActive filtering here — same convention as every other archived entity: the
@@ -47,10 +62,20 @@ async function listParties(req, res) {
 // pre-check is the only defense that actually exists; two POSTs for the same name landing in
 // the same race window could both succeed. Not fixed here — adding a DB constraint is a schema
 // migration, outside this task's scope of "build the endpoints."
+//
+// `state` is required HERE ONLY (rule 109, added 2026-09-09) — enforced at this application
+// layer specifically because the column itself is nullable (schema.prisma's own comment on
+// Party.state explains why: real existing rows have no state and a NOT NULL column would have
+// broken that migration). updateParty below deliberately does NOT require it — an existing
+// party with no state on file must still be editable for its other fields without being forced
+// to backfill state as a side effect of an unrelated edit.
 async function createParty(req, res) {
-  const { name, shopName, location, address, contact, gstNo } = req.body;
+  const { name, shopName, location, address, contact, gstNo, state } = req.body;
   if (!name || !name.trim()) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'name is required');
+  }
+  if (!state || !VALID_STATES.includes(state)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', `state is required and must be one of: ${VALID_STATES.join(', ')}`);
   }
   const trimmed = name.trim();
 
@@ -70,6 +95,7 @@ async function createParty(req, res) {
         address: address?.trim() || null,
         contact: contact?.trim() || null,
         gstNo: gstNo?.trim() || null,
+        state,
       },
       select: SELECT,
     });

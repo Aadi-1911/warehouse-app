@@ -2,8 +2,58 @@ import { useEffect, useState } from 'react';
 import { PartyIcon, ChevronIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
+import Combobox from '../components/Combobox';
 import { useAuth } from '../hooks/useAuth';
 import { listParties, createParty, updateParty, deactivateParty, reactivateParty } from '../api/parties';
+
+// The real, current (2026) list of 28 states + 8 union territories (rule 109) — a fixed, closed
+// set, unlike Color/Factory/Location's own growing lists, so this Combobox is used WITHOUT its
+// canCreate/onCreate props: omitting them is what suppresses the "+ create new" row (see
+// Combobox.jsx's own createRowVisible), giving the same live-filter/keyboard-nav behaviour over a
+// closed list instead of an open-ended one. `{ id, name }` shape matches what Combobox expects —
+// `id` here is the enum value POST /api/parties actually stores, `name` is the display label.
+const STATE_OPTIONS = [
+  { id: 'ANDHRA_PRADESH', name: 'Andhra Pradesh' },
+  { id: 'ARUNACHAL_PRADESH', name: 'Arunachal Pradesh' },
+  { id: 'ASSAM', name: 'Assam' },
+  { id: 'BIHAR', name: 'Bihar' },
+  { id: 'CHHATTISGARH', name: 'Chhattisgarh' },
+  { id: 'GOA', name: 'Goa' },
+  { id: 'GUJARAT', name: 'Gujarat' },
+  { id: 'HARYANA', name: 'Haryana' },
+  { id: 'HIMACHAL_PRADESH', name: 'Himachal Pradesh' },
+  { id: 'JHARKHAND', name: 'Jharkhand' },
+  { id: 'KARNATAKA', name: 'Karnataka' },
+  { id: 'KERALA', name: 'Kerala' },
+  { id: 'MADHYA_PRADESH', name: 'Madhya Pradesh' },
+  { id: 'MAHARASHTRA', name: 'Maharashtra' },
+  { id: 'MANIPUR', name: 'Manipur' },
+  { id: 'MEGHALAYA', name: 'Meghalaya' },
+  { id: 'MIZORAM', name: 'Mizoram' },
+  { id: 'NAGALAND', name: 'Nagaland' },
+  { id: 'ODISHA', name: 'Odisha' },
+  { id: 'PUNJAB', name: 'Punjab' },
+  { id: 'RAJASTHAN', name: 'Rajasthan' },
+  { id: 'SIKKIM', name: 'Sikkim' },
+  { id: 'TAMIL_NADU', name: 'Tamil Nadu' },
+  { id: 'TELANGANA', name: 'Telangana' },
+  { id: 'TRIPURA', name: 'Tripura' },
+  { id: 'UTTAR_PRADESH', name: 'Uttar Pradesh' },
+  { id: 'UTTARAKHAND', name: 'Uttarakhand' },
+  { id: 'WEST_BENGAL', name: 'West Bengal' },
+  { id: 'ANDAMAN_NICOBAR_ISLANDS', name: 'Andaman and Nicobar Islands' },
+  { id: 'CHANDIGARH', name: 'Chandigarh' },
+  { id: 'DADRA_NAGAR_HAVELI_DAMAN_DIU', name: 'Dadra and Nagar Haveli and Daman and Diu' },
+  { id: 'DELHI', name: 'Delhi' },
+  { id: 'JAMMU_KASHMIR', name: 'Jammu and Kashmir' },
+  { id: 'LADAKH', name: 'Ladakh' },
+  { id: 'LAKSHADWEEP', name: 'Lakshadweep' },
+  { id: 'PUDUCHERRY', name: 'Puducherry' },
+];
+
+// Same derived-lookup-map convention GoodReturns.jsx's REASON_LABELS already uses for its own
+// enum — built once from STATE_OPTIONS rather than duplicated, so the two can never drift apart.
+const STATE_LABELS = Object.fromEntries(STATE_OPTIONS.map((s) => [s.id, s.name]));
 
 // Party List — list-first: form collapsed by default, "Add new party" opens it, Delete/
 // Reactivate per row.
@@ -67,6 +117,10 @@ export default function Parties() {
   const [address, setAddress] = useState('');
   const [contact, setContact] = useState('');
   const [gstNo, setGstNo] = useState('');
+  // Required (rule 109) — validated in handleCreate below, the same manual pre-submit check
+  // handleSaveEdit already uses for name, since Combobox is a text input, not a native <select>,
+  // so an HTML `required` attribute can't enforce this the way Name's input does.
+  const [state, setState] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
   const [createSuccess, setCreateSuccess] = useState(null);
@@ -116,9 +170,16 @@ export default function Parties() {
   async function handleCreate(event) {
     event.preventDefault();
     setCreateError(null);
+    // Manual required-check (rule 109) — Combobox has no native `required` attribute to lean on,
+    // so this mirrors handleSaveEdit's own pre-submit name check below rather than letting a
+    // missing state reach the server only to bounce back as a 400.
+    if (!state) {
+      setCreateError('Select a state.');
+      return;
+    }
     setCreating(true);
     try {
-      const created = await createParty({ name, shopName, location, address, contact, gstNo });
+      const created = await createParty({ name, shopName, location, address, contact, gstNo, state });
       // Appended to the same `parties` state the list below derives from — the new party
       // appears correctly sorted/filtered without a re-fetch, same pattern as Manage Users'
       // handleCreate and ReceiveStock's handleCreateCategory.
@@ -130,6 +191,7 @@ export default function Parties() {
       setAddress('');
       setContact('');
       setGstNo('');
+      setState('');
       // Collapse back — only on success. An error stays open so the message and the
       // already-typed fields remain visible for a retry, same reasoning ManageUsers/
       // ArticlePricing use for their own error paths.
@@ -305,6 +367,15 @@ export default function Parties() {
                 <input type="text" value={gstNo} onChange={(e) => setGstNo(e.target.value)} />
               </label>
 
+              <Combobox
+                fieldLabel="State"
+                value={state}
+                onChange={setState}
+                options={STATE_OPTIONS}
+                disabled={creating}
+                placeholder="Select a state"
+              />
+
               {createError && (
                 <p className="error-banner" role="alert">
                   {createError}
@@ -379,7 +450,7 @@ export default function Parties() {
             {sortedParties.map((p) => {
               const expanded = expandedPartyIds.has(p.id);
               const subtitle = [p.shopName, p.location].filter(Boolean).join(' · ');
-              const hasDetails = p.address || p.contact || p.gstNo;
+              const hasDetails = p.address || p.contact || p.gstNo || p.state;
               const isEditingThis = editingId === p.id;
               // Any OTHER party mid-edit disables starting a new edit here — same single-active-
               // edit discipline the file header comment explains.
@@ -516,6 +587,18 @@ export default function Parties() {
                         <div className="party-detail-row">
                           <span className="party-detail-label">GSTIN</span>
                           <span>{p.gstNo}</span>
+                        </div>
+                      )}
+                      {p.state && (
+                        <div className="party-detail-row">
+                          <span className="party-detail-label">State</span>
+                          {/* Existing parties from before rule 109 have state: null — this row
+                              simply doesn't render for them, same as every other optional detail
+                              row above (rather than showing a "not set" placeholder no one asked
+                              for). Falls back to the raw enum value on an unmapped code rather
+                              than rendering nothing, so a future added-but-unmapped state is
+                              still visible instead of silently disappearing. */}
+                          <span>{STATE_LABELS[p.state] ?? p.state}</span>
                         </div>
                       )}
                       {!hasDetails && <p className="muted">No additional details on file.</p>}
