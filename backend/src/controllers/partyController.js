@@ -280,7 +280,7 @@ async function getPartyRevenue(req, res) {
 // action; PIN is reserved for POST/PATCH/DELETE below, the actual writes). Party Payables, the
 // mirror of Factory Payables in the reverse direction (added 2026-08-21).
 //
-// Amount Due = totalBilled − totalPaid − totalReturned:
+// Amount Due = totalBilled − totalPaid − totalReturned + totalDebited:
 //   - totalBilled reuses utils/revenue.js's computeRevenue(prisma, { partyId, from: null, to:
 //     null }) DIRECTLY — not reimplemented. That call already computes exactly "SUM over
 //     non-cancelled BILLED+SHIPPED orders/lines for this party, all-time, per-piece basis"
@@ -290,9 +290,12 @@ async function getPartyRevenue(req, res) {
 //     PartyStockReturn rows — rule 86's corrected, per-piece formula. This is that formula's
 //     first real caller anywhere in the codebase; verified against real hand-computed numbers
 //     when this endpoint was built, not just smoke-tested (see LEARNING_LOG.md).
+//   - totalDebited is SUM(PartyDebit.amount) for this party — rule 96's mirror on the Party
+//     side (rule 106): real pre-app debt with no Order behind it, added ON TOP of what's owed
+//     rather than netted against a reduction term, same as FactoryDebit does for amountPayable.
 //
 // Computed fresh from live rows on every call, no caching — same principle as every other money
-// figure in this system (rules 60, 81, 96, 98).
+// figure in this system (rules 60, 81, 96, 98, 106).
 async function getPartyPayable(req, res) {
   const { id } = req.params;
 
@@ -301,7 +304,7 @@ async function getPartyPayable(req, res) {
     return sendError(res, 404, 'PARTY_NOT_FOUND', `No party with id ${id}`);
   }
 
-  const [totalBilled, payments, returns] = await Promise.all([
+  const [totalBilled, payments, returns, debits] = await Promise.all([
     computeRevenue(prisma, { partyId: id, from: null, to: null }),
     prisma.partyPayment.findMany({
       where: { partyId: id },
@@ -319,6 +322,11 @@ async function getPartyPayable(req, res) {
         bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
       },
     }),
+    prisma.partyDebit.findMany({
+      where: { partyId: id },
+      select: { id: true, amount: true, date: true, note: true, createdAt: true, updatedAt: true, wasEdited: true },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    }),
   ]);
 
   const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount), 0);
@@ -326,14 +334,17 @@ async function getPartyPayable(req, res) {
     (sum, r) => sum + r.qtySets * piecesPerSetFor(r.bundle.product) * Number(r.priceAtReturn),
     0
   );
+  const totalDebited = debits.reduce((sum, d) => sum + Number(d.amount), 0);
 
   res.json({
     partyId: id,
     totalBilled,
     totalPaid,
     totalReturned,
-    amountDue: totalBilled - totalPaid - totalReturned,
+    totalDebited,
+    amountDue: totalBilled - totalPaid - totalReturned + totalDebited,
     payments,
+    debits,
   });
 }
 

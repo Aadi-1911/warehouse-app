@@ -4003,6 +4003,36 @@ body {
   text-align: right;
 }
 
+/* Merged payment/debit ledger (rule 106) — same colour convention as Factory Payables'
+   .payment-history-amount-payment/-debit (index.css, near line 2104): the badge already carries
+   the +/− distinction, colouring the amount too means it reads correctly at a glance that skips
+   past the badge. */
+.dash-party-payment-value-payment {
+  color: var(--success-text);
+}
+
+.dash-party-payment-value-debit {
+  color: var(--warning-text);
+}
+
+.dash-party-record-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* flex:1 + margin-top:0 overrides, exact mirror of .sticky-action-row's own fix (2026-08-30, see
+   that rule's comment) for the identical bug: .btn-primary/.btn-secondary are width:100% by
+   default, so two of them in a row both claim the full row width and wrap onto separate lines
+   instead of sitting side by side — confirmed live in a real browser screenshot before this fix,
+   not assumed. Same differing-top-margin mismatch applies here too, so it's neutralised the same
+   way rather than only copying the flex:1 half of the original fix. */
+.dash-party-record-actions .btn-primary,
+.dash-party-record-actions .btn-secondary {
+  flex: 1;
+  margin-top: 0;
+}
+
 .dash-party-record-payment {
   margin-top: var(--space-4);
   padding-top: var(--space-4);

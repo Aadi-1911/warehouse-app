@@ -32,7 +32,7 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across seven
+// The trade-off, stated honestly: because the sort happens in application memory across eight
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
 // real volume that's a non-issue. If it ever genuinely became one, the fix is per-source
 // pagination with a merge cursor — still not a shared table.
@@ -124,6 +124,19 @@ const TRANSFER_CORRECTION_REASON_LABELS = {
   OTHER: 'Other',
 };
 
+// Rupee formatting for the Party Debit description below — the only place this feed states an
+// amount. Deliberately matches the frontend's own `inr()` (e.g. dashboard/Parties.jsx) character
+// for character — same ₹ prefix, same Math.round, same en-IN grouping — so a figure read in
+// History is visually identical to the same figure on Party Payables rather than subtly
+// differently formatted. Rounded for DISPLAY only; PartyDebit.amount itself keeps full precision.
+//
+// Local to this file, not imported: no shared copy of this helper exists anywhere in backend/src
+// (confirmed by grep across the whole backend before writing this), so this is a self-contained
+// definition rather than a reference to something that isn't there.
+function inr(amount) {
+  return `₹${Math.round(Number(amount)).toLocaleString('en-IN')}`;
+}
+
 // "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order dispatched" without
 // a separate lookup table that would need updating every time OrderStatus gains a value.
 //
@@ -171,9 +184,19 @@ async function listHistory(req, res) {
   // through a still-valid token.
   const viewerRole = req.user.role;
 
-  // Seven independent reads, run concurrently — they share no data, so there's no reason to
-  // serialise them.
-  const [orders, adjustments, transfers, returns, receipts, corrections, transferCorrections] = await Promise.all([
+  // Eight independent reads, run concurrently — they share no data, so there's no reason to
+  // serialise them. (Was seven until 2026-09-08, when rule 106's party debits became the eighth
+  // source.)
+  const [
+    orders,
+    adjustments,
+    transfers,
+    returns,
+    receipts,
+    corrections,
+    transferCorrections,
+    partyDebits,
+  ] = await Promise.all([
     prisma.order.findMany({
       where: { ...actorScope('createdBy', viewerRole) },
       select: {
@@ -382,6 +405,25 @@ async function listHistory(req, res) {
         },
       },
     }),
+
+    // Party Debits (rule 106, added 2026-09-08) — one entry per recorded debit. The eighth source.
+    //
+    // No old/new columns to diff here (unlike the two corrections above) — a debit is a single
+    // new fact being recorded, not a revision of an existing one, so its entry always describes
+    // one amount, not a change. See PartyDebit's own schema comment for why this is the one
+    // debit-shaped entity in this file with a real `createdBy` relation.
+    prisma.partyDebit.findMany({
+      where: { ...actorScope('createdBy', viewerRole) },
+      select: {
+        id: true,
+        amount: true,
+        date: true,
+        note: true,
+        createdAt: true,
+        createdBy: { select: { id: true, name: true, role: true } },
+        party: { select: { name: true } },
+      },
+    }),
   ]);
 
   const entries = [];
@@ -518,6 +560,29 @@ async function listHistory(req, res) {
     });
   }
 
+  // --- Party Debits: one entry per recorded debit (rule 106).
+  //
+  // This is one of the few entry types in this feed that states a real rupee amount. That is
+  // deliberate and is not the costPrice leak this file's header warns about: this is a
+  // SELLING-side figure — what a party owes — of exactly the kind Party Payables already shows,
+  // and the entry is meaningless without it: "amount owed to the business" is the entire content
+  // of the event.
+  for (const d of partyDebits) {
+    entries.push({
+      id: `PARTY_DEBIT:${d.id}`,
+      type: 'PARTY_DEBIT',
+      label: 'Due recorded',
+      timestamp: d.createdAt,
+      actorId: d.createdBy.id,
+      actorName: d.createdBy.name,
+      actorRole: d.createdBy.role,
+      partyName: d.party.name,
+      description: `${d.party.name}: ${inr(Number(d.amount))} added to amount due (dated ${new Date(
+        d.date
+      ).toLocaleDateString('en-IN')})${d.note ? ` — "${d.note}"` : ''}`,
+    });
+  }
+
   // --- Good Returns: one entry per returned line (see the query comment above).
   for (const r of returns) {
     const article = `${r.bundle.product.articleNo} ${r.bundle.color.name}`;
@@ -607,10 +672,10 @@ async function listHistory(req, res) {
     });
   }
 
-  // Rule 104 backstop. The seven `where` clauses above are the real enforcement — an OWNER's rows
+  // Rule 104 backstop. The eight `where` clauses above are the real enforcement — an OWNER's rows
   // are never fetched for a STAFF request in the first place — so for correct code this filter
-  // removes nothing. It exists because the enforcement is spread across seven separate queries,
-  // and the failure mode of adding an eighth source later is forgetting one of them. This is the
+  // removes nothing. It exists because the enforcement is spread across eight separate queries,
+  // and the failure mode of adding a ninth source later is forgetting one of them. This is the
   // single place every entry must pass through regardless of which source built it.
   //
   // Deliberately an ALLOWLIST (`=== 'STAFF'`) rather than a denylist (`!== 'OWNER'`), because the

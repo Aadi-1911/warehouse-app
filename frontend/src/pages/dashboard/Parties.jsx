@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CopyIcon, CheckCircleIcon } from '../../components/icons';
 import { listParties, getPartyRevenue, getPartyPayable } from '../../api/parties';
 import { createPartyPayment } from '../../api/partyPayments';
+import { createPartyDebit } from '../../api/partyDebits';
 import { listOrders, updateOrderBillNo } from '../../api/orders';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE } from '../../utils/orderStatus';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../../utils/billNo';
@@ -353,6 +354,20 @@ export default function Parties() {
   const [paymentFormError, setPaymentFormError] = useState(null);
   const [paymentSuccess, setPaymentSuccess] = useState(null);
 
+  // Record amount owed (PartyDebit, rule 106) — the mirror of Record Payment above, same
+  // three-state reveal (collapsed -> step 1 details -> step 2 PinPrompt), kept as a fully
+  // separate state block rather than a shared one with a `kind` flag: the two actions hit
+  // different endpoints and move the Amount Due figure in opposite directions, so conflating
+  // their state would risk a stale value from one leaking into a submit of the other — the exact
+  // reasoning already applied to keeping the billing-correction state separate from bill-no edit.
+  const [debitFormOpen, setDebitFormOpen] = useState(false);
+  const [debitAmount, setDebitAmount] = useState('');
+  const [debitDate, setDebitDate] = useState(() => todayIso());
+  const [debitNote, setDebitNote] = useState('');
+  const [debitDraft, setDebitDraft] = useState(null);
+  const [debitFormError, setDebitFormError] = useState(null);
+  const [debitSuccess, setDebitSuccess] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     setPartiesStatus('loading');
@@ -451,6 +466,13 @@ export default function Parties() {
     setPaymentDraft(null);
     setPaymentFormError(null);
     setPaymentSuccess(null);
+    setDebitFormOpen(false);
+    setDebitAmount('');
+    setDebitDate(todayIso());
+    setDebitNote('');
+    setDebitDraft(null);
+    setDebitFormError(null);
+    setDebitSuccess(null);
   }
 
   function handleCustomFromChange(e) {
@@ -505,6 +527,43 @@ export default function Parties() {
     // Refetch so amountDue/totalPaid/the payment list all reflect the new entry — the same
     // "trust a fresh server computation over local arithmetic" rule the Locations page's
     // profit-share save already established.
+    await loadPayable(selectedPartyId);
+  }
+
+  // Step 1 of Record amount owed: mirrors handleContinueToPin exactly, same validation.
+  function handleContinueToDebitPin(event) {
+    event.preventDefault();
+    setDebitFormError(null);
+    const amountNum = Number(debitAmount);
+    if (!debitAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+      setDebitFormError('Enter a valid amount greater than 0.');
+      return;
+    }
+    if (!debitDate) {
+      setDebitFormError('Pick a date.');
+      return;
+    }
+    setDebitDraft({ amount: amountNum, date: debitDate, note: debitNote.trim() || undefined });
+  }
+
+  function handleCancelDebit() {
+    setDebitFormOpen(false);
+    setDebitAmount('');
+    setDebitDate(todayIso());
+    setDebitNote('');
+    setDebitFormError(null);
+  }
+
+  // Step 2: PinPrompt calls this with just the pin — mirrors handleConfirmPayment exactly.
+  async function handleConfirmDebit(pin) {
+    const created = await createPartyDebit({ partyId: selectedPartyId, ...debitDraft, pin });
+    setDebitFormOpen(false);
+    setDebitAmount('');
+    setDebitDate(todayIso());
+    setDebitNote('');
+    setDebitDraft(null);
+    setDebitSuccess(`${inr(created.amount)} added to amount due.`);
+    setTimeout(() => setDebitSuccess(null), 3000);
     await loadPayable(selectedPartyId);
   }
 
@@ -626,6 +685,10 @@ export default function Parties() {
                       <span className="stat-value">{inr(payable.totalReturned)}</span>
                       <span className="stat-label">Total returned</span>
                     </div>
+                    <div className="stat-card">
+                      <span className="stat-value">{inr(payable.totalDebited)}</span>
+                      <span className="stat-label">Total debited</span>
+                    </div>
                   </div>
 
                   <div className="stat-hero">
@@ -633,29 +696,58 @@ export default function Parties() {
                     <span className="stat-hero-label">Amount due</span>
                   </div>
 
-                  {payable.payments.length === 0 ? (
-                    <p className="muted dash-empty">No payments recorded yet.</p>
-                  ) : (
-                    payable.payments.map((p) => (
-                      <div key={p.id} className="dash-party-payment-row">
-                        <div className="dash-party-payment-main">
-                          <span className="dash-party-payment-date">{formatDate(p.date)}</span>
-                          {p.wasEdited && <span className="badge badge-warning">Edited</span>}
+                  {/* Payments and debits merged into one chronological ledger, same treatment
+                      Factory Payables gives FactoryPayment/FactoryDebit — a debit recorded with
+                      no visible trail beyond the Amount Due total moving would be exactly the
+                      undiscoverable-feature trap this project's own CLAUDE.md warns against. */}
+                  {(() => {
+                    const ledgerEntries = [
+                      ...payable.payments.map((p) => ({ ...p, kind: 'payment' })),
+                      ...payable.debits.map((d) => ({ ...d, kind: 'debit' })),
+                    ].sort((a, b) => {
+                      const diff = new Date(b.date) - new Date(a.date);
+                      return diff !== 0 ? diff : new Date(b.createdAt) - new Date(a.createdAt);
+                    });
+                    return ledgerEntries.length === 0 ? (
+                      <p className="muted dash-empty">No payments or amounts owed recorded yet.</p>
+                    ) : (
+                      ledgerEntries.map((entry) => (
+                        <div key={`${entry.kind}:${entry.id}`} className="dash-party-payment-row">
+                          <div className="dash-party-payment-main">
+                            <span className="dash-party-payment-date">{formatDate(entry.date)}</span>
+                            <span className={`badge ${entry.kind === 'debit' ? 'badge-warning' : 'badge-success'}`}>
+                              {entry.kind === 'debit' ? '+ Owed' : '− Paid'}
+                            </span>
+                            {entry.wasEdited && <span className="badge badge-warning">Edited</span>}
+                          </div>
+                          {entry.note && <span className="muted dash-party-payment-note">{entry.note}</span>}
+                          <span
+                            className={`dash-party-payment-value ${
+                              entry.kind === 'debit' ? 'dash-party-payment-value-debit' : 'dash-party-payment-value-payment'
+                            }`}
+                          >
+                            {entry.kind === 'debit' ? '+' : '−'} {inr(entry.amount)}
+                          </span>
                         </div>
-                        {p.note && <span className="muted dash-party-payment-note">{p.note}</span>}
-                        <span className="dash-party-payment-value">{inr(p.amount)}</span>
-                      </div>
-                    ))
-                  )}
+                      ))
+                    );
+                  })()}
 
                   <div className="dash-party-record-payment">
-                    <h3 className="dash-party-record-payment-title">Record payment</h3>
+                    <h3 className="dash-party-record-payment-title">Record payment / due amount</h3>
                     {paymentSuccess && <p className="dash-party-payment-success">{paymentSuccess}</p>}
-                    {!paymentFormOpen ? (
-                      <button type="button" className="btn-primary" onClick={() => setPaymentFormOpen(true)}>
-                        Record payment
-                      </button>
-                    ) : !paymentDraft ? (
+                    {debitSuccess && <p className="dash-party-payment-success">{debitSuccess}</p>}
+                    {!paymentFormOpen && !debitFormOpen && (
+                      <div className="dash-party-record-actions">
+                        <button type="button" className="btn-primary" onClick={() => setPaymentFormOpen(true)}>
+                          Record payment
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => setDebitFormOpen(true)}>
+                          Record due amount
+                        </button>
+                      </div>
+                    )}
+                    {paymentFormOpen && !paymentDraft && (
                       <form onSubmit={handleContinueToPin}>
                         <label className="field">
                           <span className="field-label">Amount</span>
@@ -694,7 +786,8 @@ export default function Parties() {
                           Cancel
                         </button>
                       </form>
-                    ) : (
+                    )}
+                    {paymentFormOpen && paymentDraft && (
                       <div>
                         <p className="muted">
                           Recording {inr(paymentDraft.amount)} on {formatDate(paymentDraft.date)}
@@ -707,6 +800,68 @@ export default function Parties() {
                           onSubmit={handleConfirmPayment}
                         />
                         <button type="button" className="link-button" onClick={() => setPaymentDraft(null)}>
+                          Change details
+                        </button>
+                      </div>
+                    )}
+                    {debitFormOpen && !debitDraft && (
+                      <form onSubmit={handleContinueToDebitPin}>
+                        <label className="field">
+                          <span className="field-label">Amount</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0.01"
+                            step="0.01"
+                            value={debitAmount}
+                            onChange={(e) => setDebitAmount(e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Date</span>
+                          <input
+                            type="date"
+                            value={debitDate}
+                            onChange={(e) => setDebitDate(e.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Note (optional)</span>
+                          <input
+                            type="text"
+                            value={debitNote}
+                            onChange={(e) => setDebitNote(e.target.value)}
+                            placeholder={`e.g. Opening balance as of ${formatDate(debitDate)}`}
+                          />
+                        </label>
+                        {debitFormError && (
+                          <p className="error-banner" role="alert">
+                            {debitFormError}
+                          </p>
+                        )}
+                        <button type="submit" className="btn-primary">
+                          Continue
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={handleCancelDebit}>
+                          Cancel
+                        </button>
+                      </form>
+                    )}
+                    {debitFormOpen && debitDraft && (
+                      <div>
+                        <p className="muted">
+                          Adding {inr(debitDraft.amount)} to amount due, dated {formatDate(debitDraft.date)}
+                          {debitDraft.note ? ` — "${debitDraft.note}"` : ''}. Enter your PIN to confirm.
+                        </p>
+                        <PinPrompt
+                          submitLabel="Record due amount"
+                          submittingLabel="Recording…"
+                          autoFocus
+                          onSubmit={handleConfirmDebit}
+                        />
+                        <button type="button" className="link-button" onClick={() => setDebitDraft(null)}>
                           Change details
                         </button>
                       </div>
