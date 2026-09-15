@@ -50,6 +50,36 @@ function toResponse(t) {
   };
 }
 
+// Builds the response for a request whose idempotencyKey has already been used — i.e. this exact
+// line was already applied, and this call is a retry of a request whose response was lost rather
+// than a new instruction.
+//
+// Stock figures are read LIVE, not reconstructed as they stood at the moment of the original
+// write. That is deliberate and is the honest answer to "what is true now": other transfers may
+// legitimately have moved the same bundle since. Replaying the original post-write numbers would
+// hand the caller a figure that was correct once and may not be any more, which is worse than
+// useless on a screen whose whole job is showing what's actually where.
+async function buildReplayResponse(existing) {
+  const [fromStock, toStock] = await Promise.all([
+    prisma.stock.findUnique({
+      where: { bundleId_locationId: { bundleId: existing.bundleId, locationId: existing.fromLocationId } },
+    }),
+    prisma.stock.findUnique({
+      where: { bundleId_locationId: { bundleId: existing.bundleId, locationId: existing.toLocationId } },
+    }),
+  ]);
+
+  return {
+    transfer: toResponse(existing),
+    fromStock: { locationId: existing.fromLocationId, qtySets: fromStock?.qtySets ?? 0 },
+    toStock: { locationId: existing.toLocationId, qtySets: toStock?.qtySets ?? 0 },
+    // Explicit rather than inferred from the status code, so a caller (or a log line, or a test)
+    // can tell a replay from a fresh create without having to know that 200-vs-201 carries that
+    // meaning here.
+    idempotentReplay: true,
+  };
+}
+
 // POST /api/transfers — any authenticated role (🔒).
 //
 // This is the ONLY way a TRANSFER_OUT/TRANSFER_IN Transaction is ever created. POST
@@ -61,8 +91,45 @@ function toResponse(t) {
 // Everything below happens inside a single prisma.$transaction: the Transfer row, the source
 // decrement, the destination increment, and both Transaction rows either all land or none do.
 // A crash or network failure mid-way can never leave stock "in transit" between two locations.
+//
+// === IDEMPOTENCY (added 2026-09-11, rule 107) ===
+//
+// Atomicity above guarantees a request is applied fully or not at all. It says nothing about a
+// request being applied TWICE, which is a different failure with a different cause: the commit
+// succeeds, the response is lost on the way back (a dropped connection, a gateway timeout, a
+// backgrounded PWA), the client records the line as failed, and the person presses "try again".
+// The retry is byte-identical to the original, so without a key the server has no way to tell it
+// from a genuine second transfer of the same bundle/route/quantity — and applies it again.
+//
+// The 2026-09-10 audit found no evidence this had actually happened across all 47 Production
+// transfer rows, at any key-width or time window tested. That was never a guarantee, though: it
+// was an absence of evidence in a small single-session sample, and the code had nothing in it
+// that would have prevented the double-apply. This closes that gap.
+//
+// The key is OPTIONAL at the API level, not required, and that is a deployment-ordering decision
+// rather than laxity. Backend and frontend do not deploy atomically: for a window after the
+// backend ships, a person with the app already open is still running the previous JS bundle,
+// which sends no key. Hard-rejecting those requests would break transfers mid-session for
+// exactly the people already using the screen. Requests without a key behave exactly as they did
+// before — no protection, but no regression either. Once every client is known to send one, this
+// can be tightened to required in its own separate change.
 async function createTransfer(req, res) {
-  const { bundleId, fromLocationId, toLocationId, qtySets, note } = req.body;
+  const { bundleId, fromLocationId, toLocationId, qtySets, note, idempotencyKey } = req.body;
+
+  // Validated for SHAPE only, never for content: the server never generates, parses or interprets
+  // this value, it only compares it for equality. Requiring a specific format (a UUID, say) would
+  // couple the server to one client's choice of generator for no gain. The length ceiling exists
+  // so a malformed or hostile client can't push an unbounded string into a unique index.
+  if (idempotencyKey !== undefined && idempotencyKey !== null) {
+    if (typeof idempotencyKey !== 'string' || idempotencyKey.trim() === '' || idempotencyKey.length > 200) {
+      return sendError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'idempotencyKey must be a non-empty string of at most 200 characters'
+      );
+    }
+  }
 
   if (!bundleId || !fromLocationId || !toLocationId) {
     return sendError(
@@ -85,6 +152,28 @@ async function createTransfer(req, res) {
   }
   if (!Number.isInteger(qtySets) || qtySets <= 0) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'qtySets must be a positive integer');
+  }
+
+  // Pre-flight replay check. Deliberately BEFORE the bundle/location lookups and before the
+  // transaction: a key that has already been used describes work that is already done, so none of
+  // the validation below is relevant to it. Checking here also means a retry stays cheap — one
+  // indexed lookup instead of the full write path.
+  //
+  // This check ALONE is not sufficient, and is not treated as if it were. Two concurrent requests
+  // carrying the same key can both run this lookup before either has inserted, both miss, and
+  // both proceed. The unique index on Transfer.idempotencyKey is what actually makes that
+  // impossible; the catch below converts the loser's constraint violation into the same replay
+  // response this path returns. Pre-flight is the fast path, the constraint is the correct one.
+  if (idempotencyKey) {
+    const existing = await prisma.transfer.findUnique({
+      where: { idempotencyKey },
+      select: TRANSFER_SELECT,
+    });
+    if (existing) {
+      // 200, not 201: nothing was created by this request. The distinction matters for anything
+      // reading status codes as "did this write" — a monitor, a log, a future client.
+      return res.status(200).json(await buildReplayResponse(existing));
+    }
   }
 
   // product.name is selected here purely to snapshot it onto the Transfer below (2026-08-28) —
@@ -160,6 +249,12 @@ async function createTransfer(req, res) {
           userId: req.user.id,
           note: note || null,
           productNameSnapshot: bundle.product.name,
+          // Written INSIDE the same transaction as the stock movement it protects. That coupling
+          // is the point: the key and the effect it guards commit together or roll back together,
+          // so there is no window where the stock moved but the key wasn't recorded (which would
+          // leave the retry unprotected) or the key was recorded but the stock didn't move (which
+          // would suppress a legitimate retry).
+          idempotencyKey: idempotencyKey || null,
         },
       });
 
@@ -190,11 +285,36 @@ async function createTransfer(req, res) {
       };
     });
 
-    res.status(201).json(result);
+    res.status(201).json({ ...result, idempotentReplay: false });
   } catch (err) {
     if (err.isInsufficientStock) {
       return sendError(res, 400, 'INSUFFICIENT_STOCK', err.message);
     }
+
+    // The concurrency case the pre-flight check structurally cannot catch: another request
+    // carrying this same key inserted between our lookup and our insert. P2002 is Prisma's
+    // unique-constraint violation, and the whole transaction has already rolled back by the time
+    // it surfaces — so no stock moved on this attempt, and the winner's write is intact.
+    //
+    // Re-reading rather than reporting the conflict is the correct response: from the caller's
+    // side this is the same situation the pre-flight path handles (this line is already applied),
+    // it just lost a race to discover it. Surfacing a 409 here would tell a client that its line
+    // failed when the line in fact succeeded, which is precisely the false-failure this whole
+    // mechanism exists to eliminate.
+    //
+    // The target check keeps this narrow: any OTHER unique violation is a real bug and must keep
+    // propagating rather than being quietly reinterpreted as a successful transfer.
+    const target = JSON.stringify(err?.meta?.target ?? '');
+    if (idempotencyKey && err?.code === 'P2002' && target.includes('idempotencyKey')) {
+      const existing = await prisma.transfer.findUnique({
+        where: { idempotencyKey },
+        select: TRANSFER_SELECT,
+      });
+      if (existing) {
+        return res.status(200).json(await buildReplayResponse(existing));
+      }
+    }
+
     throw err;
   }
 }

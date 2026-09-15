@@ -458,6 +458,26 @@ model Transfer {
   // A Transfer is an immutable historical event ("this moved, then"), so it must read the same
   // way forever regardless of a later rename.
   productNameSnapshot String?
+  // Idempotency key (added 2026-09-11, rule 107). Generated client-side ONCE, at the moment a
+  // line is first staged, and reused verbatim on every retry of that same line — never
+  // regenerated. That reuse is the entire mechanism: a retried line and a genuine second transfer
+  // of the same bundle/route/quantity by the same person are otherwise byte-identical requests,
+  // which is exactly why the duplicate-detection audit run on 2026-09-10 could only ever be a
+  // heuristic — it had nothing in the data able to tell the two apart. This column is that
+  // something.
+  //
+  // DELIBERATELY NULLABLE, the same call (and for the same reason) as Party.state and
+  // productNameSnapshot above: all 47 Transfer rows that existed when this column was added
+  // predate the key and have no value that could be backfilled, so a NOT NULL column could not
+  // have been migrated without inventing data. Postgres treats every NULL as distinct under a
+  // UNIQUE constraint, so those legacy rows coexist under @unique without colliding with one
+  // another — the constraint only ever binds rows that actually carry a key.
+  //
+  // The UNIQUE index is load-bearing, not decorative: transferController's pre-flight lookup
+  // alone cannot stop two concurrent requests carrying the same key from both passing the check
+  // and both inserting. The constraint is what makes the second one fail (P2002), which the
+  // controller then converts into the same replay response the pre-flight path returns.
+  idempotencyKey String?     @unique
   createdAt      DateTime     @default(now())
 
   transactions   Transaction[]

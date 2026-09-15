@@ -322,6 +322,15 @@ model Transfer {
   userId         String
   user           User         @relation(fields: [userId], references: [id])
   note           String?
+  // Added 2026-09-11 (rule 107). Generated client-side once per staged line and reused verbatim
+  // on every retry of that line, which is what lets the server tell a retry apart from a genuine
+  // second transfer of the same bundle/route/quantity — two requests that are otherwise
+  // byte-identical. NULLABLE because the 47 Transfer rows predating this column have no key to
+  // backfill; Postgres treats each NULL as distinct under UNIQUE, so they coexist without
+  // colliding. The UNIQUE index is load-bearing, not decorative: the controller's pre-flight
+  // lookup cannot stop two concurrent requests with the same key from both passing it, and the
+  // constraint violation (P2002) is what the controller converts into a replay response.
+  idempotencyKey String?      @unique
   createdAt      DateTime     @default(now())
 
   transactions   Transaction[]

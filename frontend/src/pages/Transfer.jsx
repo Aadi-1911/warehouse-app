@@ -5,6 +5,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import { listLocations } from '../api/locations';
 import { listStock } from '../api/stock';
 import { createTransfer } from '../api/transfers';
+import { newIdempotencyKey } from '../utils/idempotencyKey';
 
 // Transfer — internal stock movement between our own Locations (05_BUSINESS_RULES.md rule 93).
 // Not in 07_UI_DESIGN_BRIEF.md's original §5 screen list: transfers were an accepted Phase 1
@@ -285,6 +286,12 @@ export default function Transfer() {
       ...prev,
       ...toAdd.map((row) => ({
         id: nextLineIdRef.current++,
+        // Generated HERE, once, at the moment the line is staged — deliberately not at submit
+        // time (rule 107). Generating it in handleConfirmedSubmit would produce a fresh key on
+        // every attempt, which is precisely the behaviour the key exists to prevent: a retry
+        // would look like a brand-new request to the server and be applied a second time. Staged
+        // once, carried through every retry, is the whole mechanism.
+        idempotencyKey: newIdempotencyKey(),
         bundleId: row.bundleId,
         articleNo: row.productArticleNo,
         colorName: row.colorName,
@@ -352,6 +359,12 @@ export default function Transfer() {
           toLocationId: line.toLocationId,
           qtySets: line.qtySets,
           note: line.note,
+          // Read off the line object rather than generated here — see the staging comment in
+          // handleAddSelectedForArticle. A failed line is pushed into failedLines BY REFERENCE
+          // and put straight back into stagedLines below, so the object a retry re-submits is
+          // the same object, still carrying the same key. That reference identity is what makes
+          // the retry safe, and it's why nothing in this loop may ever rebuild a line.
+          idempotencyKey: line.idempotencyKey,
         });
         succeededCount++;
       } catch {
