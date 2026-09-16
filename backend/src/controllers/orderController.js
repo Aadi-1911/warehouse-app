@@ -199,6 +199,13 @@ async function createOrder(req, res) {
     });
   }
 
+  // { timeout: 20000 } — stopgap (2026-09-16). Prisma's default interactive-transaction timeout is
+  // 5000ms, and Production blew it here on 2026-09-16 at 12:36:05 IST with P2028 ("Transaction
+  // already closed"), in the same incident window as the packOrder failures below. This one is not
+  // a per-line loop — a single nested create plus one re-read — but the lambda runs in iad1 while
+  // the Neon host is in ap-southeast-1, so even two round-trips cross that gap and a large order's
+  // nested-create payload can exceed the default on its own. Raising the ceiling only buys
+  // headroom; the real fix is the cross-region latency, which is a separate, later task.
   const created = await prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
@@ -214,7 +221,7 @@ async function createOrder(req, res) {
     // Re-read inside the transaction, with the full display-ready select, so the response
     // reflects the true post-write state rather than being reassembled in JS from inputs.
     return tx.order.findUnique({ where: { id: order.id }, select: orderDetailSelect(req.user.role) });
-  });
+  }, { timeout: 20000 });
 
   res.status(201).json(orderDetailToResponse(created, req.user.role));
 }
@@ -465,6 +472,14 @@ async function packOrder(req, res) {
   // was counted, it doesn't commit it. A line CAN legitimately be packed for more than is
   // currently on the shelf — that discrepancy surfaces at Bill, which is the transition that
   // actually moves inventory.
+  //
+  // { timeout: 20000 } — stopgap (2026-09-16). This is the call site that took Pack Order down in
+  // Production: a 17-line order for one party failed every attempt between 12:36 and 12:42 IST
+  // with P2028 ("Transaction already closed"), consistently at 5232–5240ms against the 5000ms
+  // default. The loop below awaits one round-trip per submitted line, and the lambda (iad1) is a
+  // cross-region hop from the Neon host (ap-southeast-1), so the per-line cost is latency, not
+  // work. Raising the ceiling stops the bleeding; batching those per-line writes is the actual
+  // fix and is a separate, deliberately later task.
   const updated = await prisma.$transaction(async (tx) => {
     for (const sl of submittedLines) {
       const line = lineById.get(sl.lineItemId);
@@ -510,7 +525,7 @@ async function packOrder(req, res) {
     });
 
     return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
-  });
+  }, { timeout: 20000 });
 
   res.json(orderDetailToResponse(updated, req.user.role));
 }
@@ -701,6 +716,11 @@ async function billOrder(req, res) {
 
   let updated;
   try {
+    // { timeout: 20000 } — stopgap (2026-09-16), same reasoning as packOrder's above: the loop
+    // below awaits a stock movement and a Transaction insert per line being deducted, each one a
+    // cross-region round-trip (iad1 lambda → ap-southeast-1 Neon), so a large enough order can
+    // exhaust Prisma's 5000ms default mid-loop and surface as P2028 with nothing actually wrong
+    // with the writes. Batching these is the real fix and is a separate, later task.
     updated = await prisma.$transaction(async (tx) => {
       for (const li of linesToDeduct) {
         // One line, one location, one movement — no walk, no split, no partial draw. Where the
@@ -771,7 +791,7 @@ async function billOrder(req, res) {
       });
 
       return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
-    });
+    }, { timeout: 20000 });
   } catch (err) {
     if (err.isInsufficientStock) {
       return sendError(res, 409, 'INSUFFICIENT_STOCK', err.message);
@@ -1058,6 +1078,10 @@ async function updateOrderLines(req, res) {
 
   const wasPacked = order.status === 'PACKED';
 
+  // { timeout: 20000 } — stopgap (2026-09-16), same reasoning as packOrder's and billOrder's: two
+  // loops here, one per changed line and one per added line, each iteration a cross-region
+  // round-trip, so a large enough edit can exhaust Prisma's 5000ms default mid-loop and fail as
+  // P2028 with nothing wrong with the writes themselves. Batching is the real fix, later task.
   const updated = await prisma.$transaction(async (tx) => {
     for (const change of resolvedChanges) {
       await tx.orderLineItem.update({
@@ -1118,7 +1142,7 @@ async function updateOrderLines(req, res) {
     }
 
     return tx.order.findUnique({ where: { id }, select: orderDetailSelect(req.user.role) });
-  });
+  }, { timeout: 20000 });
 
   res.json(orderDetailToResponse(updated, req.user.role));
 }
