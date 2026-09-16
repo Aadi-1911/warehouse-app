@@ -1611,6 +1611,8 @@ body {
   padding: var(--space-5);
   width: 100%;
   max-width: 300px;
+  max-height: 90dvh;
+  overflow-y: auto;
 }
 
 .modal-title {
