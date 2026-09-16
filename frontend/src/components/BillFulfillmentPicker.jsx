@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { listLocations } from '../api/locations';
 import { getOrderFulfillmentPreview } from '../api/orders';
 
@@ -36,6 +36,20 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
   const [previewStatus, setPreviewStatus] = useState('idle');
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState(null);
+
+  // Which article groups are expanded, keyed by group key (below). Starts empty on every mount —
+  // ConfirmModal unmounts this component entirely on close (`if (!open) return null`), so a plain
+  // useState here already guarantees "always starts fully collapsed" on reopen with no extra reset
+  // logic needed.
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+  const toggleGroup = (key) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   useEffect(() => {
     setLocationsStatus('loading');
@@ -89,6 +103,24 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
 
   const shortLabel = (name) => SHORT_LABELS[name] ?? name;
 
+  // Groups preview.lines by article — each line is already one colour of one article (matching how
+  // the flat list rendered them before), so grouping by articleNo+productName naturally groups by
+  // colour underneath each article header. Keyed on both fields together, not articleNo alone,
+  // since a null articleNo (no product join) would otherwise collapse every such line into one
+  // group regardless of product.
+  const groups = useMemo(() => {
+    if (!preview) return [];
+    const byKey = new Map();
+    for (const l of preview.lines) {
+      const key = `${l.articleNo ?? ''}::${l.productName ?? ''}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, { key, articleNo: l.articleNo, productName: l.productName, lines: [] });
+      }
+      byKey.get(key).lines.push(l);
+    }
+    return [...byKey.values()];
+  }, [preview]);
+
   return (
     <div className="bill-fulfillment">
       <p className="field-label bill-fulfillment-heading">Fulfil from</p>
@@ -134,24 +166,54 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
                   enough stock here. Billing from here will be rejected.
                 </p>
               )}
-              <ul className="bill-fulfillment-lines">
-                {preview.lines.map((l) => (
-                  <li
-                    key={l.lineItemId}
-                    className={`bill-fulfillment-line${l.sufficient ? '' : ' bill-fulfillment-line-short'}`}
-                  >
-                    <span className="bill-fulfillment-line-name">
-                      {l.articleNo ? `${l.articleNo} — ` : ''}
-                      {l.productName}
-                      {l.colorName ? ` · ${l.colorName}` : ''}
-                    </span>
-                    <span className="bill-fulfillment-line-qty">
-                      need {l.needed} · here {l.available}
-                      {l.sufficient ? '' : ' — short'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="bill-fulfillment-groups">
+                {groups.map((group) => {
+                  const expanded = expandedGroups.has(group.key);
+                  const groupSufficient = group.lines.every((l) => l.sufficient);
+                  return (
+                    <div key={group.key} className="bill-fulfillment-group">
+                      <button
+                        type="button"
+                        className="bill-fulfillment-group-header"
+                        aria-expanded={expanded}
+                        onClick={() => toggleGroup(group.key)}
+                      >
+                        <span
+                          className={`bill-fulfillment-group-status${groupSufficient ? '' : ' bill-fulfillment-group-status-short'}`}
+                          aria-hidden="true"
+                        >
+                          {groupSufficient ? '✓' : '⚠'}
+                        </span>
+                        <span className="bill-fulfillment-group-title">
+                          {group.articleNo ? `${group.articleNo} — ` : ''}
+                          {group.productName}
+                          {' · '}
+                          {group.lines.length} color{group.lines.length === 1 ? '' : 's'}
+                        </span>
+                        <span className="bill-fulfillment-group-chevron" aria-hidden="true">
+                          {expanded ? '▾' : '▸'}
+                        </span>
+                      </button>
+                      {expanded && (
+                        <ul className="bill-fulfillment-lines">
+                          {group.lines.map((l) => (
+                            <li
+                              key={l.lineItemId}
+                              className={`bill-fulfillment-line${l.sufficient ? '' : ' bill-fulfillment-line-short'}`}
+                            >
+                              <span className="bill-fulfillment-line-name">{l.colorName ?? '—'}</span>
+                              <span className="bill-fulfillment-line-qty">
+                                need {l.needed} · InStock {l.available}
+                                {l.sufficient ? '' : ' — short'}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </>
           ) : null}
         </div>
