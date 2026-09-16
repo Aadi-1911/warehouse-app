@@ -3,7 +3,6 @@ const { sendError } = require('../utils/errors');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
-const { applyStockMovement } = require('../utils/stock');
 const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
 
 const prisma = new PrismaClient();
@@ -716,43 +715,112 @@ async function billOrder(req, res) {
 
   let updated;
   try {
-    // { timeout: 20000 } — stopgap (2026-09-16), same reasoning as packOrder's above: the loop
-    // below awaits a stock movement and a Transaction insert per line being deducted, each one a
-    // cross-region round-trip (iad1 lambda → ap-southeast-1 Neon), so a large enough order can
-    // exhaust Prisma's 5000ms default mid-loop and surface as P2028 with nothing actually wrong
-    // with the writes. Batching these is the real fix and is a separate, later task.
+    // { timeout: 20000 } — stopgap (2026-09-16). Even with the batching below, this is left in
+    // place deliberately: the headroom costs nothing and latency to the ap-southeast-1 Neon host
+    // from this iad1 lambda isn't a guaranteed-stable number.
     updated = await prisma.$transaction(async (tx) => {
+      // --- Batched STOCK_OUT deduction (2026-09-17) -------------------------------------------
+      // Replaces the old one-line-at-a-time loop (applyStockMovement + Transaction.create per
+      // line), which cost 3 sequential round-trips per line — a 17-line real order (Arora
+      // Garments, confirmed in Production) meant 54 round-trips total inside one interactive
+      // transaction, landing at ~99-101% of the configured timeout at BOTH 5000ms and 20000ms.
+      // This is a new STOCK_OUT-only path, entirely local to billOrder — applyStockMovement
+      // itself is UNTOUCHED. Its upsert-create branch is load-bearing for STOCK_IN elsewhere
+      // (transfers, returns, corrections, receipts): a bundle's first arrival at a new location
+      // legitimately has no Stock row yet. That branch is useless for STOCK_OUT specifically —
+      // deductibleLinesOf only ever includes qtySetsPacked > 0, so a freshly-created zero-qty row
+      // would fail the very next guard check regardless — which is exactly why this path can
+      // skip it, but that reasoning does not extend to STOCK_IN, so applyStockMovement keeps
+      // doing the real find-or-create work for every other caller.
+
+      // Bulk read: one round-trip supplies stock.id for every bundle this order touches at the
+      // confirmed location, replacing the upsert half of applyStockMovement (its create branch
+      // is unreachable here — see above). Every bundleId here already passed the pre-check above
+      // (available > 0), and Stock rows are never deleted anywhere in this codebase (confirmed:
+      // no stock.delete/deleteMany call exists), so a row is guaranteed to still exist for each.
+      const bundleIds = [...new Set(linesToDeduct.map((li) => li.bundleId))];
+      const stockRows = await tx.stock.findMany({
+        where: { bundleId: { in: bundleIds }, locationId: location.id },
+        select: { id: true, bundleId: true },
+      });
+      const stockIdByBundle = new Map(stockRows.map((s) => [s.bundleId, s.id]));
+
+      // CRITICAL, NON-NEGOTIABLE: aggregate needed quantity per bundleId ACROSS ALL LINES before
+      // any grouping. Two live lines on the same order CAN reference the same bundle —
+      // orderFulfillment.js's own header comment confirms this directly ("createOrder does not
+      // dedupe bundleIds across lineItems — verified, not assumed"), and checkLocationAvailability
+      // already aggregates this same way for exactly this reason. A guarded update keyed on raw
+      // per-line quantities (or a bundle appearing twice in one IN-list) would match that bundle's
+      // Stock row ONCE and decrement it ONCE — silently under-deducting by however much the
+      // second line needed, with no error and a count check that would still pass. Summing into
+      // one total per DISTINCT bundle first is what makes two lines on one bundle decrement
+      // correctly, and every count assertion below is against distinct-bundle counts, never line
+      // counts, for the same reason.
+      const neededByBundle = new Map();
       for (const li of linesToDeduct) {
-        // One line, one location, one movement — no walk, no split, no partial draw. Where the
-        // previous version could satisfy a single line from two locations in sequence, a line now
-        // either comes entirely out of the chosen location or the whole bill fails.
-        //
-        // applyStockMovement (utils/stock.js) is the same shared helper every other stock-moving
-        // endpoint already uses (transfers, returns, corrections, receipts) — billing was the last
-        // path still hand-rolling its own guarded decrement, precisely because it was the only one
-        // that didn't know its own location. Now that it does, it uses the shared path like
-        // everything else: the decrement and its "is there enough?" guard are one atomic statement,
-        // so a genuine concurrent race (another bill landing between the pre-check above and this
-        // write) can't drive stock negative. It throws isInsufficientStock when the guard rejects,
-        // which the catch below maps to a 409 — the whole transaction rolls back rather than
-        // applying a partial deduction.
-        const stock = await applyStockMovement(tx, {
-          bundleId: li.bundleId,
-          locationId: location.id,
+        neededByBundle.set(li.bundleId, (neededByBundle.get(li.bundleId) ?? 0) + li.qtySetsPacked);
+      }
+
+      // Group the aggregated, distinct-bundle deductions by quantity needed, so every bundle
+      // needing the same amount clears in one guarded statement instead of one per bundle. For
+      // the real 17-line/3-article order this is 2 groups (sixteen lines need 1 set, one needs
+      // 2), not 17 — round-trips now scale with the number of distinct quantities on the order,
+      // not the number of lines.
+      const bundleIdsByQty = new Map();
+      for (const [bundleId, qty] of neededByBundle) {
+        if (!bundleIdsByQty.has(qty)) bundleIdsByQty.set(qty, []);
+        bundleIdsByQty.get(qty).push(bundleId);
+      }
+
+      for (const [qty, ids] of bundleIdsByQty) {
+        // Sorted for a deterministic lock order — without this, two concurrent bills touching an
+        // overlapping set of bundles could acquire row locks in different orders and deadlock.
+        ids.sort();
+        // updateMany, not update: only updateMany accepts a WHERE beyond the id, which is what
+        // makes the "is there enough?" guard and the write one atomic statement — same guard
+        // shape applyStockMovement's STOCK_OUT branch has always used (utils/stock.js), just
+        // applied to every bundle needing this exact quantity in one call instead of one per
+        // bundle. A genuine concurrent race (another bill landing between the pre-check above and
+        // this write) still can't drive stock negative: the guard is per-row, evaluated by
+        // Postgres for every matched bundle, not weakened by being expressed once for the group.
+        const result = await tx.stock.updateMany({
+          where: { locationId: location.id, bundleId: { in: ids }, qtySets: { gte: qty } },
+          data: { qtySets: { decrement: qty } },
+        });
+        if (result.count !== ids.length) {
+          // At least one bundle in this group failed its guard — stock moved between the
+          // pre-check and here. Re-run the SAME shared checkLocationAvailability() (with this tx,
+          // so it sees the current, still-uncommitted state) rather than hand-building a partial
+          // insufficientLines list from just this group — the exact reason this function is
+          // shared in the first place (its own header: "the moment those are two separately-
+          // written pieces of logic they can disagree"). Reconstructs the pinned
+          // {lineItemId,bundleId,needed,available} shape 04_API_SPEC.md documents, identical to
+          // the pre-check's own 409 above.
+          const { insufficientLines: freshInsufficientLines } = await checkLocationAvailability(tx, {
+            lineItems: linesToDeduct,
+            locationId: location.id,
+          });
+          const err = new Error('Stock changed since the pre-check — not enough remains to bill this order');
+          err.isInsufficientStock = true;
+          err.insufficientLines = freshInsufficientLines;
+          throw err;
+        }
+      }
+
+      // One Transaction row per LINE, not per bundle — the audit trail must show every line
+      // item's own deduction record even when two lines share a bundle (rule 9), so this stays
+      // keyed on linesToDeduct, never on the aggregated map above. stockId for each comes from
+      // the bulk read at the top; qtySets is still each line's own qtySetsPacked, unchanged from
+      // the old per-line write.
+      await tx.transaction.createMany({
+        data: linesToDeduct.map((li) => ({
+          stockId: stockIdByBundle.get(li.bundleId),
+          userId: req.user.id,
           type: 'STOCK_OUT',
           qtySets: li.qtySetsPacked,
-        });
-
-        await tx.transaction.create({
-          data: {
-            stockId: stock.id,
-            userId: req.user.id,
-            type: 'STOCK_OUT',
-            qtySets: li.qtySetsPacked,
-            orderLineItemId: li.id,
-          },
-        });
-      }
+          orderLineItemId: li.id,
+        })),
+      });
 
       await tx.order.update({
         where: { id },
@@ -794,7 +862,17 @@ async function billOrder(req, res) {
     }, { timeout: 20000 });
   } catch (err) {
     if (err.isInsufficientStock) {
-      return sendError(res, 409, 'INSUFFICIENT_STOCK', err.message);
+      // err.insufficientLines is only set by the batched guard-failure path above (a genuine
+      // concurrent-race case, reconstructed via checkLocationAvailability) — same sibling-field
+      // shape the pre-check's own 409 returns, so a client never has to handle two different
+      // response shapes for the same error code.
+      return sendError(
+        res,
+        409,
+        'INSUFFICIENT_STOCK',
+        err.message,
+        err.insufficientLines ? { insufficientLines: err.insufficientLines } : undefined
+      );
     }
     throw err;
   }
