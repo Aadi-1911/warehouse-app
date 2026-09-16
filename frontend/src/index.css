@@ -1611,6 +1611,8 @@ body {
   padding: var(--space-5);
   width: 100%;
   max-width: 300px;
+  max-height: 90dvh;
+  overflow-y: auto;
 }
 
 .modal-title {
@@ -1688,8 +1690,19 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* Reuses .bill-pricing-final's own weight/color (700, --text-primary) — the app's existing
+   emphasized-amount treatment for money figures in this exact block — rather than inventing a new
+   one. Before 2026-09-16 this line carried no font-weight/color of its own, so the `muted` class
+   on its element (color: var(--text-secondary), no weight) was the only thing styling it: this
+   "Order total" subtotal rendered dim and normal-weight while the discount/GST line below it (700
+   weight) and the final total below that (700 weight + primary color) both already read as
+   emphasized — the one real amount figure in the block that wasn't. Declared after `.muted` in the
+   cascade so this color wins the tie at equal specificity without needing to touch the `muted`
+   class on the element in either page. */
 .bill-pricing-pretax {
   font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
   margin: 0 0 var(--space-3);
 }
 
@@ -1773,10 +1786,69 @@ body {
   margin-top: var(--space-3);
 }
 
+/* One collapsible section per article (2026-09-16) — replaces what used to be one flat list of
+   every colour line. Groups are independent (no accordion-style "only one open" behaviour), so
+   opening one never closes another. */
+.bill-fulfillment-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bill-fulfillment-group {
+  border-bottom: 1px solid var(--divider);
+}
+
+.bill-fulfillment-group:last-child {
+  border-bottom: none;
+}
+
+/* A real <button>, not a styled <div> — this is the discoverable trigger the interaction depends
+   on (CLAUDE.md: a non-obvious interaction must be visibly obvious in the UI itself), so it needs
+   to look and behave like something you tap, not something you happen to click. */
+.bill-fulfillment-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.bill-fulfillment-group-status {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--success-text);
+}
+
+.bill-fulfillment-group-status-short {
+  color: var(--danger-text);
+}
+
+.bill-fulfillment-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bill-fulfillment-group-chevron {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .bill-fulfillment-lines {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0 4px;
 }
 
 .bill-fulfillment-line {
@@ -1784,7 +1856,7 @@ body {
   justify-content: space-between;
   gap: var(--space-3);
   font-size: 12px;
-  padding: 4px 0;
+  padding: 4px 0 4px 21px;
   color: var(--text-secondary);
 }
 
