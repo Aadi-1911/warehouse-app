@@ -104,7 +104,12 @@ export default function LowStockList() {
   // restock," and an archived article — by definition not receivable/orderable through the normal
   // flow — isn't actionable in that sense, so it's excluded from THIS alert specifically. Live
   // Stock's own archived section is unaffected: it reads listStock() directly, not this filter.
-  const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD && row.productIsActive);
+  //
+  // qtySets > 0 is required too (rule 107, built 2026-09-18) — a row drained to exactly zero is
+  // suppressed everywhere, not shown here as the "lowest" possible low-stock row. Independent of
+  // the threshold check above it: rule 56 (the <= LOW_STOCK_THRESHOLD badge) and rule 107
+  // (existence on screen at all) never interact, per rule 107's own text.
+  const lowRows = stock.filter((row) => row.qtySets > 0 && row.qtySets <= LOW_STOCK_THRESHOLD && row.productIsActive);
 
   // Factory -> Article -> rows. productId (not the bare articleNo string) is the article-grouping
   // key — article numbers are only unique per Factory, never globally.
