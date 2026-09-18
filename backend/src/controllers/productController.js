@@ -175,6 +175,13 @@ async function createProduct(req, res) {
 // if a Bundle actually links it to this specific Product — this is the same "only Colors with a
 // real Bundle for this Product are valid" rule 02_ARCHITECTURE.md §5 requires the Transaction
 // endpoint to enforce, just surfaced as a read endpoint for populating a dropdown at entry time.
+//
+// Also requires at least one real Stock row for that Bundle (rule 107, built 2026-09-18) — a
+// Bundle with no stock anywhere (every Stock row at qtySets = 0, or no Stock row at all) is
+// suppressed from this picker the same as every other browsing surface rule 107 names. This is
+// the one surface where the suppression IS the query itself, rather than a client-side filter
+// on top of an unfiltered fetch — New Order asks for one Product's colors at a time, so there's
+// no shared unfiltered payload another screen also depends on the way GET /api/stock has.
 async function getValidColors(req, res) {
   const { id } = req.params;
 
@@ -184,7 +191,7 @@ async function getValidColors(req, res) {
   }
 
   const bundles = await prisma.bundle.findMany({
-    where: { productId: id },
+    where: { productId: id, stock: { some: { qtySets: { gt: 0 } } } },
     select: { id: true, color: { select: { id: true, name: true } } },
   });
 
