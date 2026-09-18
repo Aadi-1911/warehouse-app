@@ -249,7 +249,7 @@ Ground-truth rules derived from extensive stress-testing against the real busine
 
     **Visible in `GET /api/history` as a `PARTY_DEBIT` entry**, scoped by rule 104 like every other source in that feed. Unlike rule 105's `OrderBillingCorrection`, a debit has no old/new values to diff — it is a single new fact being recorded, not a revision — so its entry always states one amount, never a "→" transition. This is also the one debit-shaped entity in this codebase with a real `createdBy` relation to `User` (`FactoryDebit`/`FactoryPayment`/`PartyPayment` all use a bare, relation-less `createdById`): rule 104's `actorScope()` filters every History source through a Prisma relation, and `FactoryDebit` never needed one because it was never added to this feed. `PartyDebit` is, so it needed the relation the others don't have.
 
-107. **A Stock row at `qtySets = 0` is suppressed from every normal browsing surface, immediately and per-row.** Designed 2026-09-09, not yet built.
+107. **A Stock row at `qtySets = 0` is suppressed from every normal browsing surface, immediately and per-row.** Designed 2026-09-09. Built 2026-09-18 for New Order's colour picker, Live Stock's default view, and both Low Stock screens; Transfer's source picker was already compliant before this work; Pack Order was investigated and confirmed not applicable (see below).
 
     **What's suppressed, and where.** Any single Stock row — one Article + one Colour + one Location — sitting at `qtySets = 0` is excluded from Live Stock's default view, both Low Stock screens, and every picker that lists current stock (Transfer's source list, Pack Order, New Order). It is treated exactly as a combination that has never held stock: not shown greyed out, not shown at zero, simply absent.
 
@@ -260,6 +260,8 @@ Ground-truth rules derived from extensive stress-testing against the real busine
     **Independent of rule 56's low-stock threshold, and the two never interact.** A row at exactly 1 set still renders and still carries rule 56's red badge; a row at 0 never renders at all, so it can never carry a badge. The suppression rule is about existence on screen, rule 56 is about decoration of what's on screen.
 
     **A suppressed row is also excluded from search** — there is nothing to find, because nothing is there. (Rule 108 defines the one deliberate exception, and it operates at whole-Article level, not on individual zeroed rows.)
+
+    **Pack Order does not implement this rule, by design, not by omission.** It was named above as a "picker that lists current stock," but a 2026-09-18 investigation traced its actual code path end to end: Pack Order renders already-placed `OrderLineItem`s, never a browsable list of Stock rows, and its "Only Y in stock" shortfall number already collapses "a Stock row at 0" and "no Stock row for this bundle" into the identical displayed value before this rule could apply to either. There is nothing for this rule to suppress there, and suppressing the line itself would defeat the screen's purpose (a genuinely short line is exactly what it exists to surface).
 
 108. **An Article that is globally out of stock is tracked from the moment it dies, and auto-archives after a configurable threshold (default 60 days).** Designed 2026-09-09, not yet built.
 
