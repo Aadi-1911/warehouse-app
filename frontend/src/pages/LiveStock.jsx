@@ -94,9 +94,14 @@ export default function LiveStock() {
   //
   // Only rows with qtySets > 0 reach the archived view. "Archived AND still stocked" is the whole
   // point of that section — an archived article drained to zero is genuinely finished, and listing
-  // it would bury the ones that still need attention. The active view keeps every row it always
-  // had, zero-quantity ones included, so nothing about it changes.
-  const activeStock = filteredStock.filter((row) => row.productIsActive);
+  // it would bury the ones that still need attention.
+  //
+  // The active view now excludes qtySets === 0 rows too (rule 107, built 2026-09-18). A drained
+  // Colour/Location combination is suppressed the instant it hits zero rather than shown at 0 —
+  // GET /api/stock itself still returns the row (that endpoint is shared with screens rule 107
+  // doesn't name, like ArticlePricing/Home/BillOrderDetail, so it stays unfiltered), so this is
+  // where the suppression actually happens for this screen.
+  const activeStock = filteredStock.filter((row) => row.productIsActive && row.qtySets > 0);
   const archivedStock = filteredStock.filter((row) => !row.productIsActive && row.qtySets > 0);
 
   // Factory (outer) -> Article (nested) -> rows (rule 57), built fresh each render from

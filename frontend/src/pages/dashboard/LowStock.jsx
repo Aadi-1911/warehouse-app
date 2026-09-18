@@ -119,7 +119,12 @@ export default function LowStock() {
   // KPIs on the Overview page (stock value/sets/pieces), which correctly keep counting archived
   // stock as real value — this is an actionability question, not a valuation one. Live Stock's own
   // archived section is a separate consumer of the same listStock() call and is unaffected.
-  const lowRows = stock.filter((row) => row.qtySets <= LOW_STOCK_THRESHOLD && row.productIsActive);
+  //
+  // qtySets > 0 is required too (rule 107, built 2026-09-18) — a row drained to exactly zero is
+  // suppressed everywhere, not shown here as the "lowest" possible low-stock row. Independent of
+  // the threshold check above it: rule 56 (the <= LOW_STOCK_THRESHOLD badge) and rule 107
+  // (existence on screen at all) never interact, per rule 107's own text.
+  const lowRows = stock.filter((row) => row.qtySets > 0 && row.qtySets <= LOW_STOCK_THRESHOLD && row.productIsActive);
 
   // Factory -> Article -> rows, matching LiveStock's own convention (§5.5) — the one LiveStock's
   // comment explicitly hands this exact global view off to. productId (not the bare articleNo
