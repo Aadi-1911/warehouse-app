@@ -429,8 +429,41 @@ export default function Orders() {
                 {detail.order.gstApplicable && (
                   <div className="bill-pricing-line">
                     <span>GST ({Number(detail.order.gstPercent)}%)</span>
+                    {/* Derived from the UNROUNDED payable, not the stored one. Since rule 111
+                        (2026-09-19) actualPayable is rounded to the whole rupee, so the old
+                        `actualPayable − finalAmount` would quietly fold the rounding into the GST
+                        figure and report a rate that doesn't match gstPercent. Subtracting the
+                        adjustment back out first restores the real GST, and leaves the rounding to
+                        be shown as its own line below rather than hidden inside this one.
+                        `?? 0` covers orders billed before rule 111, whose adjustment is null and
+                        whose actualPayable was never rounded — for those this is unchanged. */}
                     <span>
-                      +{formatCurrency(Number(detail.order.actualPayable) - Number(detail.order.finalAmount))}
+                      +{formatCurrency(
+                        Number(detail.order.actualPayable) -
+                          Number(detail.order.roundingAdjustment ?? 0) -
+                          Number(detail.order.finalAmount)
+                      )}
+                    </span>
+                  </div>
+                )}
+                {/* Rule 111's rounding, shown only when it actually did something. Omitted entirely
+                    at exactly 0 (and for pre-rule-111 orders, where it is null) so the overwhelming
+                    majority of orders aren't given a meaningless "Rounding: ₹0" row. The sign is
+                    explicit in both directions because a party being rounded down reads very
+                    differently from being rounded up. */}
+                {Number(detail.order.roundingAdjustment ?? 0) !== 0 && (
+                  <div className="bill-pricing-line">
+                    <span>Rounding</span>
+                    {/* toFixed(2) rather than the shared formatCurrency, which is the only place on
+                        this screen that deviates from it. formatCurrency's toLocaleString('en-IN')
+                        defaults to 3 fraction digits, so a real adjustment of 0.1653 would render
+                        "₹0.165" — three decimals on a figure whose whole meaning is paise. This is
+                        always a sub-rupee value, so it gets the 2-decimal money precision a person
+                        actually reads it in; no thousands separator is needed for a value that
+                        cannot exceed ₹0.50. */}
+                    <span>
+                      {Number(detail.order.roundingAdjustment) > 0 ? '+' : '−'}₹
+                      {Math.abs(Number(detail.order.roundingAdjustment)).toFixed(2)}
                     </span>
                   </div>
                 )}
