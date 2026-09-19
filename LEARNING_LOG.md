@@ -1484,6 +1484,22 @@ Data integrity is confirmed fully intact. Delhi's entire transaction history for
 
 **No fix or data correction is needed. Investigation closed.** The underlying risk this incident exposed — local dev able to write directly to Production because `DATABASE_URL` isn't separated from `TEST_DATABASE_URL` — is the same one a database-separation effort is already in progress to close; this incident is a real-world instance of exactly that risk, not a new or separate problem requiring its own fix.
 
+### Rounding `actualPayable` silently corrupted the GST line that was derived from it (2026-09-19, rule 109)
+
+**(1) The original approach and why it seemed right.** Rule 109 only asked for one arithmetic change — round `Order.actualPayable` to the whole rupee and store the difference in a new `roundingAdjustment` column — plus one display change, a new "Rounding" line on the Owner Dashboard's expanded order row. Both are additive, and the backend change is three lines inside a single shared function. Nothing about that framing suggests any *existing* screen needs touching.
+
+**(2) What actually went wrong.** `dashboard/Orders.jsx` never stored a GST amount, because it never needed to — it rendered the GST line by *deriving* it: `actualPayable − finalAmount`. That identity holds only while `actualPayable` is the raw post-GST figure. The moment `actualPayable` became the rounded figure, the subtraction started returning GST *plus the rounding*, so an order with 5% GST on 29,348.414 would display "GST (5%) +₹1,467.586" when the real GST is ₹1,467.4207. The number is still wrong even though nothing errors, nothing logs, and the column it came from is correct — the breakdown just quietly stops matching its own stated percentage. It was caught by reading the consuming JSX before writing the new line, not by any test.
+
+**(3) How the real cause was diagnosed.** By asking what else reads the field whose *meaning* changed, rather than what else reads the field that was *added*. A grep for `roundingAdjustment` finds nothing pre-existing by definition — the column is new. The productive search was for `actualPayable` in the frontend, which surfaced the derivation immediately.
+
+**(4) The fix.** Subtract the adjustment back out before deriving: `actualPayable − roundingAdjustment − finalAmount`, with `?? 0` so pre-rule-109 orders (null adjustment, unrounded payable) evaluate exactly as they did before.
+
+**(5) Why that specific fix is correct.** It restores the *invariant the line was always asserting* — "this row shows the GST implied by gstPercent" — rather than patching the symptom. The alternatives are worse: storing a separate `gstAmount` column would add a fourth derived money field that can drift from the three beside it, and rounding `finalAmount` too (so the subtraction works again) would round one order twice and charge GST on an already-adjusted base. Subtracting the adjustment is the only option that leaves the rounding a single, isolated, final step and keeps every displayed component reconcilable against `preTaxAmount` and the two percentages.
+
+**The general lesson, which is the reason this is logged at all.** Adding a column is additive; *changing what an existing column means* is not, however small the diff looks. Any derived value computed from that column elsewhere silently changes meaning with it. Before changing a stored figure's definition, grep for the figure — not for the new thing — and read every consumer that does arithmetic on it. This is the same failure shape as a unit change (storing pieces where sets were assumed): the type checks, the code runs, and the output is wrong.
+
+**Footnote, two non-defects from the same task.** The `.5`-tie question was settled empirically rather than by reasoning: `Math.round` is half-up (matching Excel's `ROUND()`, not banker's), and a brute-force sweep of 11,809 mathematically-exact `.5` results — cross-checked with exact `BigInt` arithmetic — found zero cases where float64 misrepresented one, because `.5` is itself exactly representable in binary. So no epsilon correction was added, since no reachable case needs one. Separately, one full test run died mid-suite on Prisma `P1017 Server has closed the connection` against the Neon **test** branch pooler — infrastructure, not code; the identical suite passed 41/41 on an immediate re-run after restarting the backend and clearing the aborted run's leftover rows.
+
 ---
 
 ## Concepts
