@@ -152,7 +152,16 @@ async function main() {
   created.locationId = r.body.id;
   console.log('  location:', created.locationId, r.status);
 
-  r = await api('/api/parties', { method: 'POST', token: ownerToken, body: { name: `BCParty-${stamp}` } });
+  // `state` is REQUIRED by createParty (partyController.js, rule 105, added 2026-09-09) even
+  // though the column itself is nullable. This test predates that rule and sent name only, so
+  // setup 400'd here and every later step ran against an undefined partyId — the run died at the
+  // first use with "Cannot read properties of undefined", nowhere near the real cause. The value
+  // itself is arbitrary; it just has to be one of VALID_STATES.
+  r = await api('/api/parties', {
+    method: 'POST',
+    token: ownerToken,
+    body: { name: `BCParty-${stamp}`, state: 'MAHARASHTRA' },
+  });
   created.partyId = r.body.id;
   console.log('  party:', created.partyId, r.status);
 
