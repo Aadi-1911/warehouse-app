@@ -65,6 +65,11 @@ function orderDetailSelect(role) {
     preTaxAmount: true,
     finalAmount: true,
     actualPayable: true,
+    // Rule 111 (2026-09-19). Deliberately NOT role-gated, unlike billNo below: this is a component
+    // of the party-facing amount owed, the same category as preTaxAmount/finalAmount/actualPayable
+    // beside it, and carries no cost-side or margin information. Null on any order billed before
+    // rule 111, which every consumer must treat as "no rounding recorded", never as zero.
+    roundingAdjustment: true,
     ...(role === 'OWNER' ? { billNo: true } : {}),
     lineItems: { select: LINE_ITEM_SELECT },
   };
@@ -120,6 +125,10 @@ function orderDetailToResponse(o, role) {
     preTaxAmount: o.preTaxAmount,
     finalAmount: o.finalAmount,
     actualPayable: o.actualPayable,
+    // `?? null` rather than passed straight through, matching billNo's treatment below: an order
+    // billed before rule 111 has no stored value, and an explicit null is a clearer contract for
+    // the client than an absent key.
+    roundingAdjustment: o.roundingAdjustment ?? null,
     ...(role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
     lineItems: o.lineItems.map(lineItemToResponse),
   };
@@ -700,9 +709,13 @@ async function billOrder(req, res) {
   // Moved into utils/orderBillingAmounts.js on 2026-09-08 (rule 108) so the post-billing
   // correction endpoint computes these through the IDENTICAL code path rather than a second copy
   // of the same two lines — see that file's own header for why money arithmetic in particular
-  // gets the shared-function treatment. Behaviour here is unchanged: same operands, same order,
-  // same absence of rounding.
-  const { finalAmount, actualPayable } = computeBillingAmounts({
+  // gets the shared-function treatment.
+  //
+  // actualPayable comes back already rounded to the whole rupee as of 2026-09-19 (rule 111), with
+  // roundingAdjustment carrying the delta so the rounding is stored as a fact rather than silently
+  // absorbed. finalAmount is deliberately still raw — see that function's header for why only the
+  // final payable figure is rounded.
+  const { finalAmount, actualPayable, roundingAdjustment } = computeBillingAmounts({
     preTaxAmount,
     discountApplicable,
     discountPercent,
@@ -882,6 +895,11 @@ async function billOrder(req, res) {
           preTaxAmount,
           finalAmount,
           actualPayable,
+          // Written in the same statement as the rounded actualPayable it describes, never a
+          // follow-up write — the two are one fact (rule 111) and an order carrying a rounded
+          // figure with no record of the rounding would be exactly the silent absorption this
+          // field exists to prevent.
+          roundingAdjustment,
           // Reference tag only — null when not supplied, and correctable afterwards via
           // PATCH /api/orders/:id/bill-no (unlike every money field above, which rule 23 locks
           // for good the moment this write lands).
@@ -1518,6 +1536,10 @@ async function correctOrderBilling(req, res) {
       gstPercent: true,
       finalAmount: true,
       actualPayable: true,
+      // Needed purely to copy into the correction row's oldRoundingAdjustment below. Legitimately
+      // null on any order billed before rule 111 (2026-09-19), which is why nothing here treats a
+      // null as an error or coerces it to 0 — see that column's own schema comment.
+      roundingAdjustment: true,
     },
   });
   if (!order) {
@@ -1556,7 +1578,19 @@ async function correctOrderBilling(req, res) {
   // The SAME function billOrder() calls — not a second copy of the formula. See
   // utils/orderBillingAmounts.js's header for why this specific calculation is shared rather than
   // duplicated.
-  const { finalAmount, actualPayable } = computeBillingAmounts({
+  //
+  // DELIBERATE AND STATED (rule 111, 2026-09-19): because this is the shared function, a correction
+  // applied to an order that was BILLED BEFORE rounding shipped will now round that order's
+  // actualPayable, even though its original billing did not. The order's stored figure therefore
+  // changes from (say) 45695.9538 to 45696 as a side effect of correcting its discount or GST. This
+  // is intended, not an oversight: the alternative is a per-order "was this billed pre-rule-111?"
+  // branch that would keep writing unrounded figures indefinitely, leaving the correction endpoint
+  // permanently able to produce amounts the billing endpoint no longer can. The correction row
+  // records both sides (oldActualPayable unrounded, newActualPayable rounded, with
+  // oldRoundingAdjustment null and newRoundingAdjustment real), so the transition is visible in the
+  // audit trail rather than silent. Rule 111 stays forward-only for orders nobody corrects — an
+  // untouched pre-rule-111 order is never rewritten by anything.
+  const { finalAmount, actualPayable, roundingAdjustment } = computeBillingAmounts({
     preTaxAmount,
     discountApplicable,
     discountPercent,
@@ -1635,6 +1669,11 @@ async function correctOrderBilling(req, res) {
         oldGstPercent: order.gstPercent,
         oldFinalAmount: order.finalAmount,
         oldActualPayable: order.actualPayable,
+        // Copied through as-is, null included: a null here is the real, meaningful record that the
+        // order's previous billing predates rule 111 and was stored unrounded. Paired with a
+        // non-null newRoundingAdjustment below, this row is what makes that one-time transition
+        // legible afterwards.
+        oldRoundingAdjustment: order.roundingAdjustment,
         newDiscountApplicable: discountApplicable,
         // Percent stored null whenever its own flag is false, matching billOrder's own write
         // exactly — so a stray percent in a request body can never later read as "applied".
@@ -1643,6 +1682,7 @@ async function correctOrderBilling(req, res) {
         newGstPercent: gstApplicable ? gstPercent : null,
         newFinalAmount: finalAmount,
         newActualPayable: actualPayable,
+        newRoundingAdjustment: roundingAdjustment,
         reason: storedReason,
         note: note || null,
         correctedById: req.user.id,
@@ -1656,10 +1696,14 @@ async function correctOrderBilling(req, res) {
         discountPercent: discountApplicable ? discountPercent : null,
         gstApplicable,
         gstPercent: gstApplicable ? gstPercent : null,
-        // preTaxAmount is deliberately absent — see this handler's header. Only the two derived
-        // figures move, and both were computed from the order's own unchanged pre-tax amount.
+        // preTaxAmount is deliberately absent — see this handler's header. Only the derived
+        // figures move, and all were computed from the order's own unchanged pre-tax amount.
         finalAmount,
         actualPayable,
+        // Overwritten on every correction, including from null on a pre-rule-111 order — the
+        // order's live columns always describe its CURRENT billing, and the previous value is
+        // preserved in the correction row written immediately above, not here.
+        roundingAdjustment,
       },
     });
 
