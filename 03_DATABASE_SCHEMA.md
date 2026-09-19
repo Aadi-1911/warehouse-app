@@ -686,8 +686,19 @@ model Order {
   gstApplicable      Boolean @default(false)
   gstPercent         Decimal? // percent (e.g. 18 means 18%) — only meaningful when gstApplicable is true
   preTaxAmount       Decimal? // the order's billed total before discount/GST — qtySetsPacked-based (rule 101), not qtySetsRequested
-  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST
-  actualPayable      Decimal? // finalAmount after GST is applied — the real amount owed, never trusted from the client
+  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST. Deliberately left UNROUNDED (rule 111) — it is an intermediate, and rounding it too would round one order twice.
+  actualPayable      Decimal? // finalAmount after GST, THEN rounded to the nearest whole rupee (rule 111, 2026-09-19) — the real amount owed, never trusted from the client
+  // Rule 111 (2026-09-19). The signed difference (rounded actualPayable − the raw figure the
+  // percentages produced): positive when the party was rounded up, negative when rounded down,
+  // and exactly 0 when the raw figure was already whole. Stored so the rounding is an explicit,
+  // auditable fact rather than an unexplained gap between the percentages and the amount owed —
+  // `actualPayable − roundingAdjustment` recovers the raw figure, which is otherwise
+  // unrecoverable once the rounded value is written over it.
+  //
+  // 0 and null are NOT interchangeable: 0 means "rounded, by nothing", null means no rounding was
+  // ever applied — every order billed before 2026-09-19 (rule 111 is forward-only, with no
+  // backfill). Coercing null to 0 asserts a fact that was never recorded.
+  roundingAdjustment Decimal?
 
   lineItems   OrderLineItem[]
   adjustments OrderAdjustment[]
@@ -728,6 +739,57 @@ model OrderAdjustment {
   oldValue    String
   newValue    String
   reason      OrderAdjustmentReason? // nullable (2026-08-17) — rule 65: structured reason, not free text, but only REQUIRED at the application layer when this row represents a genuine correction (quantity reduced, cancelled, return, miscalculation, other). A routine forward status transition (Placed → Packed, Billed → Shipped) is normal progress, not a correction, and must not be forced into one of the five correction categories — those rows leave reason null.
+}
+
+model OrderBillingCorrection {
+  // Rule 105 (2026-09-08) — revises discount/GST on an ALREADY-BILLED order, the named exception
+  // to rules 23 and 101. OWNER + PIN always. *(This block was added to this doc on 2026-09-19
+  // alongside rule 111's two new columns; the model itself has existed in schema.prisma since
+  // 2026-09-08 and was simply never documented here.)*
+  //
+  // WHY THE old*/new* COLUMNS EXIST AT ALL, when TransactionCorrection/TransferCorrection have no
+  // equivalent: those two leave the original row untouched and link it to a replacement, so their
+  // "before" is still readable. There is no such thing as a replacement Order, so this correction
+  // UPDATEs Order in place — and this row then becomes the ONLY surviving record of what the order
+  // was billed at beforehand. Without these columns, the write that needs auditing would destroy
+  // its own audit trail.
+  id            String   @id @default(cuid())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id])
+  // Deliberately NOT @unique: corrections genuinely stack (add GST retroactively, then fix the
+  // rate), and each row records its own old → new delta.
+
+  oldDiscountApplicable Boolean
+  oldDiscountPercent    Decimal?
+  oldGstApplicable      Boolean
+  oldGstPercent         Decimal?
+  oldFinalAmount        Decimal?
+  oldActualPayable      Decimal?
+  // Rule 111 (2026-09-19). Null here carries real meaning and must not be read as 0: it says the
+  // order's previous billing predates rule 111 and was stored UNROUNDED. Paired with a non-null
+  // newRoundingAdjustment below, this row is what makes that one-time transition legible — see
+  // rule 111's "forward-only, with one deliberate and stated exception".
+  oldRoundingAdjustment Decimal?
+
+  newDiscountApplicable Boolean
+  newDiscountPercent    Decimal?
+  newGstApplicable      Boolean
+  newGstPercent         Decimal?
+  newFinalAmount        Decimal
+  newActualPayable      Decimal  // rounded to the whole rupee since rule 111, same as Order.actualPayable
+  // Always a real value going forward (every correction now rounds). Nullable anyway, unlike its
+  // two non-null siblings above, for a migration reason rather than a modelling one: correction
+  // rows already existed when this column was added, and backfilling them would mean inventing a
+  // rounding figure for a write that provably never rounded.
+  newRoundingAdjustment Decimal?
+
+  reason        OrderBillingCorrectionReason
+  note          String?  // required at the app layer only when reason == OTHER
+  correctedById String
+  correctedBy   User     @relation(fields: [correctedById], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([orderId])
 }
 ```
 
