@@ -1,4 +1,4 @@
-// Real, persisted test for rule 111 — whole-rupee rounding of Order.actualPayable, with the
+// Real, persisted test for rule 109 — whole-rupee rounding of Order.actualPayable, with the
 // rounding recorded explicitly in Order.roundingAdjustment rather than silently absorbed. Same file
 // convention as test-order-billing-correction.mjs / test-transfer-idempotency.mjs (flat .mjs under
 // backend/, refuse-to-fall-back TEST_DATABASE_URL guard, convergent FK-safe cleanup).
@@ -7,7 +7,7 @@
 // every assertion compares against a figure worked out independently of the code under test. If the
 // expectations called computeBillingAmounts() they would agree with a broken implementation by
 // construction, which for money arithmetic is worse than no test at all. The values come from the
-// plain arithmetic rule 111 defines — discount off pre-tax, GST on the post-discount figure, then
+// plain arithmetic rule 109 defines — discount off pre-tax, GST on the post-discount figure, then
 // Math.round to the rupee — e.g. 46320 −6.045% = 43519.956, +5% = 45695.9538, rounds to 45696 with
 // an adjustment of +0.0462. That case is not invented: it is the exact shape of a real Production
 // order (cmu3rbshr, Arora Garments), reproduced here.
@@ -26,7 +26,7 @@
 // TEST_DATABASE_URL and refuses to start if that variable is unset.
 //
 // This file makes its own direct Prisma queries (reading the stored Decimal columns back is the
-// whole point, and scenario E has to WRITE a pre-rule-111 row the current code can no longer
+// whole point, and scenario E has to WRITE a pre-rule-109 row the current code can no longer
 // produce), so it applies the same refuse-to-fall-back guard before any @prisma/client import.
 const dotenv = await import('dotenv');
 dotenv.config({ quiet: true });
@@ -202,7 +202,7 @@ async function makeBilledOrder(ownerToken, stamp, label, { sellingPrice, qtySets
 }
 
 // Reads the columns straight out of Postgres rather than trusting the API response — the stored
-// value is the thing rule 111 is actually about.
+// value is the thing rule 109 is actually about.
 async function storedBilling(orderId) {
   const p = await db();
   const row = await p.order.findUnique({
@@ -241,7 +241,7 @@ async function main() {
 
   // --- A: control. GST only, no discount, raw figure already whole. -------------------------
   // 2000 + 5% = 2100 exactly. Nothing to round, so the adjustment must be exactly 0 — NOT null,
-  // which would mean "no rounding was recorded" and is reserved for pre-rule-111 orders.
+  // which would mean "no rounding was recorded" and is reserved for pre-rule-109 orders.
   console.log('\n=== A. Control: GST only, lands cleanly (2000 +5% = 2100) ===');
   const a = await makeBilledOrder(ownerToken, stamp, 'A', {
     sellingPrice: 200, qtySets: 10, discountApplicable: false, discountPercent: null, gstApplicable: true, gstPercent: 5,
@@ -330,7 +330,7 @@ async function main() {
   check('D audit row: newActualPayable 2031', Number(dCorrection.newActualPayable) === 2031, `got ${dCorrection.newActualPayable}`);
   check('D audit row: newRoundingAdjustment +0.3', Number(dCorrection.newRoundingAdjustment) === 0.3, `got ${dCorrection.newRoundingAdjustment}`);
 
-  // --- E: correction on a PRE-RULE-111 order. ------------------------------------------------
+  // --- E: correction on a PRE-RULE-109 order. ------------------------------------------------
   // The current code can no longer produce an unrounded billed order, so the row is written
   // directly to recreate the real Production shape (order cmu3rbshr: finalAmount 43519.956,
   // actualPayable 45695.9538, roundingAdjustment null). This is a deliberate test fixture, not a
@@ -348,7 +348,7 @@ async function main() {
   });
   const eBefore = await storedBilling(e.orderId);
   check('E fixture: actualPayable is unrounded 45695.9538', eBefore.actualPayable === 45695.9538, `got ${eBefore.actualPayable}`);
-  check('E fixture: roundingAdjustment is null (pre-rule-111)', eBefore.roundingAdjustment === null, `got ${eBefore.roundingAdjustment}`);
+  check('E fixture: roundingAdjustment is null (pre-rule-109)', eBefore.roundingAdjustment === null, `got ${eBefore.roundingAdjustment}`);
 
   r = await api(`/api/orders/${e.orderId}/billing-correction`, {
     method: 'PATCH',
@@ -367,10 +367,10 @@ async function main() {
   check('E audit row: newRoundingAdjustment +0.34812', Number(eCorrection.newRoundingAdjustment) === 0.34812, `got ${eCorrection.newRoundingAdjustment}`);
 
   // --- F: forward-only, verified rather than asserted. ---------------------------------------
-  // A second pre-rule-111 row that NOTHING corrects. Real billing and a real correction both run
+  // A second pre-rule-109 row that NOTHING corrects. Real billing and a real correction both run
   // against other orders afterwards; this row must come back byte-identical. A rule that only
   // claimed to be forward-only would pass every test above and still fail this one.
-  console.log('\n=== F. Forward-only: an untouched pre-rule-111 order is never rewritten ===');
+  console.log('\n=== F. Forward-only: an untouched pre-rule-109 order is never rewritten ===');
   const f = await makeBilledOrder(ownerToken, stamp, 'F', {
     sellingPrice: 4632, qtySets: 10, discountApplicable: true, discountPercent: 6.045, gstApplicable: true, gstPercent: 5,
   });

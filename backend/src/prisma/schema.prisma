@@ -651,7 +651,7 @@ model OrderBillingCorrection {
   // Null for two genuinely different reasons, and the distinction is not recoverable from this
   // column alone (same limitation the other old* columns already carry): an order billed before
   // rule 101 (2026-08-25) has no billing snapshot at all, and an order billed between then and
-  // rule 111 (2026-09-19) has a real but UNROUNDED actualPayable that predates this field. Both
+  // rule 109 (2026-09-19) has a real but UNROUNDED actualPayable that predates this field. Both
   // legitimately read null here, and forcing a 0 would fabricate a "rounding of exactly zero was
   // applied" fact that was never recorded.
   oldRoundingAdjustment Decimal?
@@ -667,7 +667,7 @@ model OrderBillingCorrection {
   newFinalAmount        Decimal
   newActualPayable      Decimal
   // The rounding applied by THIS correction — always a real computed value going forward, since
-  // every correction now rounds (rule 111). Nullable anyway, unlike its newFinalAmount/
+  // every correction now rounds (rule 109). Nullable anyway, unlike its newFinalAmount/
   // newActualPayable siblings, for a migration reason rather than a modelling one: correction rows
   // already existed when this column was added, and backfilling them would mean inventing a
   // rounding figure for a write that provably never rounded. Those pre-2026-09-19 rows keep null;
@@ -774,11 +774,11 @@ model Order {
   gstApplicable      Boolean @default(false)
   gstPercent         Decimal? // percent (e.g. 18 means 18%) — only meaningful when gstApplicable is true
   preTaxAmount       Decimal? // the order's billed total before discount/GST — qtySetsPacked-based (rule 101), not qtySetsRequested
-  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST — deliberately UNROUNDED (rule 111), see roundingAdjustment
-  actualPayable      Decimal? // finalAmount after GST, THEN rounded to the nearest whole rupee (rule 111, 2026-09-19) — the real amount owed, never trusted from the client
+  finalAmount        Decimal? // preTaxAmount after discount is applied, before GST — deliberately UNROUNDED (rule 109), see roundingAdjustment
+  actualPayable      Decimal? // finalAmount after GST, THEN rounded to the nearest whole rupee (rule 109, 2026-09-19) — the real amount owed, never trusted from the client
   // The difference between the rounded actualPayable actually stored above and the raw unrounded
   // figure the discount/GST arithmetic produced — positive when rounding UP, negative when rounding
-  // DOWN, and exactly 0 when the raw figure was already whole. Added 2026-09-19 with rule 111.
+  // DOWN, and exactly 0 when the raw figure was already whole. Added 2026-09-19 with rule 109.
   //
   // Stored rather than left implicit so the rounding is an explicit, auditable fact instead of a
   // silently-absorbed discrepancy: `actualPayable - roundingAdjustment` recovers the exact raw
@@ -789,7 +789,7 @@ model Order {
   //
   // Nullable on the same lifecycle as finalAmount/actualPayable above: null until the order is
   // billed, and permanently null for any order billed BEFORE 2026-09-19, which was stored unrounded
-  // and is deliberately left that way (rule 111 is forward-only — no backfill, no retroactive
+  // and is deliberately left that way (rule 109 is forward-only — no backfill, no retroactive
   // rewrite of what a party was actually charged).
   roundingAdjustment Decimal?
 

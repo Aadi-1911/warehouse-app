@@ -429,13 +429,13 @@ export default function Orders() {
                 {detail.order.gstApplicable && (
                   <div className="bill-pricing-line">
                     <span>GST ({Number(detail.order.gstPercent)}%)</span>
-                    {/* Derived from the UNROUNDED payable, not the stored one. Since rule 111
+                    {/* Derived from the UNROUNDED payable, not the stored one. Since rule 109
                         (2026-09-19) actualPayable is rounded to the whole rupee, so the old
                         `actualPayable − finalAmount` would quietly fold the rounding into the GST
                         figure and report a rate that doesn't match gstPercent. Subtracting the
                         adjustment back out first restores the real GST, and leaves the rounding to
                         be shown as its own line below rather than hidden inside this one.
-                        `?? 0` covers orders billed before rule 111, whose adjustment is null and
+                        `?? 0` covers orders billed before rule 109, whose adjustment is null and
                         whose actualPayable was never rounded — for those this is unchanged. */}
                     <span>
                       +{formatCurrency(
@@ -446,8 +446,8 @@ export default function Orders() {
                     </span>
                   </div>
                 )}
-                {/* Rule 111's rounding, shown only when it actually did something. Omitted entirely
-                    at exactly 0 (and for pre-rule-111 orders, where it is null) so the overwhelming
+                {/* Rule 109's rounding, shown only when it actually did something. Omitted entirely
+                    at exactly 0 (and for pre-rule-109 orders, where it is null) so the overwhelming
                     majority of orders aren't given a meaningless "Rounding: ₹0" row. The sign is
                     explicit in both directions because a party being rounded down reads very
                     differently from being rounded up. */}

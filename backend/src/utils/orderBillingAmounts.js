@@ -14,7 +14,7 @@
 // derived figures. Keeping it pure is what makes it directly unit-testable without a database and
 // what stops it quietly acquiring a second responsibility later.
 //
-// ROUNDING: actualPayable IS rounded here, to the nearest whole rupee, as of 2026-09-19 (rule 111).
+// ROUNDING: actualPayable IS rounded here, to the nearest whole rupee, as of 2026-09-19 (rule 109).
 // This reverses what this header said between 2026-09-08 and that date ("rounding is deliberately
 // absent... a separate decision needing its own task"). That decision has since been made and this
 // is it — the business rounds these figures by hand anyway, so the app now records the rounding
@@ -56,10 +56,10 @@ function computeBillingAmounts({ preTaxAmount, discountApplicable, discountPerce
 
   // Step 2 — GST on the POST-discount amount. Reading `finalAmount` here, never `preTaxAmount`,
   // is the whole substance of rule 101's ordering requirement. Still the RAW figure at this point;
-  // rule 101's arithmetic is unchanged and rule 111's rounding applies strictly after it.
+  // rule 101's arithmetic is unchanged and rule 109's rounding applies strictly after it.
   const rawActualPayable = gstApplicable ? finalAmount + (finalAmount * gstPercent) / 100 : finalAmount;
 
-  // Step 3 — rule 111. Rounded to the nearest whole rupee, with the delta kept alongside rather
+  // Step 3 — rule 109. Rounded to the nearest whole rupee, with the delta kept alongside rather
   // than discarded. Subtracting in this direction (rounded - raw) makes the sign read the way a
   // person would describe it: positive means the party was rounded UP, negative means down.
   const actualPayable = Math.round(rawActualPayable);

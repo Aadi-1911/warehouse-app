@@ -65,10 +65,10 @@ function orderDetailSelect(role) {
     preTaxAmount: true,
     finalAmount: true,
     actualPayable: true,
-    // Rule 111 (2026-09-19). Deliberately NOT role-gated, unlike billNo below: this is a component
+    // Rule 109 (2026-09-19). Deliberately NOT role-gated, unlike billNo below: this is a component
     // of the party-facing amount owed, the same category as preTaxAmount/finalAmount/actualPayable
     // beside it, and carries no cost-side or margin information. Null on any order billed before
-    // rule 111, which every consumer must treat as "no rounding recorded", never as zero.
+    // rule 109, which every consumer must treat as "no rounding recorded", never as zero.
     roundingAdjustment: true,
     ...(role === 'OWNER' ? { billNo: true } : {}),
     lineItems: { select: LINE_ITEM_SELECT },
@@ -126,7 +126,7 @@ function orderDetailToResponse(o, role) {
     finalAmount: o.finalAmount,
     actualPayable: o.actualPayable,
     // `?? null` rather than passed straight through, matching billNo's treatment below: an order
-    // billed before rule 111 has no stored value, and an explicit null is a clearer contract for
+    // billed before rule 109 has no stored value, and an explicit null is a clearer contract for
     // the client than an absent key.
     roundingAdjustment: o.roundingAdjustment ?? null,
     ...(role === 'OWNER' ? { billNo: o.billNo ?? null } : {}),
@@ -711,7 +711,7 @@ async function billOrder(req, res) {
   // of the same two lines — see that file's own header for why money arithmetic in particular
   // gets the shared-function treatment.
   //
-  // actualPayable comes back already rounded to the whole rupee as of 2026-09-19 (rule 111), with
+  // actualPayable comes back already rounded to the whole rupee as of 2026-09-19 (rule 109), with
   // roundingAdjustment carrying the delta so the rounding is stored as a fact rather than silently
   // absorbed. finalAmount is deliberately still raw — see that function's header for why only the
   // final payable figure is rounded.
@@ -896,7 +896,7 @@ async function billOrder(req, res) {
           finalAmount,
           actualPayable,
           // Written in the same statement as the rounded actualPayable it describes, never a
-          // follow-up write — the two are one fact (rule 111) and an order carrying a rounded
+          // follow-up write — the two are one fact (rule 109) and an order carrying a rounded
           // figure with no record of the rounding would be exactly the silent absorption this
           // field exists to prevent.
           roundingAdjustment,
@@ -1537,7 +1537,7 @@ async function correctOrderBilling(req, res) {
       finalAmount: true,
       actualPayable: true,
       // Needed purely to copy into the correction row's oldRoundingAdjustment below. Legitimately
-      // null on any order billed before rule 111 (2026-09-19), which is why nothing here treats a
+      // null on any order billed before rule 109 (2026-09-19), which is why nothing here treats a
       // null as an error or coerces it to 0 — see that column's own schema comment.
       roundingAdjustment: true,
     },
@@ -1579,17 +1579,17 @@ async function correctOrderBilling(req, res) {
   // utils/orderBillingAmounts.js's header for why this specific calculation is shared rather than
   // duplicated.
   //
-  // DELIBERATE AND STATED (rule 111, 2026-09-19): because this is the shared function, a correction
+  // DELIBERATE AND STATED (rule 109, 2026-09-19): because this is the shared function, a correction
   // applied to an order that was BILLED BEFORE rounding shipped will now round that order's
   // actualPayable, even though its original billing did not. The order's stored figure therefore
   // changes from (say) 45695.9538 to 45696 as a side effect of correcting its discount or GST. This
-  // is intended, not an oversight: the alternative is a per-order "was this billed pre-rule-111?"
+  // is intended, not an oversight: the alternative is a per-order "was this billed pre-rule-109?"
   // branch that would keep writing unrounded figures indefinitely, leaving the correction endpoint
   // permanently able to produce amounts the billing endpoint no longer can. The correction row
   // records both sides (oldActualPayable unrounded, newActualPayable rounded, with
   // oldRoundingAdjustment null and newRoundingAdjustment real), so the transition is visible in the
-  // audit trail rather than silent. Rule 111 stays forward-only for orders nobody corrects — an
-  // untouched pre-rule-111 order is never rewritten by anything.
+  // audit trail rather than silent. Rule 109 stays forward-only for orders nobody corrects — an
+  // untouched pre-rule-109 order is never rewritten by anything.
   const { finalAmount, actualPayable, roundingAdjustment } = computeBillingAmounts({
     preTaxAmount,
     discountApplicable,
@@ -1670,7 +1670,7 @@ async function correctOrderBilling(req, res) {
         oldFinalAmount: order.finalAmount,
         oldActualPayable: order.actualPayable,
         // Copied through as-is, null included: a null here is the real, meaningful record that the
-        // order's previous billing predates rule 111 and was stored unrounded. Paired with a
+        // order's previous billing predates rule 109 and was stored unrounded. Paired with a
         // non-null newRoundingAdjustment below, this row is what makes that one-time transition
         // legible afterwards.
         oldRoundingAdjustment: order.roundingAdjustment,
@@ -1700,7 +1700,7 @@ async function correctOrderBilling(req, res) {
         // figures move, and all were computed from the order's own unchanged pre-tax amount.
         finalAmount,
         actualPayable,
-        // Overwritten on every correction, including from null on a pre-rule-111 order — the
+        // Overwritten on every correction, including from null on a pre-rule-109 order — the
         // order's live columns always describe its CURRENT billing, and the previous value is
         // preserved in the correction row written immediately above, not here.
         roundingAdjustment,
