@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { resolvePrice, findLocationPrice } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -33,6 +34,16 @@ async function listStock(req, res) {
               factoryId: true,
               isActive: true,
               sellingPrice: true,
+              // Rule 111 (2026-09-23). Unfiltered — this endpoint returns rows for every location
+              // at once, so the per-row match happens in JS below.
+              //
+              // costPrice is deliberately absent from this nested select, at every role. GET
+              // /api/stock is ANY-ROLE, so selecting LocationPrice.costPrice here would leak cost
+              // price to STAFF through the relation even though this file has always been careful
+              // never to select Product.costPrice itself. Same never-fetch discipline, one level
+              // deeper — see productController.js's productSelect header.
+              hasLocationPricing: true,
+              locationPrices: { select: { locationId: true, sellingPrice: true } },
               factory: { select: { name: true } },
             },
           },
@@ -88,7 +99,21 @@ async function listStock(req, res) {
     productArticleNo: s.bundle.product.articleNo,
     productName: s.bundle.product.name,
     productIsActive: s.bundle.product.isActive,
-    productSellingPrice: s.bundle.product.sellingPrice,
+    // Rule 111 (2026-09-23) — resolved against THIS row's own location, and this is the one
+    // selling-price site in the codebase that is NOT pinned to Gurgaon. The difference is real,
+    // not an inconsistency: a Stock row IS a per-bundle-per-location quantity, so it already knows
+    // the location its price question is about. An OrderLineItem never does (its fulfillment
+    // location isn't chosen until billing), which is the entire reason the Order/Return path has
+    // to name a fixed pricing location instead — see utils/locationPricing.js.
+    //
+    // So this field answers "what does this pile of stock, here, sell for", which is exactly what
+    // the Owner Dashboard's Live Stock page asks of it. It is NOT the price an order for this
+    // article would be written at, and nothing should treat it as such.
+    productSellingPrice: resolvePrice({
+      product: s.bundle.product,
+      locationPrice: findLocationPrice(s.bundle.product.locationPrices, s.locationId),
+      field: 'sellingPrice',
+    }),
     factoryId: s.bundle.product.factoryId,
     factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,

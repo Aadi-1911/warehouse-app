@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { revenueForPeriod, VALID_PERIODS } = require('../utils/revenue');
 const { orderValueOf } = require('../utils/orderValue');
+const { resolvePrice, findLocationPrice } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -36,14 +37,33 @@ async function getOverview(req, res) {
 
   // Every Stock row with the product data both the value and the piece conversion need. One read
   // serves three KPIs (stock value, sets, pieces) rather than three passes over the same table.
+  //
+  // locationId was NOT selected here before 2026-09-23 — this KPI is a single global total, so it
+  // had no reason to care which location a row sat at. Rule 111 changed that: cost price is now
+  // location-dependent, so the per-row location is needed to resolve each row's cost even though
+  // the output is still one blended figure.
+  //
+  // Verified before wiring rather than assumed: this loop was ALREADY iterating Stock rows, not
+  // Products, so the granularity was already correct and only the location field was missing. Had
+  // it been grouping by product first, resolving once per article would have quietly used one
+  // location's cost for stock sitting at another.
   const stockRows = await prisma.stock.findMany({
     select: {
       bundleId: true,
+      locationId: true,
       qtySets: true,
       bundle: {
         select: {
           product: {
-            select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } },
+            select: {
+              isKids: true,
+              costPrice: true,
+              // Unfiltered — this read spans every location at once, so the per-row match happens
+              // in JS via findLocationPrice, the same shape utils/locationRevenue.js uses.
+              hasLocationPricing: true,
+              locationPrices: { select: { locationId: true, costPrice: true, sellingPrice: true } },
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
           },
         },
       },
@@ -64,7 +84,18 @@ async function getOverview(req, res) {
     // costPrice is PER PIECE (confirmed 2026-08-19) — the same basis rule 81 uses for the factory
     // payable, so the two owner-facing money figures agree about what a unit of stock is worth.
     // A null costPrice (article still pending-price) contributes 0 rather than being guessed at.
-    const unitCost = product.costPrice != null ? Number(product.costPrice) : 0;
+    //
+    // Resolved per Stock row against that row's own location (rule 111, 2026-09-23), NOT once per
+    // article: the same bundle can sit at two locations with two genuinely different costs, and
+    // this total has to add up the real value of each pile rather than applying one of the two
+    // prices to both. Identical to product.costPrice for every article with hasLocationPricing
+    // false, so this KPI does not move for any existing data.
+    const resolvedCost = resolvePrice({
+      product,
+      locationPrice: findLocationPrice(product.locationPrices, row.locationId),
+      field: 'costPrice',
+    });
+    const unitCost = resolvedCost != null ? Number(resolvedCost) : 0;
 
     setsInStock += row.qtySets;
     piecesInStock += row.qtySets * piecesPerSet;

@@ -5,6 +5,7 @@ const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
 const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
 const { computeBillingAmounts } = require('../utils/orderBillingAmounts');
+const { resolvePrice, findLocationPrice, getOrderPricingLocationId } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -170,29 +171,71 @@ async function createOrder(req, res) {
     return sendError(res, 409, 'PARTY_ARCHIVED', `Party "${party.name}" is archived and cannot receive new orders`);
   }
 
+  // The single location every Order prices against (rule 111, 2026-09-23) — Gurgaon, resolved by
+  // name, NOT wherever this order eventually bills from. An OrderLineItem has no location at this
+  // point and structurally cannot: the fulfillment location is the owner's explicit choice at
+  // BILLING time, one or two status transitions after this snapshot is taken. See
+  // utils/locationPricing.js for the full reasoning, including why re-reading the price at billing
+  // was rejected outright (it would break priceAtOrder's whole guarantee).
+  //
+  // Null when no Gurgaon Location row exists at all, which makes every lookup below miss and every
+  // price fall back to Product.sellingPrice — i.e. exactly the pre-rule-111 behaviour.
+  const pricingLocationId = await getOrderPricingLocationId(prisma);
+
   // One batch fetch for every bundle referenced, rather than one query per line item — same
   // "resolve everything, then validate" shape as the rest of this check, and avoids N+1 queries
   // for a multi-line order.
   const bundleIds = [...new Set(lineItems.map((li) => li.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+    select: {
+      id: true,
+      product: {
+        select: {
+          sellingPrice: true,
+          name: true,
+          // Narrowed to the pricing location in Postgres, the same shape transactionController
+          // uses. `where: { locationId: null }` would be a type error, so the filter is only
+          // applied when there is a real id to filter by; with no Gurgaon row the array comes back
+          // holding every location's override and findLocationPrice(…, null) then matches none of
+          // them — still the correct fallback, just decided in JS instead of in the query.
+          hasLocationPricing: true,
+          locationPrices: {
+            ...(pricingLocationId ? { where: { locationId: pricingLocationId } } : {}),
+            select: { locationId: true, sellingPrice: true },
+          },
+        },
+      },
+    },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
-  // priceAtOrder is computed HERE, server-side, from Product.sellingPrice at this exact
+  // priceAtOrder is computed HERE, server-side, from the selling price in effect at this exact
   // moment — never trusted from the request body, same principle as Transaction.
   // costPriceSnapshot. Resolved fully before any DB write, so a bad bundleId or an unpriced
   // product anywhere in the array rejects the whole request with zero rows created.
   // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, for
   // exactly the same reason — a later rename must not rewrite what this order said it was for.
+  //
+  // "The selling price in effect" is Gurgaon's override if the article has one, else the article's
+  // own sellingPrice (rule 111). Unchanged for every article with hasLocationPricing false.
+  //
+  // The UNPRICED_PRODUCT check below deliberately tests the RESOLVED price, not the base one: if
+  // an opted-in article somehow resolves to null it is genuinely unsellable and must be rejected
+  // here rather than writing a null priceAtOrder into a NOT NULL column and failing as a raw
+  // Prisma error several lines later.
   const resolvedLineItems = [];
   for (const li of lineItems) {
     const bundle = bundleById.get(li.bundleId);
     if (!bundle) {
       return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${li.bundleId}`);
     }
-    if (bundle.product.sellingPrice == null) {
+    const priceAtOrder = resolvePrice({
+      product: bundle.product,
+      locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
+      field: 'sellingPrice',
+    });
+    if (priceAtOrder == null) {
       return sendError(
         res,
         400,
@@ -203,7 +246,7 @@ async function createOrder(req, res) {
     resolvedLineItems.push({
       bundleId: li.bundleId,
       qtySetsRequested: li.qtySetsRequested,
-      priceAtOrder: bundle.product.sellingPrice,
+      priceAtOrder,
       productNameSnapshot: bundle.product.name,
     });
   }
@@ -1180,17 +1223,36 @@ async function updateOrderLines(req, res) {
     }
   }
 
-  // priceAtOrder for a new line is resolved HERE, from Product.sellingPrice at this exact moment
-  // — never trusted from the request body, same principle createOrder already applies.
+  // priceAtOrder for a new line is resolved HERE, from the selling price in effect at this exact
+  // moment — never trusted from the request body, same principle createOrder already applies.
   // productNameSnapshot (2026-08-28) rides along on the identical read, same as createOrder:
   // a line added to an existing order is still a NEW line, so it snapshots the name as of now,
   // not as of whenever the order it's joining was originally placed.
+  //
+  // Rule 111 applies identically to createOrder's copy, deliberately: a line added later is still
+  // priced against Gurgaon, not against the order's eventual fulfillment location (which still
+  // isn't chosen — this endpoint only runs on a PLACED or PACKED order). Pricing an added line by
+  // a different rule than the lines it joins would put two pricing bases on one order.
   const resolvedNewLines = [];
   if (hasNewLines) {
+    const pricingLocationId = await getOrderPricingLocationId(prisma);
     const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
     const bundles = await prisma.bundle.findMany({
       where: { id: { in: bundleIds } },
-      select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+      select: {
+        id: true,
+        product: {
+          select: {
+            sellingPrice: true,
+            name: true,
+            hasLocationPricing: true,
+            locationPrices: {
+              ...(pricingLocationId ? { where: { locationId: pricingLocationId } } : {}),
+              select: { locationId: true, sellingPrice: true },
+            },
+          },
+        },
+      },
     });
     const bundleById = new Map(bundles.map((b) => [b.id, b]));
     for (const nl of newLines) {
@@ -1198,7 +1260,12 @@ async function updateOrderLines(req, res) {
       if (!bundle) {
         return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${nl.bundleId}`);
       }
-      if (bundle.product.sellingPrice == null) {
+      const priceAtOrder = resolvePrice({
+        product: bundle.product,
+        locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
+        field: 'sellingPrice',
+      });
+      if (priceAtOrder == null) {
         return sendError(
           res,
           400,
@@ -1209,7 +1276,7 @@ async function updateOrderLines(req, res) {
       resolvedNewLines.push({
         bundleId: nl.bundleId,
         qtySetsRequested: nl.qtySetsRequested,
-        priceAtOrder: bundle.product.sellingPrice,
+        priceAtOrder,
         productNameSnapshot: bundle.product.name,
       });
     }

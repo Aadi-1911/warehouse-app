@@ -1,5 +1,6 @@
 const { piecesPerSetFor } = require('./piecesPerSet');
 const { REVENUE_STATUSES, periodToRange, VALID_PERIODS } = require('./revenue');
+const { resolvePrice, findLocationPrice } = require('./locationPricing');
 
 // Location-attributed revenue/profit split (05_BUSINESS_RULES.md rule 98's basis, extended
 // per-location; task added 2026-08-20). Read the investigation notes below before changing
@@ -61,7 +62,21 @@ const SALE_TRANSACTION_SELECT = {
     select: {
       locationId: true,
       bundle: {
-        select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
+        select: {
+          product: {
+            select: {
+              isKids: true,
+              costPrice: true,
+              // Rule 111 (2026-09-23). UNFILTERED, unlike transactionController's single-location
+              // read: this query walks Transaction rows spanning every location at once, so there
+              // is no single locationId to push into a `where` here. Each row's own location is
+              // matched against this array in JS by findLocationPrice below.
+              hasLocationPricing: true,
+              locationPrices: { select: { locationId: true, costPrice: true, sellingPrice: true } },
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
+          },
+        },
       },
     },
   },
@@ -93,14 +108,39 @@ async function computeStockValueByLocation(prisma) {
     select: {
       locationId: true,
       qtySets: true,
-      bundle: { select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+      bundle: {
+        select: {
+          product: {
+            select: {
+              isKids: true,
+              costPrice: true,
+              // Rule 111 (2026-09-23) — unfiltered for the same reason as SALE_TRANSACTION_SELECT
+              // above: this read spans every location, so the per-row match happens in JS.
+              hasLocationPricing: true,
+              locationPrices: { select: { locationId: true, costPrice: true, sellingPrice: true } },
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
+          },
+        },
+      },
     },
   });
 
   const byLocation = new Map();
   for (const row of stockRows) {
     const product = row.bundle.product;
-    const unitCost = product.costPrice != null ? Number(product.costPrice) : 0;
+    // Resolved per Stock row against that row's own location (rule 111). A Stock row IS a
+    // per-bundle-per-location quantity, so "what is this stock worth" has always been a
+    // location-scoped question — it just used to have a location-invariant answer. Now that an
+    // article can cost different amounts at Delhi and Gurgaon, the same bundle's rows at the two
+    // locations legitimately value differently, and summing one blended cost across both would
+    // misstate each location's stock value in opposite directions.
+    const resolved = resolvePrice({
+      product,
+      locationPrice: findLocationPrice(product.locationPrices, row.locationId),
+      field: 'costPrice',
+    });
+    const unitCost = resolved != null ? Number(resolved) : 0;
     const value = row.qtySets * piecesPerSetFor(product) * unitCost;
     byLocation.set(row.locationId, (byLocation.get(row.locationId) ?? 0) + value);
   }
@@ -127,14 +167,33 @@ async function computeSalesByLocation(prisma, { from = null, to = null } = {}) {
     const product = tx.stock.bundle.product;
     const pieces = tx.qtySets * piecesPerSetFor(product);
     const revenue = pieces * Number(tx.orderLineItem.priceAtOrder);
+
+    const locationId = tx.stock.locationId;
+
     // Same known limitation revenue.js already documents for piecesPerSet, extended here to
     // costPrice: neither is snapshotted at transaction time (no such field exists for STOCK_OUT —
     // Transaction.costPriceSnapshot is populated only for STOCK_IN), so this reads the product's
     // CURRENT cost price. Editing an article's cost price retroactively shifts historical profit,
     // same pre-existing tradeoff as the factory payable and revenue.js's own piecesPerSet caveat.
-    const cost = pieces * (product.costPrice != null ? Number(product.costPrice) : 0);
-
-    const locationId = tx.stock.locationId;
+    //
+    // As of rule 111 (2026-09-23) "the product's current cost price" is itself location-dependent,
+    // and this is the single most important place in the codebase for that to be resolved
+    // correctly: this function's entire job is attributing profit to the location that earned it.
+    // Reading one blended cost for every location would credit Delhi with Gurgaon's margin and
+    // vice versa — the precise error the whole per-location split exists to avoid.
+    //
+    // Resolved against THIS transaction's own stock location, which is exactly right here (unlike
+    // the Order/Return SELLING side, which is pinned to Gurgaon — see locationPricing.js). Stock
+    // physically sat at tx.stock.locationId and physically cost whatever that location paid for it.
+    //
+    // Unchanged for every article with hasLocationPricing false: resolvePrice returns
+    // product.costPrice untouched, so existing per-location figures do not move.
+    const unitCost = resolvePrice({
+      product,
+      locationPrice: findLocationPrice(product.locationPrices, locationId),
+      field: 'costPrice',
+    });
+    const cost = pieces * (unitCost != null ? Number(unitCost) : 0);
     const entry = byLocation.get(locationId) ?? { revenue: 0, cost: 0 };
     entry.revenue += revenue;
     entry.cost += cost;
@@ -144,9 +203,20 @@ async function computeSalesByLocation(prisma, { from = null, to = null } = {}) {
 }
 
 // The actual export: per location, stock value (live) + revenue/cost/profit (period-scoped).
-// Profit is (revenue − cost) × profitSharePercent/100 — cost price itself never changes by
-// location (rule stated on the Location.profitSharePercent schema field), only the business's
-// share of the resulting profit does.
+// Profit is (revenue − cost) × profitSharePercent/100.
+//
+// This comment used to justify that formula by asserting "cost price itself never changes by
+// location, only the business's share of the resulting profit does." That premise is FALSE as of
+// 2026-09-23 (rule 111): cost genuinely differs by location — different factory deals, different
+// transport — and computeSalesByLocation above now resolves it per location accordingly.
+//
+// The FORMULA is deliberately unchanged, and the correction above is why it didn't need to
+// change: profitSharePercent was always answering a different question from where cost comes
+// from. It asks "of the profit earned at this location, what share belongs to the business?" —
+// a splitting rule about an already-computed figure. Cost being location-dependent changes what
+// `cost` is, and therefore what `grossProfit` is, but not what that share means or what it should
+// multiply. The old comment tied the two together as if the invariance of cost were the reason
+// the share multiplies profit rather than cost; it never was.
 //
 // Includes every Location row, active or not — an archived location can still hold real Stock
 // and real historical Transaction rows, and silently dropping those would understate the

@@ -6,6 +6,16 @@ const prisma = new PrismaClient();
 // costPrice is only added to the select when the requester is OWNER — for STAFF the field is
 // never fetched from Postgres at all, so it can't end up in the response object by any path
 // (not "select everything, then delete the key before responding").
+//
+// As of rule 111 (2026-09-23) the same guarantee has to hold one level deeper. LocationPrice
+// carries its OWN costPrice column, so a `locationPrices: true` anywhere in this select would hand
+// STAFF every location's cost price through the relation — a complete bypass of CLAUDE.md's first
+// non-negotiable rule, arrived at without ever mentioning the word costPrice at the top level.
+//
+// The fix is the same never-fetch discipline, applied to the nested select: locationPrices always
+// comes back with an explicit field list, and costPrice joins that list only for an OWNER. STAFF
+// still receives the rows (sellingPrice is not restricted — rule 10 only ever restricts cost), but
+// the cost column is never read out of Postgres for them in the first place.
 function productSelect(role) {
   return {
     id: true,
@@ -21,6 +31,23 @@ function productSelect(role) {
     isActive: true,
     sellingPrice: true,
     ...(role === 'OWNER' ? { costPrice: true } : {}),
+    // Rule 111. Purely additive for every existing caller — a client that ignores these two fields
+    // is unaffected, and hasLocationPricing is false on every pre-existing article anyway.
+    hasLocationPricing: true,
+    locationPrices: {
+      select: {
+        id: true,
+        locationId: true,
+        location: { select: { id: true, name: true } },
+        sellingPrice: true,
+        // The nested half of the never-fetch guarantee — see this function's header.
+        ...(role === 'OWNER' ? { costPrice: true } : {}),
+      },
+      // Stable ordering so a client rendering a per-location price grid gets the same row order on
+      // every request, rather than whatever Postgres returns. By location name, matching the
+      // alphabetical convention every other location-grouped surface in this app already uses.
+      orderBy: { location: { name: 'asc' } },
+    },
     sizes: {
       // qty rides along so any client calling its own piecesPerSetFor (Receive Stock's live
       // readout, New Order, Good Returns) sums real quantities rather than counting rows.
@@ -323,6 +350,141 @@ async function updateProduct(req, res) {
   }
 }
 
+// PUT /api/products/:id/location-prices/:locationId — OWNER + PIN, UNCONDITIONALLY (rule 111,
+// 2026-09-23). Sets or clears this article's per-location cost/selling override.
+//
+// WHY THIS IS A SEPARATE ENDPOINT WITH ITS OWN UNCONDITIONAL GATE, and not a nested field on
+// PATCH /api/products/:id — this is the single most important safety decision in rule 111, so it
+// is written down rather than left to be re-derived:
+//
+// routes/products.js decides whether a PATCH needs a PIN by inspecting the body shape:
+//     const editingPrice = 'costPrice' in req.body || 'sellingPrice' in req.body;
+// That check is correct for the body it was written for, and silently WRONG for a nested one. Had
+// location prices been folded into PATCH as, say, { locationPrices: [{ locationId, costPrice }] },
+// then `'costPrice' in req.body` is FALSE — the price is one level down — and the PIN gate would
+// not fire at all. An OWNER could rewrite every location's cost and selling price with no PIN,
+// straight through a route that looks PIN-protected, breaking CLAUDE.md's non-negotiable rule
+// ("requires OWNER role AND a separate PIN match, never role alone") without anyone touching the
+// PIN code.
+//
+// The fix is not to teach that conditional check about nested shapes — that's more logic to get
+// subtly wrong on the next body shape. It's to give price writes their own route whose gate is
+// unconditional: requireAuth → requireRole('OWNER') → requirePin, with no branch to bypass. The
+// body here is deliberately FLAT ({ costPrice, sellingPrice }) so it is impossible for a future
+// edit to hide a price field from a body-shape inspection again.
+//
+// PUT, not PATCH, because the target is a whole override row keyed by (productId, locationId) and
+// the operation is an upsert of that row — there is no partial-identity case. WITHIN the row,
+// though, the two fields ARE independently optional, matching how PATCH /api/products/:id already
+// treats costPrice/sellingPrice: omit a key to leave it exactly as it was, send null to clear it
+// back to "no override, fall back to the base price".
+async function setLocationPrice(req, res) {
+  const { id, locationId } = req.params;
+  const body = req.body || {};
+
+  // Explicit null is meaningful here and is NOT the same as omitting the key: null clears the
+  // override (fall back to the Product's own price), omission leaves the stored value untouched.
+  // `in` is what distinguishes them — a truthiness or `!= null` check would collapse both into
+  // "no change" and make it impossible to ever remove an override once set.
+  const settingCost = 'costPrice' in body;
+  const settingSelling = 'sellingPrice' in body;
+
+  if (!settingCost && !settingSelling) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'Provide costPrice and/or sellingPrice');
+  }
+  for (const [field, present] of [['costPrice', settingCost], ['sellingPrice', settingSelling]]) {
+    if (!present) continue;
+    const value = body[field];
+    // null passes (it's the explicit "clear this override" signal). Anything else must be a real
+    // non-negative number — never a numeric string, matching how every other money field in this
+    // API validates.
+    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', `${field} must be a non-negative number, or null to clear it`);
+    }
+  }
+
+  // Both parents verified before the upsert, so a bad id produces a clear 404 rather than a raw
+  // Prisma P2003 foreign-key error. An ARCHIVED location is deliberately still allowed: archiving
+  // hides a location from daily pickers (rule 85) but it can still hold real stock, and correcting
+  // the price attached to that stock is legitimate — this is a price-book edit, not stock movement.
+  const product = await prisma.product.findUnique({ where: { id }, select: { id: true } });
+  if (!product) {
+    return sendError(res, 404, 'PRODUCT_NOT_FOUND', `No product with id ${id}`);
+  }
+  const location = await prisma.location.findUnique({ where: { id: locationId }, select: { id: true } });
+  if (!location) {
+    return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${locationId}`);
+  }
+
+  const data = {};
+  if (settingCost) data.costPrice = body.costPrice;
+  if (settingSelling) data.sellingPrice = body.sellingPrice;
+
+  // Upsert, so the caller never has to know whether an override row already exists — "set Delhi's
+  // price for this article" is one request either way. `create` spreads the same data, leaving the
+  // unsupplied field null, which is exactly right: a brand-new row with only a cost override set
+  // should fall back to the base price for selling.
+  const saved = await prisma.locationPrice.upsert({
+    where: { productId_locationId: { productId: id, locationId } },
+    update: data,
+    create: { productId: id, locationId, ...data },
+    select: {
+      id: true,
+      locationId: true,
+      location: { select: { id: true, name: true } },
+      costPrice: true,
+      sellingPrice: true,
+      updatedAt: true,
+    },
+  });
+
+  // costPrice is safe to return here without a role branch, unlike productSelect's nested version:
+  // this route is unconditionally requireRole('OWNER'), so a STAFF request can never reach this
+  // line at all.
+  res.json(saved);
+}
+
+// PATCH /api/products/:id/location-pricing — OWNER only, deliberately NO PIN (rule 111).
+//
+// The PIN gate exists for MONEY (rule 71), and this flag writes no money: it decides which
+// already-PIN-gated value gets read, and every value it can select between was itself only ever
+// writable behind a PIN (Product.costPrice/sellingPrice via PATCH /api/products/:id, and
+// LocationPrice's two columns via the PUT above). Turning the toggle on can therefore only ever
+// surface a price an OWNER already entered with a PIN; it cannot introduce a number nobody
+// authorised. That is the same reasoning that leaves `name`, `categoryId` and `isKids` PIN-free
+// on an OWNER-gated route.
+//
+// Worth stating plainly because the opposite reading is tempting: flipping this DOES change what a
+// party is charged on the next order. The judgement is that the PIN protects the act of setting a
+// price, not every operation whose outcome a price affects — otherwise billing itself would need
+// one.
+async function setLocationPricingEnabled(req, res) {
+  const { id } = req.params;
+  const { hasLocationPricing } = req.body || {};
+
+  // Strict boolean, not truthy — same reasoning as billOrder's `locationConfirmed !== true`: a
+  // stray "false" string or a 1 must not decide which price the business charges.
+  if (typeof hasLocationPricing !== 'boolean') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'hasLocationPricing must be a boolean');
+  }
+
+  const existing = await prisma.product.findUnique({ where: { id }, select: { id: true } });
+  if (!existing) {
+    return sendError(res, 404, 'PRODUCT_NOT_FOUND', `No product with id ${id}`);
+  }
+
+  // Turning it OFF deliberately does not delete a single LocationPrice row — see the flag's own
+  // schema comment. Off means dormant, and flipping it back on restores exactly the prices that
+  // were there before, with nothing to re-enter.
+  const updated = await prisma.product.update({
+    where: { id },
+    data: { hasLocationPricing },
+    select: productSelect(req.user.role), // OWNER — requireRole('OWNER') already gated this route
+  });
+
+  res.json(updated);
+}
+
 module.exports = {
   listProducts,
   getProduct,
@@ -331,5 +493,7 @@ module.exports = {
   deactivateProduct,
   reactivateProduct,
   getValidColors,
+  setLocationPrice,
+  setLocationPricingEnabled,
   productSelect,
 };

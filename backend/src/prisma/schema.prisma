@@ -252,8 +252,27 @@ model Product {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  sizes         ProductSize[]
-  bundles       Bundle[]
+  // Per-article opt-in for location-differentiated pricing (rule 111, added 2026-09-23).
+  // FALSE for every existing article and every new one, deliberately: this flag alone decides
+  // whether any LocationPrice row is consulted at all, so an untouched article resolves through
+  // exactly the same costPrice/sellingPrice path it always did — a LocationPrice row that
+  // happens to exist cannot change its behaviour while this is false.
+  //
+  // A separate explicit flag rather than inferring the toggle from "does a LocationPrice row
+  // exist": turning the feature OFF must not require deleting the per-location prices someone
+  // already entered — the same archive-not-delete convention isActive (here, on Party, on
+  // Location) and isCancelled (on Order/OrderLineItem) already follow everywhere else in this
+  // schema. With a flag, off means dormant: the rows sit untouched and come straight back if
+  // it's flipped on again.
+  //
+  // NOT PIN-gated, unlike the two price fields above (rule 71) — see routes/products.js.
+  // Flipping this writes no price of its own; it only decides which already-PIN-gated value
+  // gets read.
+  hasLocationPricing Boolean @default(false)
+
+  sizes          ProductSize[]
+  bundles        Bundle[]
+  locationPrices LocationPrice[]
 
   @@unique([articleNo, factoryId]) // article number unique per factory, not globally
 }
@@ -342,9 +361,18 @@ model Location {
   // location, including any named Delhi — this migration doesn't special-case a location by
   // name; setting a real location to something other than 100 is a real admin action taken
   // through PATCH /api/locations/:id/profit-share, not a decision baked into the schema.
-  // Cost price is identical regardless of location; only the business's SHARE of the resulting
-  // profit differs, which is why this multiplies profit, not revenue or cost, in
-  // utils/locationRevenue.js.
+  // This comment used to read "Cost price is identical regardless of location; only the business's
+  // SHARE of the resulting profit differs, which is why this multiplies profit, not revenue or
+  // cost." The first half is FALSE as of 2026-09-23 (rule 111) — cost genuinely differs by
+  // location (different factory deals, different transport), which is exactly what LocationPrice
+  // below exists to record, and utils/locationRevenue.js now resolves cost per location.
+  //
+  // What this field means is unaffected, and the formula in utils/locationRevenue.js is unchanged:
+  // it still multiplies profit, not revenue or cost. That was never a consequence of cost being
+  // location-invariant — it's that this percentage answers a different question entirely ("of the
+  // profit earned here, what share is the business's?"), applied to an already-computed figure.
+  // A location-dependent cost changes what that figure IS; it doesn't change what share of it
+  // belongs to the business.
   profitSharePercent Int @default(100)
 
   stock             Stock[]
@@ -352,6 +380,48 @@ model Location {
   partyStockReturns PartyStockReturn[]
   transfersFrom     Transfer[] @relation("TransferFrom")
   transfersTo       Transfer[] @relation("TransferTo")
+  locationPrices    LocationPrice[]
+}
+
+// Per-article, per-location price override (rule 111, added 2026-09-23). Consulted ONLY when
+// the article's own Product.hasLocationPricing is true — see utils/locationPricing.js, which is
+// the single place that branching lives.
+//
+// Exists because both halves of an article's price can genuinely differ by location: different
+// factory deals and different transport costs into Delhi vs. Gurgaon. That is a real business
+// fact confirmed 2026-09-23, and it directly contradicts what Location.profitSharePercent's own
+// comment above used to assert ("cost price is identical regardless of location") — that claim
+// has been corrected there and in utils/locationRevenue.js in the same commit as this model.
+//
+// A separate table rather than extra columns on Stock: a price is a fact about an ARTICLE at a
+// LOCATION, not about a quantity of stock. A Stock row only exists once that bundle has actually
+// been at that location, so pricing an article for a location it hasn't received stock at yet
+// would be impossible if the price lived there. Keyed on productId (not bundleId) for the same
+// reason costPrice/sellingPrice live on Product at all: price is per ARTICLE, never per colour.
+model LocationPrice {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+
+  // BOTH nullable, and independent of each other — an article can carry a real location-specific
+  // cost with no location-specific selling price, or the reverse.
+  //
+  // Null here does NOT mean "pending price" the way a null Product.costPrice does (rule 8). It
+  // means "this location has no override for this field," and resolvePrice falls straight back to
+  // the Product's own value. That fallback is deliberately SILENT — no badge, no indicator, and
+  // no distinction at any call site between "fell back" and "never had an override". A location
+  // using the base price is the normal case, not a gap to flag.
+  costPrice    Decimal?
+  sellingPrice Decimal?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One override row per article per location — a second row for the same pair would make
+  // "which price applies here" ambiguous with no rule to break the tie.
+  @@unique([productId, locationId])
 }
 
 model Party {
@@ -838,7 +908,23 @@ model OrderLineItem {
   id               String            @id @default(cuid())
   orderId          String
   order            Order             @relation(fields: [orderId], references: [id])
-  bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at BILLING (rule 64's FIFO-across-locations), not at order time. (Was decided at packing until 2026-08-17, when deduction moved to Bill.)
+  // Article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills
+  // this is decided later, at BILLING, not at order time. (Was decided at packing until
+  // 2026-08-17, when deduction moved to Bill.)
+  //
+  // The mechanism named here used to be "rule 64's FIFO-across-locations", which the 2026-09-07
+  // single-location billing change superseded — corrected 2026-09-23. It is now the OWNER's
+  // EXPLICIT choice at billing time: billOrder requires a real locationId plus locationConfirmed
+  // === true, with deliberately no "pick one for me" default, and every line must be coverable by
+  // that one location alone or the whole request is rejected. So the claim below is not just still
+  // true, it is stronger than when it was written: the location isn't merely unknown at order
+  // time, it is a decision nobody has made yet.
+  //
+  // This is the load-bearing fact behind rule 111's pricing asymmetry: because a line genuinely has
+  // no location here, a location-aware SELLING price cannot be resolved at this point at all, which
+  // is why Orders price against a fixed named location (Gurgaon) instead. See
+  // utils/locationPricing.js.
+  bundleId         String
   bundle           Bundle            @relation(fields: [bundleId], references: [id])
   qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
   qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for. PATCH /api/orders/:id/lines (added 2026-08-21) resets this to 0 on the specific line it edits or creates — never on every OTHER live line on the order — since a correction against the OLD quantity is meaningless once that quantity has changed, but an untouched line's real packed count is genuine historical data with nowhere else it's recorded. Safe to leave untouched lines exactly as they are: nothing in the frontend reads this field for a PLACED order (Pack Order's own checklist never rehydrates from it — see LEARNING_LOG.md — and the Owner Dashboard explicitly shows "Not yet packed" instead of this value whenever status is PLACED), and the next real PATCH /:id/pack call fully overwrites every live line's value regardless, touched or not.

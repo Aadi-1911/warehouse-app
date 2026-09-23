@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
 const { applyStockMovement } = require('../utils/stock');
+const { resolvePrice, findLocationPrice, getOrderPricingLocationId } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -157,17 +158,42 @@ async function createReturns(req, res) {
     return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${locationId}`);
   }
 
+  // Rule 111 (2026-09-23) — a Return prices against Gurgaon, exactly as an Order does, and
+  // pointedly NOT against `locationId` above (the location the returned stock is physically going
+  // back onto a shelf at). Those are two different questions and only one of them is about money:
+  // locationId decides where the stock lands, this decides what the party is credited.
+  //
+  // They MUST match the Order side, which is why it's Gurgaon here too rather than the more
+  // intuitive "price it where it came back to". priceAtReturn feeds totalReturned, which offsets
+  // the party's amountDue (partyController.js). Crediting a return at Delhi's price for goods
+  // charged at Gurgaon's would silently drift every party balance that ever saw a return, with no
+  // record of why the two sides disagreed.
+  const pricingLocationId = await getOrderPricingLocationId(prisma);
+
   // One batch fetch for every bundle referenced rather than one query per line — same
   // resolve-everything-then-validate shape as createOrder, and no N+1 on a multi-line return.
   const bundleIds = [...new Set(lines.map((l) => l.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+    select: {
+      id: true,
+      product: {
+        select: {
+          sellingPrice: true,
+          name: true,
+          hasLocationPricing: true,
+          locationPrices: {
+            ...(pricingLocationId ? { where: { locationId: pricingLocationId } } : {}),
+            select: { locationId: true, sellingPrice: true },
+          },
+        },
+      },
+    },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
-  // priceAtReturn is computed HERE, server-side, from Product.sellingPrice at this exact moment —
-  // never trusted from the request body, and never sourced from costPrice (rule 10). Same
+  // priceAtReturn is computed HERE, server-side, from the selling price in effect at this exact
+  // moment — never trusted from the request body, and never sourced from costPrice (rule 10). Same
   // principle as OrderLineItem.priceAtOrder and Transaction.costPriceSnapshot.
   // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, so a
   // later article rename can never rewrite what a logged return says it was for.
@@ -177,7 +203,12 @@ async function createReturns(req, res) {
     if (!bundle) {
       return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${line.bundleId}`);
     }
-    if (bundle.product.sellingPrice == null) {
+    const priceAtReturn = resolvePrice({
+      product: bundle.product,
+      locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
+      field: 'sellingPrice',
+    });
+    if (priceAtReturn == null) {
       return sendError(
         res,
         400,
@@ -191,7 +222,7 @@ async function createReturns(req, res) {
       reason: line.reason,
       // Normalised to null rather than '' so "no note" is one value in the database, not two.
       note: String(line.note ?? '').trim() || null,
-      priceAtReturn: bundle.product.sellingPrice,
+      priceAtReturn,
       productNameSnapshot: bundle.product.name,
     });
   }

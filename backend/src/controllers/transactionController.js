@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
 const { applyStockMovement } = require('../utils/stock');
+const { resolvePrice } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -58,9 +59,27 @@ async function createTransaction(req, res) {
   // through POST /api/bundles, which already validated both sides existed at that time.
   // product.costPrice rides along so a STOCK_IN can snapshot it below — this is an internal
   // read for that purpose only, never forwarded to the response (see TRANSACTION_RESPONSE_SELECT).
+  // locationPrices is filtered to the ONE location this receipt is actually landing at (rule 111,
+  // 2026-09-23). This is the easy case for location-aware pricing and the reason cost price could
+  // be wired up first: locationId is a required body field on this endpoint, already validated
+  // above, so the location context exists right here at the write point — no guessing, no
+  // deferral. The `where` does the narrowing in Postgres, so this comes back as an array of at
+  // most one row rather than every location's override for the article.
+  //
+  // hasLocationPricing rides along because resolvePrice checks it first and returns the base price
+  // untouched when it's false — which is every article until someone opts one in.
   const bundle = await prisma.bundle.findUnique({
     where: { id: bundleId },
-    select: { id: true, product: { select: { costPrice: true } } },
+    select: {
+      id: true,
+      product: {
+        select: {
+          costPrice: true,
+          hasLocationPricing: true,
+          locationPrices: { where: { locationId }, select: { locationId: true, costPrice: true, sellingPrice: true } },
+        },
+      },
+    },
   });
   if (!bundle) {
     return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${bundleId}`);
@@ -81,12 +100,32 @@ async function createTransaction(req, res) {
       // values, not a value computed in JS from a possibly-stale earlier read.
       const updatedStock = await tx.stock.findUnique({ where: { id: stock.id } });
 
-      // Populated only for STOCK_IN, and only from the Product's costPrice AT THIS EXACT
+      // Populated only for STOCK_IN, and only from the cost price in effect AT THIS EXACT
       // MOMENT — a later price change must never retroactively alter what this specific
       // receipt owed the factory (verified directly in the payable calculation's own test).
       // Null costPrice (still pending) snapshots as null, not 0 — genuinely "unknown at the
       // time," which the payable sum treats as contributing nothing, correctly.
-      const costPriceSnapshot = type === 'STOCK_IN' ? bundle.product.costPrice : null;
+      //
+      // "The cost price in effect" became a location-dependent question on 2026-09-23 (rule 111),
+      // which is why this now goes through resolvePrice instead of reading product.costPrice
+      // directly. For an article with hasLocationPricing false — every article until someone opts
+      // one in — resolvePrice returns exactly product.costPrice, so this line's behaviour is
+      // unchanged for all existing data. locationPrices was already narrowed to this receipt's own
+      // location by the `where` on the read above, so [0] is that location's row or undefined.
+      //
+      // Snapshotting the RESOLVED value, not the base one, is the whole point: the factory payable
+      // (factoryController.js) sums costPriceSnapshot, so goods received into Delhi under a
+      // different deal must record what Delhi actually owed, not what Gurgaon's price happened to
+      // be. And because it's a snapshot, editing that location's override later leaves this
+      // receipt alone — the same immutability rule 82 already gives the base price.
+      const costPriceSnapshot =
+        type === 'STOCK_IN'
+          ? resolvePrice({
+              product: bundle.product,
+              locationPrice: bundle.product.locationPrices[0] ?? null,
+              field: 'costPrice',
+            })
+          : null;
 
       const transaction = await tx.transaction.create({
         data: { stockId: stock.id, userId: req.user.id, type, qtySets, note: note || null, costPriceSnapshot },
