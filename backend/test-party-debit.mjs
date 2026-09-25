@@ -131,7 +131,19 @@ async function main() {
   created.staffUserId = r.body.id;
   const staffToken = await login(staffUsername, staffPassword);
 
-  r = await api('/api/parties', { method: 'POST', token: ownerToken, body: { name: `PDParty-${stamp}` } });
+  // `state` is REQUIRED by createParty (partyController.js, rule 105, added 2026-09-09) even
+  // though the column itself is nullable. This file predates that rule and sent name only, so
+  // setup 400'd here and `created.partyId` was undefined for the entire rest of the run: the first
+  // POST /api/party-debits came back "partyId, amount, and date are required", and the run
+  // eventually died on `r.body.debits.some(...)` reading an error body — both symptoms nowhere
+  // near the real cause. The value itself is arbitrary; it just has to be one of VALID_STATES.
+  //
+  // This is the same fix ac99d87 made to test-order-billing-correction.mjs; that commit simply
+  // missed this file's two party creations.
+  r = await api('/api/parties', {
+    method: 'POST', token: ownerToken,
+    body: { name: `PDParty-${stamp}`, state: 'MAHARASHTRA' },
+  });
   created.partyId = r.body.id;
   console.log('  party:', created.partyId, r.status);
 
@@ -222,7 +234,16 @@ async function main() {
   check('debits array has 2 rows', r.body.debits.length === 2, JSON.stringify(r.body.debits));
 
   console.log('\n=== ISOLATION: a debit on one party never touches another party\'s payable ===');
-  r = await api('/api/parties', { method: 'POST', token: ownerToken, body: { name: `PDOther-${stamp}` } });
+  // Same required `state` as the party above, and just as load-bearing: without it this POST
+  // 400s, `created.otherPartyId` is undefined, and the isolation check below ends up asserting
+  // against GET /api/parties/undefined/payable rather than against a real second party. It would
+  // have reported a FAIL rather than a false PASS (an error body has no amountDue, so
+  // `Number(undefined) === 0` is NaN === 0, false) — but a failure that names the wrong thing is
+  // still a failure nobody can act on.
+  r = await api('/api/parties', {
+    method: 'POST', token: ownerToken,
+    body: { name: `PDOther-${stamp}`, state: 'MAHARASHTRA' },
+  });
   created.otherPartyId = r.body.id;
   r = await api(`/api/parties/${created.otherPartyId}/payable`, { token: ownerToken });
   check("other party's amountDue unaffected, still 0", Number(r.body.amountDue) === 0, JSON.stringify(r.body));
