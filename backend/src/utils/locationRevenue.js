@@ -112,10 +112,6 @@ async function computeStockValueByLocation(prisma) {
             select: {
               isKids: true,
               costPrice: true,
-              // Rule 111 (2026-09-23) — unfiltered for the same reason as SALE_TRANSACTION_SELECT
-              // above: this read spans every location, so the per-row match happens in JS.
-              hasLocationPricing: true,
-              locationPrices: { select: { locationId: true, costPrice: true, sellingPrice: true } },
               sizes: { select: { sizeLabel: true, qty: true } },
             },
           },

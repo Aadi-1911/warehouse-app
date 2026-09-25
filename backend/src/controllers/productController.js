@@ -7,15 +7,16 @@ const prisma = new PrismaClient();
 // never fetched from Postgres at all, so it can't end up in the response object by any path
 // (not "select everything, then delete the key before responding").
 //
-// As of rule 111 (2026-09-23) the same guarantee has to hold one level deeper. LocationPrice
-// carries its OWN costPrice column, so a `locationPrices: true` anywhere in this select would hand
-// STAFF every location's cost price through the relation — a complete bypass of CLAUDE.md's first
+// Between 2026-09-23 and 2026-09-25 this guarantee had to hold one level deeper too: LocationPrice
+// carried its own costPrice column, so a bare `locationPrices: true` would have handed STAFF every
+// location's cost price through the relation — a complete bypass of CLAUDE.md's first
 // non-negotiable rule, arrived at without ever mentioning the word costPrice at the top level.
+// The nested select was given the same never-fetch treatment, with costPrice added only for OWNER.
 //
-// The fix is the same never-fetch discipline, applied to the nested select: locationPrices always
-// comes back with an explicit field list, and costPrice joins that list only for an OWNER. STAFF
-// still receives the rows (sellingPrice is not restricted — rule 10 only ever restricts cost), but
-// the cost column is never read out of Postgres for them in the first place.
+// That column is gone as of the 2026-09-25 revision (cost is global — rule 111), so the nested
+// relation has no cost field left to gate. The explicit field list below stays regardless, and
+// must NOT be relaxed to `locationPrices: true`: an explicit list is what makes a future column on
+// that table a deliberate decision rather than something that leaks the day it is added.
 function productSelect(role) {
   return {
     id: true,
