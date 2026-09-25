@@ -222,6 +222,7 @@ model User {
   transferCorrections TransferCorrection[] // Transfer corrections this OWNER made
   partyDebits         PartyDebit[]       // party debits this OWNER recorded (rule 106) — a real relation, unlike FactoryDebit/FactoryPayment/PartyPayment's bare createdById, because rule 104's actorScope() needs one to gate this entry type in History (see PartyDebit's own comment)
   orderBillingCorrections OrderBillingCorrection[] // post-billing discount/GST revisions this OWNER made (rule 108)
+  orderPriceOverrides OrderPriceOverride[] // at-billing per-article price changes this OWNER made (rule 113) — a real relation for the same reason partyDebits above is one: rule 104's actorScope() needs a named relation to gate this entry type in History
 }
 
 model Factory {
@@ -273,6 +274,10 @@ model Product {
   sizes          ProductSize[]
   bundles        Bundle[]
   locationPrices LocationPrice[]
+  // At-billing price changes recorded against this article (rule 113). Back-relation only —
+  // nothing on the Product side reads it; it exists because OrderPriceOverride.product is a real
+  // FK and Prisma requires the other end to be declared.
+  priceOverrides OrderPriceOverride[]
 
   @@unique([articleNo, factoryId]) // article number unique per factory, not globally
 }
@@ -750,6 +755,85 @@ model OrderBillingCorrection {
   @@index([orderId]) // every read of these is "all corrections for this order, oldest first"
 }
 
+model OrderPriceOverride {
+  // Rule 113 (2026-09-25) — the OWNER changed an article's unit price AT BILLING, for this one
+  // bill. One row per ARTICLE actually changed on one order; a bill with no changes writes none.
+  //
+  // WHY A TABLE AND NOT A COLUMN ON OrderLineItem. A `baselineUnitPrice Decimal?` beside
+  // billedUnitPrice would be cheaper and need no join, and it was the first design considered. It
+  // fails on three counts, each independently decisive:
+  //   1. GRAIN. Rule 113 makes the change per ARTICLE — one decision covering every colour of that
+  //      article on the bill. A per-line column records the same decision N times, and History
+  //      would have to deduplicate N rows back into the one sentence a person actually wants.
+  //   2. NO ACTOR. Rule 104 gates History BY ACTOR RELATION — historyController's actorScope()
+  //      takes a relation name and asks "is this actor STAFF?". A bare column on OrderLineItem has
+  //      no actor to relate to, so a price-override entry could not be gated the way every other
+  //      owner-performed entry is. setBy below is what makes that possible.
+  //   3. NO TIMESTAMP of its own.
+  //
+  // WHY BOTH NUMBERS ARE STORED rather than one of them re-derived at read time. Exactly the
+  // argument OrderBillingCorrection's own header makes for its old*/new* columns: the baseline is
+  // resolved from Product.hasLocationPricing + LocationPrice.sellingPrice + the line's
+  // priceAtOrder, and the first two are freely editable AFTER this bill. Re-deriving the baseline
+  // later would answer "what would this article resolve to today", not "what was it before the
+  // owner changed it" — so a later PUT /location-prices would silently rewrite history. Storing it
+  // is what makes rule 113's audit trail survive a later saved-price edit.
+  //
+  // This model is PURE AUDIT: nothing reads it to compute money. What the party is charged lives
+  // in OrderLineItem.billedUnitPrice and Order.preTaxAmount, both written in the same transaction
+  // as these rows. A row here can never disagree with the bill, because neither is derived from
+  // the other — both come from the one `finalLines` array billOrder computes once.
+  id                   String   @id @default(cuid())
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id])
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id])
+
+  // Snapshotted for the same reason OrderLineItem.productNameSnapshot exists: History must read
+  // correctly after an article is renamed. articleNo is snapshotted alongside the name even though
+  // productController rejects any attempt to patch it — an immutable field is cheap to copy, and
+  // copying both means History never needs the Product row at all to render the entry.
+  articleNoSnapshot    String
+  productNameSnapshot  String
+
+  // The price this article's live lines resolved to BEFORE the override — i.e. what
+  // utils/locationPricing.js's resolveBilledUnitPrice returned for them.
+  //
+  // A RANGE, not one number, because one article's colours on one order genuinely CAN carry
+  // different baselines (owner decision, 2026-09-25): priceAtOrder is snapshotted PER LINE and
+  // PATCH /api/orders/:id/lines re-snapshots it, so two colours added at different times can
+  // differ. In the normal case min == max and History renders "₹500 → ₹480"; when they differ it
+  // renders "₹500–₹520 → ₹480", which is the honest description of what the owner actually did.
+  //
+  // Collapsing these into a single column would have forced a choice between three bad options:
+  // storing only one colour's baseline (a false record for the others), rejecting mixed-baseline
+  // articles outright (blocking a legitimate order shape), or silently averaging (inventing a
+  // number no line ever had).
+  baselineMinUnitPrice Decimal
+  baselineMaxUnitPrice Decimal
+  // What every live line of this article was billed at instead. One number by construction: the
+  // override applies uniformly to the whole article, which is the entire point of rule 113's
+  // per-article grain.
+  overriddenUnitPrice  Decimal
+
+  // NOT NULL, unlike OrderBillingCorrection's nullable money columns. Those are nullable to
+  // accommodate orders billed before rule 101 existed; this model has no such history — it is
+  // created by rule 113 and every row it will ever hold is written by the code that introduced it.
+  // A row can only exist because an override actually happened, so every column always has a real
+  // value and nullability would be modelling a state that cannot occur.
+  setById              String
+  setBy                User     @relation(fields: [setById], references: [id])
+  createdAt            DateTime @default(now())
+
+  // Every read is "all overrides for this order" (History renders them per order, and the order
+  // detail may later show them). No unique constraint on (orderId, productId): one bill can only
+  // override an article once — billOrder rejects duplicate productIds with a 400 rather than
+  // last-wins — but that is an application rule about ONE request, and enforcing it in the
+  // database would wrongly also forbid a future feature that re-bills a cancelled-and-reinstated
+  // order. The 400 is the real guard; see billOrder's parsePriceOverrides.
+  @@index([orderId])
+}
+
 model PartyStockReturn {
   // A simple event log, NOT a pending/settled workflow — whole sets returned by a Party
   // (damage, sizing, other reason), logged after the fact. No lifecycle, no line-by-line
@@ -894,6 +978,9 @@ model Order {
   // Post-billing discount/GST revisions (rule 108). A list, not an optional one-to-one, for the
   // reason OrderBillingCorrection.orderId's own comment gives: corrections genuinely can stack.
   billingCorrections OrderBillingCorrection[]
+  // Per-article price changes made at billing (rule 113). A list: one bill can change several
+  // articles, each getting its own row. Empty for the overwhelming majority of orders.
+  priceOverrides OrderPriceOverride[]
 }
 // Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
 // status value (rule 23) — see OrderAdjustment below.
