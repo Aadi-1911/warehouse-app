@@ -32,7 +32,7 @@ const prisma = new PrismaClient();
 // for no gain. Same reasoning this project already applies to the Factory payable figure and the
 // party dues tracker: compute it at read time, never cache it into its own table.
 //
-// The trade-off, stated honestly: because the sort happens in application memory across nine
+// The trade-off, stated honestly: because the sort happens in application memory across ten
 // separate queries, this can't be paginated efficiently at the database layer. At this business's
 // real volume that's a non-issue. If it ever genuinely became one, the fix is per-source
 // pagination with a merge cursor — still not a shared table.
@@ -205,12 +205,14 @@ async function listHistory(req, res) {
   // through a still-valid token.
   const viewerRole = req.user.role;
 
-  // NINE independent reads, run concurrently — they share no data, so there's no reason to
+  // TEN independent reads, run concurrently — they share no data, so there's no reason to
   // serialise them. (Was seven until 2026-09-08, when rule 106's party debits became the eighth
   // source; rule 108's billing corrections made it nine. Those two were built on separate branches
   // and each independently called itself "the eighth source" — both comments were true in
   // isolation and wrong once merged, so the count is stated once, here, and must be re-counted
-  // against this array rather than incremented from memory.)
+  // against this array rather than incremented from memory. Rule 113's at-billing price overrides
+  // are the tenth, added 2026-09-25 — counted by reading the destructuring list below, not by
+  // adding one to the number that used to be here.)
   const [
     orders,
     adjustments,
@@ -221,6 +223,7 @@ async function listHistory(req, res) {
     transferCorrections,
     partyDebits,
     billingCorrections,
+    priceOverrides,
   ] = await Promise.all([
     prisma.order.findMany({
       where: { ...actorScope('createdBy', viewerRole) },
@@ -485,6 +488,33 @@ async function listHistory(req, res) {
         order: { select: { party: { select: { name: true } }, partyNameSnapshot: true } },
       },
     }),
+
+    // --- Tenth source: at-billing per-article price overrides (rule 113, 2026-09-25).
+    //
+    // Same actorScope treatment as the three corrections above, for the identical stated reason:
+    // billing is OWNER-only and rule 113 additionally demands a PIN, so in practice every row here
+    // has an OWNER actor and this query returns nothing for a STAFF viewer — but scoping it HERE
+    // means the query states its own visibility rule rather than depending on a gate in a different
+    // file staying OWNER-only forever.
+    //
+    // articleNoSnapshot/productNameSnapshot are read instead of joining Product, deliberately: they
+    // are what the article was called when the price was changed, and an article renamed afterwards
+    // must not silently rewrite what this entry says happened. Same principle the order-derived
+    // entries above apply to partyNameSnapshot.
+    prisma.orderPriceOverride.findMany({
+      where: { ...actorScope('setBy', viewerRole) },
+      select: {
+        id: true,
+        createdAt: true,
+        articleNoSnapshot: true,
+        productNameSnapshot: true,
+        baselineMinUnitPrice: true,
+        baselineMaxUnitPrice: true,
+        overriddenUnitPrice: true,
+        setBy: { select: { id: true, name: true, role: true } },
+        order: { select: { party: { select: { name: true } }, partyNameSnapshot: true } },
+      },
+    }),
   ]);
 
   const entries = [];
@@ -737,6 +767,36 @@ async function listHistory(req, res) {
     });
   }
 
+  // --- At-billing price overrides: one entry per ARTICLE whose price the OWNER changed while
+  // billing (rule 113). A bill with no price change produces no rows and therefore no entries,
+  // which is the overwhelmingly common case.
+  for (const o of priceOverrides) {
+    const partyName = o.order.partyNameSnapshot ?? o.order.party.name;
+    const min = Number(o.baselineMinUnitPrice);
+    const max = Number(o.baselineMaxUnitPrice);
+    // The range collapses to a single figure in the normal case, where every colour of the article
+    // resolved to the same baseline. It only differs when one article's lines carried different
+    // priceAtOrder values (owner decision, 2026-09-25 — see OrderPriceOverride's schema comment),
+    // and when it does, printing only one end would be a false claim about what was changed.
+    // Compared as numbers, not Decimals: both come from the same DECIMAL(65,30) column and are
+    // rupee figures, so equality is exact here for the same reason utils/billPriceOverrides.js's
+    // priceEquals documents.
+    const from = min === max ? inr(min) : `${inr(min)}–${inr(max)}`;
+    entries.push({
+      id: `PRICE_OVERRIDE:${o.id}`,
+      type: 'PRICE_OVERRIDE',
+      label: 'Priced',
+      timestamp: o.createdAt,
+      actorId: o.setBy.id,
+      actorName: o.setBy.name,
+      actorRole: o.setBy.role,
+      partyName,
+      // Article NUMBER as well as name: names are not unique and article numbers are unique per
+      // Factory, so the pair is what actually identifies the article to a person reading the feed.
+      description: `${o.productNameSnapshot} (${o.articleNoSnapshot}): ${from} → ${inr(o.overriddenUnitPrice)} at billing`,
+    });
+  }
+
   // --- Good Returns: one entry per returned line (see the query comment above).
   for (const r of returns) {
     const article = `${r.bundle.product.articleNo} ${r.bundle.color.name}`;
@@ -826,10 +886,10 @@ async function listHistory(req, res) {
     });
   }
 
-  // Rule 104 backstop. The nine `where` clauses above are the real enforcement — an OWNER's rows
+  // Rule 104 backstop. The ten `where` clauses above are the real enforcement — an OWNER's rows
   // are never fetched for a STAFF request in the first place — so for correct code this filter
-  // removes nothing. It exists because the enforcement is spread across nine separate queries,
-  // and the failure mode of adding a tenth source later is forgetting one of them. This is the
+  // removes nothing. It exists because the enforcement is spread across ten separate queries,
+  // and the failure mode of adding an eleventh source later is forgetting one of them. This is the
   // single place every entry must pass through regardless of which source built it.
   //
   // That failure mode is not hypothetical: rules 106 and 108 each added a source on a separate
