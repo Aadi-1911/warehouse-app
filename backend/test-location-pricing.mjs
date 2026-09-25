@@ -283,11 +283,30 @@ async function placeAndPack(ownerToken, bundleId, qtySetsRequested) {
   return { orderId: order.body.id, lineItemIds: order.body.lineItems.map((li) => li.id) };
 }
 
+// Rule 113 (2026-09-25) — every bill must echo back the per-line prices the fulfillment preview
+// showed, so the server can refuse to bill at a price the owner never actually saw. billOrder 400s
+// without it, so this is not optional for any caller.
+//
+// Fetched immediately before each bill rather than reused across bills: the echo has to reflect
+// THIS order at THIS location. No test in this file changes a price between the preview and the
+// bill, so the staleness guard never fires here — the dedicated stale-price scenarios in
+// test-bill-price-override.mjs are where that path is actually exercised.
+async function seenPricesFor(token, orderId, locationId) {
+  const r = await api(`/api/orders/${orderId}/fulfillment-preview?locationId=${locationId}`, { token });
+  if (!Array.isArray(r.body?.lines)) {
+    throw new Error(`fulfillment-preview failed for order ${orderId}: ${JSON.stringify(r.body)}`);
+  }
+  return r.body.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
 async function bill(ownerToken, orderId, locationId, extra = {}) {
+  // `extra` is spread LAST so a scenario can deliberately override seenPrices (or any other field)
+  // to exercise a rejection path — the default is the correct, matching echo.
+  const seenPrices = await seenPricesFor(ownerToken, orderId, locationId);
   return api(`/api/orders/${orderId}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, ...extra },
+    body: { locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices, ...extra },
   });
 }
 

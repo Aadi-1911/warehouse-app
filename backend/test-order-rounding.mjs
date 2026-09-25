@@ -88,6 +88,16 @@ async function db() {
   return prisma;
 }
 
+// Rule 113 (2026-09-25) — builds the seenPrices echo every bill now requires, read from the same
+// fulfillment preview the owner's billing screen uses. billOrder rejects a bill without it.
+async function seenPricesFor(token, orderId, locationId) {
+  const r = await api(`/api/orders/${orderId}/fulfillment-preview?locationId=${locationId}`, { token });
+  if (!Array.isArray(r.body?.lines)) {
+    throw new Error(`fulfillment-preview failed for order ${orderId}: ${JSON.stringify(r.body)}`);
+  }
+  return r.body.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
 const created = {
   factoryId: null,
   categoryId: null,
@@ -191,10 +201,15 @@ async function makeBilledOrder(ownerToken, stamp, label, { sellingPrice, qtySets
   });
   if (packed.status !== 200) throw new Error(`Pack failed (${label}): ${JSON.stringify(packed.body)}`);
 
+  // Rule 113 (2026-09-25) — a bill must echo back the per-line prices the fulfillment preview
+  // showed. billOrder 400s without seenPrices. This file changes no prices, so the echo always
+  // matches and the staleness guard never fires; rounding behaviour is completely unaffected,
+  // since seenPrices takes no part in any arithmetic.
+  const seenPrices = await seenPricesFor(ownerToken, ord.body.id, created.locationId);
   const billed = await api(`/api/orders/${ord.body.id}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable, discountPercent, gstApplicable, gstPercent },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable, discountPercent, gstApplicable, gstPercent, seenPrices },
   });
   if (billed.status !== 200) throw new Error(`Bill failed (${label}): ${JSON.stringify(billed.body)}`);
 

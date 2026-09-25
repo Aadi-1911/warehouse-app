@@ -83,6 +83,16 @@ async function login(username, password) {
   return body.token;
 }
 
+// Rule 113 (2026-09-25) — builds the seenPrices echo every bill now requires, from the same
+// fulfillment preview the owner's screen reads. Shared by every bill call in this file.
+async function seenPricesFor(token, orderId, locationId) {
+  const r = await api(`/api/orders/${orderId}/fulfillment-preview?locationId=${locationId}`, { token });
+  if (!Array.isArray(r.body?.lines)) {
+    throw new Error(`fulfillment-preview failed for order ${orderId}: ${JSON.stringify(r.body)}`);
+  }
+  return r.body.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
 const created = {
   orderIds: [],
   locationId: null,
@@ -256,10 +266,15 @@ async function main() {
   });
   console.log('  packed:', r.status);
 
+  // Rule 113 (2026-09-25) — a bill must echo back the per-line prices the fulfillment preview
+  // showed, so the server can refuse to bill at a price the owner never saw. Not optional:
+  // billOrder 400s without seenPrices. Nothing in this file changes a price between the preview
+  // and the bill, so the staleness guard never fires here.
+  const seenPrices = await seenPricesFor(ownerToken, orderId, created.locationId);
   r = await api(`/api/orders/${orderId}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices },
   });
   console.log('  billed:', r.status, 'preTax=', r.body.preTaxAmount, 'actualPayable=', r.body.actualPayable);
   const billedPreTax = Number(r.body.preTaxAmount);
