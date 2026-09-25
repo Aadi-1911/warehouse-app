@@ -1180,6 +1180,51 @@ Shape and gating copied directly from `FactoryDebit` (id/partyId/amount/date/not
 **What deliberately did not change:** rule 101's discount-then-GST ordering, rule 109's rounding, rule 108's correction endpoint (which recomputes from the stored `preTaxAmount` and so never re-resolves a location price), rule 23's freeze, the batched STOCK_OUT path, and STAFF never receiving any cost field. `GET /api/stock` still resolves selling price per row against that row's own location — after this change that is the normal case rather than the codebase's one exception.
 
 
+### 2026-09-25 — Rule 113: authorise the computed CHANGE, never the request's shape
+
+The task: let the OWNER change an article's unit price at the Bill confirm step, for that one bill only, behind a PIN. The hard part was never the price arithmetic — it was the word "conditional". Decision 4 says no change means no PIN, so the gate has to decide for itself whether a change happened, and a gate that decides wrongly is worse than no gate.
+
+**The pattern that was rejected, and why it was rejected before it was written.** The obvious implementation is a middleware that looks for `priceOverrides` in the body and demands a PIN when it's there. This codebase already has that shape — `routes/products.js`'s `requirePinForPriceEdits`:
+
+```js
+const editingPrice = 'costPrice' in req.body || 'sellingPrice' in req.body;
+```
+
+and that route file's own comment (lines 60-67) already records why it must not be reused for a price-WRITING route: it only recognises those two keys at the TOP level of a flat body, so a future body shape it doesn't know about means no PIN is asked while the handler still writes the price. The route that writes `LocationPrice` therefore takes `requirePin` unconditionally instead. Rule 113 can't do that, because decision 4 forbids demanding a PIN from an ordinary bill.
+
+**The resolution: the gate reads server-computed values, not the request.** `billOrder` now calls `computeBilledLines` twice — once with no overrides (the BASELINE, which is exactly what the preview showed) and once with them (the FINAL prices) — and asks whether any line's final price differs from its own baseline. Both sides of that comparison were produced by the same function from the same lines; nothing in it inspects `req.body`.
+
+That inverts the failure mode completely, and the inversion is the whole point:
+
+- Under `requirePinForPriceEdits`, an unrecognised body shape produced **no PIN and a real write**.
+- Under rule 113, an unrecognised shape never enters `overridesByProductId`, so it never enters `finalLines`, so **no price moves** — there is nothing for it to have bypassed. It also gets a 400 from the strict allowlist, but that 400 is the second line of defence, not the first.
+
+Anyone tempted to "simplify" this back into a body-shape check should read that sentence again: the strictness is not what makes it safe. Being structurally incapable of writing an unauthorised price is.
+
+**Strict body allowlist.** Any unknown top-level key on `PATCH /api/orders/:id/bill` is now a 400 naming it. Justified narrowly: billing is irreversible (rule 23) and its PIN requirement is conditional, so a body the server does not fully understand should not be acted on. Verified against both live callers before it went in — `BillOrderDetail.jsx` and `dashboard/Orders.jsx` send only a subset of the seven pre-existing keys.
+
+**`verifyPin` is imported, not copied, and it runs outside the transaction.** The first is ordinary discipline — `MAX_ATTEMPTS`, the 15-minute lockout and the failure counters exist once, in `middleware/requirePin.js`, and `userController`'s `updateOwnPin` had already established calling the exported core directly when middleware doesn't fit. The second is a specific hazard: `verifyPin` does a bcrypt compare, and `billOrder`'s transaction carries `{ timeout: 20000 }` earned by a real incident (2026-09-16) where a 17-line order sat at 99-101% of budget. A deliberately-slow hash inside that window would have reintroduced exactly what the batching there exists to prevent.
+
+**Gate order — validate → stale → stock → PIN.** The PIN runs last because a wrong one increments a real lockout counter, and a request that was going to be refused anyway should never cost the owner an attempt. The counter-argument (authorise early) is real but loses here: this secret has a lockout, so being kind about when it's spent has a concrete benefit and no security cost — nothing is written before any of these gates.
+
+**The stale-price guard is not a nicety.** The preview is explicitly not a reservation. Between preview and confirm, a `LocationPrice` edit moves the baseline, and on an overridden article that is genuinely dangerous: an owner who approved "₹500 → ₹480" approved a ₹20 cut, and against a silently-moved baseline of ₹550 the same ₹480 is a ₹70 cut they never reviewed — the PIN would have authorised a delta whose other half changed underneath it. So `seenPrices` is required and a mismatch is a 409 listing what moved. A per-line echo was chosen over an opaque `pricingVersion` hash because a hash can only say "something changed"; the server never learns what was shown, so it cannot name it.
+
+**Why the audit is a table and not a column.** `baselineUnitPrice` on `OrderLineItem` was the first idea and is cheaper. It fails three ways: the change's grain is per-ARTICLE and a column records one decision N times; rule 104 gates History by actor RELATION and a column has no actor; and there's no timestamp. `OrderPriceOverride` also stores BOTH figures rather than re-deriving the baseline later — re-deriving would answer "what would this resolve to today", so a later `PUT /location-prices` would silently rewrite history. Same argument `OrderBillingCorrection`'s `old*`/`new*` columns already make for themselves.
+
+**The mixed-baseline case, which the plan flagged and the owner decided.** One article's colours on one order really can carry different baselines, because `priceAtOrder` is per line and `PATCH /:id/lines` re-snapshots it. Rather than reject that order shape or pick one colour's figure, the row stores `baselineMin`/`baselineMax` and History renders `₹500–₹520 → ₹480`. "Changed" is then evaluated per LINE, not per article — a per-article comparison would have called a real change a no-op whenever it happened to pick the matching colour.
+
+**Below-cost stays client-side.** The warning has no enforcement role (the owner may bill below cost), so putting it on the server would buy nothing and would spend the preview's "returns no cost, reads no cost" invariant that `test-location-pricing.mjs` scenario F asserts. The OWNER already holds `costPrice` from the products API. The server keeps only what IS enforcement: `≤ 0` is a 400.
+
+**Price overrides flow into per-location revenue, intentionally.** `locationRevenue.js` reads `billedUnitPrice`, so an at-billing cut lands in that location's revenue and profit. That is the correct answer to "what did this location actually take" — reverting to the configured price would report money the business never received. The comments there now say so. The consequence, stated rather than buried: two locations' figures are no longer comparable purely from their configured prices, and a surprising number is explainable only by reading `OrderPriceOverride`.
+
+**⚠️ DEPLOY CONSTRAINT.** `seenPrices` is REQUIRED, and neither billing screen sends it yet. This backend deployed alone breaks billing outright — every confirm returns 400. The frontend task is a hard prerequisite, not a follow-up. Recorded here as well as in `06_ROADMAP.md` because a deploy decision made from the log alone would otherwise miss it.
+
+**Numbering.** 113, not 112. `main`/`staging` top out at 110; this branch claims 111; `fix-docs-2026-09-24` claims 112 and its own text records that it dodged 111 for this branch. Both are unmerged, so both numbers are spoken for. Separately: `rescue-analytics` runs an incompatible older scheme (111 = rounding, 109 = party state there) and is diverged and unmerged — a collision waiting for whoever merges it, unrelated to this task and not fixed here.
+
+**None of this has been run.** No migration applied, no server started, no test executed — the owner does all of it.
+
+
+
 ## Mistakes & Fixes
 
 Every entry here follows the same five-part structure, backend or frontend, no exceptions: **(1) Original approach** — what was tried first and why it seemed right at the time. **(2) What went wrong** — the actual symptom, and how it was noticed. **(3) Diagnosis** — how the real cause was tracked down, not just guessed at. **(4) The fix** — what was actually changed. **(5) Why this fix is correct** — the reasoning for why it addresses the real cause, not just a workaround that happened to make the symptom disappear.

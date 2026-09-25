@@ -577,6 +577,46 @@ model OrderLineItem {
 
 ---
 
+### 1.3 At-billing price override (rule 113) — built, migration not yet applied anywhere
+
+```prisma
+model OrderPriceOverride {
+  id                   String   @id @default(cuid())
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id])
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id])
+  articleNoSnapshot    String
+  productNameSnapshot  String
+  baselineMinUnitPrice Decimal
+  baselineMaxUnitPrice Decimal
+  overriddenUnitPrice  Decimal
+  setById              String
+  setBy                User     @relation(fields: [setById], references: [id])
+  createdAt            DateTime @default(now())
+
+  @@index([orderId])
+}
+```
+
+One row per **article** whose unit price the OWNER changed while billing (rule 113). A bill with no price change writes none, which is almost every bill.
+
+**Why a table rather than a `baselineUnitPrice` column on `OrderLineItem`.** The column was the first design considered and is cheaper — no join. It fails on three independent counts. *Grain*: the change is per article, one decision covering every colour, and a per-line column records that decision N times for History to deduplicate back into the one sentence a person wants. *No actor*: rule 104 gates History by actor **relation** — `actorScope()` takes a relation name and asks whether that actor is STAFF — and a bare column has no actor to relate to, so a price-override entry could not be gated the way every other owner-performed entry is. *No timestamp of its own.*
+
+**Why both money figures are stored rather than one re-derived.** Exactly the argument `OrderBillingCorrection`'s `old*`/`new*` columns already make. The baseline is resolved from `Product.hasLocationPricing` + `LocationPrice.sellingPrice` + the line's `priceAtOrder`, and the first two are freely editable *after* this bill. Re-deriving later would answer "what would this article resolve to today", not "what was it before the owner changed it" — so a later `PUT /location-prices` would silently rewrite the audit trail. Storing it is what makes the record survive.
+
+**Why the baseline is a range.** One article's colours on one order genuinely can carry different baselines: `priceAtOrder` is snapshotted per line and `PATCH /api/orders/:id/lines` re-snapshots it. `min` and `max` are equal in the normal case and History renders `₹500 → ₹480`; when they differ it renders `₹500–₹520 → ₹480`. Collapsing to one column would have forced a choice between recording one colour's baseline (false for the others), rejecting mixed-baseline articles (blocking a legitimate order shape), or averaging (a number no line ever had).
+
+**All three money columns are `NOT NULL`**, deliberately unlike `OrderBillingCorrection`'s nullable ones. Those are nullable to accommodate orders billed before rule 101 existed; this model has no prehistory — a row can only exist because an override actually happened, so nullability would model a state that cannot occur.
+
+**No unique constraint on `(orderId, productId)`.** One bill can only override an article once, but that is an application rule about a single request (`billOrder` rejects a duplicate `productId` with a 400 rather than last-wins), and a database constraint would also forbid a future re-bill of a reinstated order — a different question nobody has decided.
+
+**Pure audit.** Nothing reads this table to compute money; what the party is charged lives in `OrderLineItem.billedUnitPrice` and `Order.preTaxAmount`. It is written in the **same transaction** as both, because a bill whose figures committed without the record of why would be permanently unexplainable.
+
+**Migration status.** `20260925120000_add_order_price_override` — written, **not applied to any database yet**, including TEST. Purely additive: one new table, no existing column altered, no backfill.
+
+---
+
 ### 1.1 Hard Rules to Enforce in Application Code (not expressible in schema alone)
 
 - `Stock.qtySets` must only ever change as a side effect of creating a `Transaction` row, inside the same database transaction (atomic). Never expose a direct "edit stock quantity" endpoint.

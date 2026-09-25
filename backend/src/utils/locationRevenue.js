@@ -159,6 +159,20 @@ async function computeSalesByLocation(prisma, { from = null, to = null } = {}) {
     // charged that override, not the price quoted at placement, so attributing revenue from
     // priceAtOrder would credit this location with money nobody paid. Null billedUnitPrice means
     // the line was billed before 2026-09-25, where priceAtOrder IS what was charged.
+    //
+    // AS OF RULE 113 (2026-09-25) billedUnitPrice is no longer a pure function of (article,
+    // location, priceAtOrder): an OWNER can change any article's price at billing, for that one
+    // bill, behind a PIN. Such a price lands here and therefore in this location's revenue and
+    // profit. That is INTENDED, not a leak to be filtered out — this figure answers "what did this
+    // location actually take", and an ad-hoc discount given at the billing desk is money the party
+    // genuinely did not pay. Reverting to the configured price would report revenue the business
+    // never received.
+    //
+    // The consequence worth stating: two locations' profit figures are no longer comparable purely
+    // as a function of their configured prices and profitSharePercent, because either can carry
+    // one-off bill-level decisions. OrderPriceOverride is the record of every such decision, so a
+    // surprising location figure is explainable — but only by reading that table, not from this
+    // module's output alone.
     const unitRevenue = tx.orderLineItem.billedUnitPrice ?? tx.orderLineItem.priceAtOrder;
     const revenue = pieces * Number(unitRevenue);
 
