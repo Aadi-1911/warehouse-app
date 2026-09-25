@@ -3,8 +3,9 @@ import { ChevronIcon } from '../../components/icons';
 import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
-import { preBillingTotal, computeBillingAmounts, clampPercent } from '../../utils/orderBilling';
+import { computeBillingAmounts, clampPercent, seenPricesFromPreview, describeChangedLines } from '../../utils/orderBilling';
 import BillFulfillmentPicker from '../../components/BillFulfillmentPicker';
+import { useFulfillmentPreview } from '../../hooks/useFulfillmentPreview';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
@@ -148,8 +149,10 @@ export default function Orders() {
   const [billError, setBillError] = useState(null);
 
   // Discount/GST questions (added 2026-08-25, rule 101) — same shape and same shared
-  // computeBillingAmounts/preBillingTotal (utils/orderBilling.js) as BillOrderDetail.jsx, so
-  // this screen's live preview can never disagree with mobile's for the identical order.
+  // computeBillingAmounts (utils/orderBilling.js) as BillOrderDetail.jsx, so this screen's live
+  // preview can never disagree with mobile's for the identical order. The pre-tax figure it's
+  // applied on top of now comes from useFulfillmentPreview on both screens (rule 113), not from
+  // preBillingTotal — see that function's own comment for why.
   const [discountApplicable, setDiscountApplicable] = useState(false);
   const [discountPercent, setDiscountPercent] = useState('');
   const [gstApplicable, setGstApplicable] = useState(false);
@@ -159,6 +162,16 @@ export default function Orders() {
   // no location id is hardcoded on this screen either.
   const [fulfillLocationId, setFulfillLocationId] = useState(null);
   const [locationConfirmed, setLocationConfirmed] = useState(false);
+
+  // The SAME preview BillFulfillmentPicker shows, fetched once here rather than a second time
+  // inside it — see that component's header comment and useFulfillmentPreview's own. Keyed on
+  // `billTarget?.id`: there is only ever one order being billed at a time on this page (a list of
+  // many rows, one active confirm modal), so this doesn't need to be per-row state. `null` when no
+  // order is targeted, which the hook treats the same as "nothing to fetch yet".
+  const { status: previewStatus, preview, error: previewError, refetch: refetchPreview } = useFulfillmentPreview(
+    billTarget?.id ?? null,
+    fulfillLocationId
+  );
 
   // Independent of the fetched data — a pure calendar fact, computed once at mount, so it never
   // resets back to "this month" on a refetch (e.g. after billing an order) if the owner had
@@ -219,11 +232,20 @@ export default function Orders() {
   async function handleConfirmBill() {
     const target = billTarget;
     setBillError(null);
+    // Defensive, not decorative — the confirm button is disabled while `preview` is unready (see
+    // billingInputIncomplete below). Same guard BillOrderDetail.jsx's identical handler uses,
+    // and for the same reason: a UI-only guard is never trusted as the real one on the one
+    // irreversible action in the whole order lifecycle.
+    if (!preview) {
+      setBillError('Prices are still loading for this location — wait a moment and try again.');
+      return;
+    }
     setBilling(true);
     try {
-      // Only the raw applicable/percent inputs go over the wire — same reasoning as
-      // BillOrderDetail.jsx's identical call: the server independently recomputes and stores
-      // preTaxAmount/finalAmount/actualPayable, never trusting a client-computed figure.
+      // Only the raw applicable/percent inputs and the seenPrices echo go over the wire — same
+      // reasoning as BillOrderDetail.jsx's identical call: the server independently recomputes
+      // and stores preTaxAmount/finalAmount/actualPayable, never trusting a client-computed
+      // figure. The body is exactly the keys PATCH /api/orders/:id/bill allows (04_API_SPEC.md).
       const updated = await billOrder(target.id, {
         discountApplicable,
         discountPercent: discountApplicable ? Number(discountPercent) : null,
@@ -233,6 +255,9 @@ export default function Orders() {
         // locationConfirmed !== true independently of anything this screen does.
         locationId: fulfillLocationId,
         locationConfirmed,
+        // Rule 113 — required on every bill. Built from exactly the `preview` object rendered on
+        // screen, so this describes what the owner actually saw, never a recomputation.
+        seenPrices: seenPricesFromPreview(preview),
       });
       setBillTarget(null);
       // Reflect the new status immediately in both the collapsed row (from the list refetch,
@@ -241,10 +266,19 @@ export default function Orders() {
       loadOrders();
       setDetails((prev) => ({ ...prev, [target.id]: { status: 'loaded', order: updated } }));
     } catch (err) {
-      // Same two realistic failures BillOrderDetail's own confirm handles: INSUFFICIENT_STOCK
-      // (stock moved since this list loaded) and ORDER_NOT_PACKED (billed from elsewhere first).
+      // PRICES_CHANGED (rule 113) gets its own message naming what moved, and forces a fresh
+      // preview for the next attempt — the owner must look again and press "Mark billed" a second
+      // time; this never retries the bill itself. The two pre-existing realistic failures
+      // (INSUFFICIENT_STOCK, ORDER_NOT_PACKED) keep their real backend message verbatim.
+      if (err.code === 'PRICES_CHANGED' && Array.isArray(err.extra?.changedLines)) {
+        setBillError(
+          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review the new prices and mark billed again.`
+        );
+        refetchPreview();
+      } else {
+        setBillError(err.message);
+      }
       setBillTarget(null);
-      setBillError(err.message);
     } finally {
       setBilling(false);
     }
@@ -308,10 +342,20 @@ export default function Orders() {
               className="btn-primary btn-inline"
               onClick={() => {
                 setBillTarget(order);
-                // Ensures the confirm modal's live discount/GST preview has real line-item
-                // detail to compute from — this button is reachable from the collapsed header,
-                // so the row isn't necessarily expanded (and its detail fetched) already.
+                // Keeps the row's own expanded-body detail in sync — this button is reachable
+                // from the collapsed header, so the row isn't necessarily expanded (and its
+                // detail fetched) already. NOT what the confirm modal's pricing depends on any
+                // more (rule 113): the modal's total, per-line prices and confirm-readiness all
+                // come from the fulfillment preview below instead of this order detail's
+                // priceAtOrder — see billingInputIncomplete's own comment.
                 ensureDetail(order.id);
+                // Force a fresh fulfillment preview every time this modal opens, even for the
+                // SAME order at the SAME location as a previous attempt — fulfillLocationId
+                // persists across a cancelled confirm (handleCancelBillConfirm), so without this
+                // a reopened modal could otherwise show a preview fetched minutes ago. Harmless
+                // either way (billOrder's own stale-price check is the real guard), but this
+                // keeps what's ON SCREEN honest. A no-op while fulfillLocationId is still null.
+                refetchPreview();
               }}
               disabled={billing}
             >
@@ -504,13 +548,22 @@ export default function Orders() {
 
   const visibleMonthOrders = monthOrders.filter((o) => monthKeyOf(bucketDateOf(o)) === selectedMonth);
 
-  // Live discount/GST preview for the bill-confirm modal (rule 101) — depends on billTarget's
-  // full line-item detail, which "Mark billed" ensures gets fetched (ensureDetail) but may not
-  // have resolved yet the instant the modal opens; billDetailReady gates the confirm button so
-  // billing can't proceed on an amount that hasn't actually been computed.
-  const billDetail = billTarget ? details[billTarget.id] : null;
-  const billDetailReady = billDetail?.status === 'loaded';
-  const billPreTaxAmount = billDetailReady ? preBillingTotal(billDetail.order.lineItems) : 0;
+  // Whether there's a real, CURRENT preview to bill from — "current" meaning it matches
+  // fulfillLocationId AND billTarget.id, which useFulfillmentPreview guarantees by resetting
+  // `preview` to null the instant either changes (see that hook's own comment). previewError
+  // counts as NOT ready: a failed fetch leaves nothing safe to build seenPrices from.
+  const previewReady = previewStatus === 'loaded' && !!preview && !previewError;
+
+  // Live discount/GST preview for the bill-confirm modal (rule 101/113) — now built on
+  // preview.preTaxAmount, the SAME billedUnitPrice-based figure billOrder() itself computes and
+  // charges (utils/locationPricing.js), rather than a client-side sum of priceAtOrder from the
+  // lazily-fetched order detail. That distinction is the whole point of this task: priceAtOrder is
+  // what the party was quoted, which can differ from what they're actually billed once an article
+  // has a location-level selling override (rule 111). previewReady replaces the old
+  // billDetailReady as the readiness gate — the order detail (`details[billTarget.id]`) still gets
+  // fetched via ensureDetail for the row's own expanded body, but the confirm modal no longer
+  // depends on it.
+  const billPreTaxAmount = previewReady ? preview.preTaxAmount : 0;
   const billAmounts = computeBillingAmounts({
     preTaxAmount: billPreTaxAmount,
     discountApplicable,
@@ -518,11 +571,14 @@ export default function Orders() {
     gstApplicable,
     gstPercent,
   });
+  // !previewReady is new (rule 113) and is the button-disabling half of "never bill with a
+  // previous location's prices" — same reasoning as BillOrderDetail.jsx's identical guard.
   const billingInputIncomplete =
     (discountApplicable && !billAmounts.hasDiscount) ||
     (gstApplicable && !billAmounts.hasGst) ||
     !fulfillLocationId ||
-    !locationConfirmed;
+    !locationConfirmed ||
+    !previewReady;
 
   return (
     <>
@@ -591,77 +647,91 @@ export default function Orders() {
         tone="danger"
         onConfirm={handleConfirmBill}
         onCancel={handleCancelBillConfirm}
-        confirmDisabled={billing || !billDetailReady || billingInputIncomplete}
+        confirmDisabled={billing || billingInputIncomplete}
       >
         <div className="bill-pricing-questions">
-          {!billDetailReady ? (
-            <p className="muted bill-pricing-pretax">Loading order total…</p>
+          {/* Rule 113 — sourced from the fulfillment preview, not priceAtOrder. Same three-plus-one
+              state structure as BillOrderDetail.jsx's identical block: no location chosen yet,
+              loading, a failed fetch (billing is blocked either way — see billingInputIncomplete —
+              so this says why), or ready. billTarget is always truthy here: these children only
+              render while the modal is open, and the modal's own `open` is `!!billTarget`. */}
+          {!fulfillLocationId ? (
+            <p className="muted bill-pricing-pretax">Choose a fulfilment location to see the order total.</p>
+          ) : previewError ? (
+            <p className="error-banner" role="alert">
+              Could not load prices for this location: {previewError}
+            </p>
+          ) : !previewReady ? (
+            <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
           ) : (
-            <>
-              <p className="muted bill-pricing-pretax">Order total: {formatCurrency(billPreTaxAmount)}</p>
-
-              {/* Fulfilment location above the money questions, same order as mobile. */}
-              <BillFulfillmentPicker
-                orderId={billTarget.id}
-                locationId={fulfillLocationId}
-                onLocationChange={setFulfillLocationId}
-                confirmed={locationConfirmed}
-                onConfirmedChange={setLocationConfirmed}
-              />
-
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={discountApplicable}
-                  onChange={(e) => setDiscountApplicable(e.target.checked)}
-                />
-                Apply a discount?
-              </label>
-              {discountApplicable && (
-                <div className="field bill-pricing-percent-field">
-                  <span className="field-label">Discount %</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={discountPercent}
-                    onChange={(e) => setDiscountPercent(clampPercent(e.target.value, 100))}
-                    placeholder="e.g. 5"
-                    autoFocus
-                  />
-                </div>
-              )}
-              {billAmounts.hasDiscount && (
-                <p className="bill-pricing-line">
-                  −{formatCurrency(billAmounts.discountAmount)} discount → {formatCurrency(billAmounts.finalAmount)}
-                </p>
-              )}
-
-              <label className="checkbox-field">
-                <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
-                Apply GST?
-              </label>
-              {gstApplicable && (
-                <div className="field bill-pricing-percent-field">
-                  <span className="field-label">GST %</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.01"
-                    value={gstPercent}
-                    onChange={(e) => setGstPercent(clampPercent(e.target.value, 5))}
-                    placeholder="e.g. 5"
-                    autoFocus
-                  />
-                </div>
-              )}
-              {billAmounts.hasGst && <p className="bill-pricing-line">+{formatCurrency(billAmounts.gstAmount)} GST</p>}
-
-              <p className="bill-pricing-final">Total to bill: {formatCurrency(billAmounts.actualPayable)}</p>
-            </>
+            <p className="muted bill-pricing-pretax">Order total: {formatCurrency(billPreTaxAmount)}</p>
           )}
+
+          {/* Fulfilment location above the money questions, same order as mobile. Rendered
+              unconditionally (not gated on previewReady) because it's what SELECTS the location
+              that makes a preview exist in the first place — same reasoning as
+              BillOrderDetail.jsx's identical placement. */}
+          <BillFulfillmentPicker
+            locationId={fulfillLocationId}
+            onLocationChange={setFulfillLocationId}
+            confirmed={locationConfirmed}
+            onConfirmedChange={setLocationConfirmed}
+            previewStatus={previewStatus}
+            preview={preview}
+            previewError={previewError}
+          />
+
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={discountApplicable}
+              onChange={(e) => setDiscountApplicable(e.target.checked)}
+            />
+            Apply a discount?
+          </label>
+          {discountApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">Discount %</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={discountPercent}
+                onChange={(e) => setDiscountPercent(clampPercent(e.target.value, 100))}
+                placeholder="e.g. 5"
+                autoFocus
+              />
+            </div>
+          )}
+          {billAmounts.hasDiscount && (
+            <p className="bill-pricing-line">
+              −{formatCurrency(billAmounts.discountAmount)} discount → {formatCurrency(billAmounts.finalAmount)}
+            </p>
+          )}
+
+          <label className="checkbox-field">
+            <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
+            Apply GST?
+          </label>
+          {gstApplicable && (
+            <div className="field bill-pricing-percent-field">
+              <span className="field-label">GST %</span>
+              <input
+                type="number"
+                min="0"
+                max="5"
+                step="0.01"
+                value={gstPercent}
+                onChange={(e) => setGstPercent(clampPercent(e.target.value, 5))}
+                placeholder="e.g. 5"
+                autoFocus
+              />
+            </div>
+          )}
+          {billAmounts.hasGst && <p className="bill-pricing-line">+{formatCurrency(billAmounts.gstAmount)} GST</p>}
+
+          <p className="bill-pricing-final">Total to bill: {formatCurrency(billAmounts.actualPayable)}</p>
         </div>
       </ConfirmModal>
     </>
