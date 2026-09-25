@@ -5,7 +5,7 @@ const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
 const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
 const { computeBillingAmounts } = require('../utils/orderBillingAmounts');
-const { resolvePrice, findLocationPrice, getOrderPricingLocationId } = require('../utils/locationPricing');
+const { billingPriceProductSelect, computeBilledLines } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -19,6 +19,11 @@ const LINE_ITEM_SELECT = {
   qtySetsPacked: true,
   isCancelled: true,
   priceAtOrder: true,
+  // What this line was actually billed at (rule 111, 2026-09-25). Deliberately NOT role-gated,
+  // exactly like priceAtOrder beside it: this is a selling figure, the party-facing side, and
+  // carries no cost or margin information. Null on an unbilled line and on any order billed
+  // before 2026-09-25 — consumers must read that as "no billed price recorded", never as zero.
+  billedUnitPrice: true,
   productNameSnapshot: true,
   bundle: {
     select: {
@@ -98,6 +103,9 @@ function lineItemToResponse(li) {
     qtySetsPacked: li.qtySetsPacked,
     isCancelled: li.isCancelled,
     priceAtOrder: li.priceAtOrder,
+    // `?? null` rather than passed straight through, matching Order.roundingAdjustment's own
+    // treatment: an explicit null is a clearer contract for the client than an absent key.
+    billedUnitPrice: li.billedUnitPrice ?? null,
   };
 }
 
@@ -171,41 +179,23 @@ async function createOrder(req, res) {
     return sendError(res, 409, 'PARTY_ARCHIVED', `Party "${party.name}" is archived and cannot receive new orders`);
   }
 
-  // The single location every Order prices against (rule 111, 2026-09-23) — Gurgaon, resolved by
-  // name, NOT wherever this order eventually bills from. An OrderLineItem has no location at this
-  // point and structurally cannot: the fulfillment location is the owner's explicit choice at
-  // BILLING time, one or two status transitions after this snapshot is taken. See
-  // utils/locationPricing.js for the full reasoning, including why re-reading the price at billing
-  // was rejected outright (it would break priceAtOrder's whole guarantee).
-  //
-  // Null when no Gurgaon Location row exists at all, which makes every lookup below miss and every
-  // price fall back to Product.sellingPrice — i.e. exactly the pre-rule-111 behaviour.
-  const pricingLocationId = await getOrderPricingLocationId(prisma);
-
   // One batch fetch for every bundle referenced, rather than one query per line item — same
   // "resolve everything, then validate" shape as the rest of this check, and avoids N+1 queries
   // for a multi-line order.
+  //
+  // No location is consulted here, deliberately (rule 111 as revised 2026-09-25). An OrderLineItem
+  // has no location at this point and structurally cannot: the fulfillment location is the owner's
+  // explicit choice at BILLING time, one or two status transitions after this snapshot is taken.
+  // So placement snapshots the plain base price, and billOrder resolves the location-aware price
+  // later into OrderLineItem.billedUnitPrice. Between 2026-09-23 and 2026-09-25 this resolved
+  // against a fixed named location (Gurgaon) instead — that pinning is gone, because it meant a
+  // location's override could never actually reach a bill.
   const bundleIds = [...new Set(lineItems.map((li) => li.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
     select: {
       id: true,
-      product: {
-        select: {
-          sellingPrice: true,
-          name: true,
-          // Narrowed to the pricing location in Postgres, the same shape transactionController
-          // uses. `where: { locationId: null }` would be a type error, so the filter is only
-          // applied when there is a real id to filter by; with no Gurgaon row the array comes back
-          // holding every location's override and findLocationPrice(…, null) then matches none of
-          // them — still the correct fallback, just decided in JS instead of in the query.
-          hasLocationPricing: true,
-          locationPrices: {
-            ...(pricingLocationId ? { where: { locationId: pricingLocationId } } : {}),
-            select: { locationId: true, sellingPrice: true },
-          },
-        },
-      },
+      product: { select: { sellingPrice: true, name: true } },
     },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
@@ -217,24 +207,20 @@ async function createOrder(req, res) {
   // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, for
   // exactly the same reason — a later rename must not rewrite what this order said it was for.
   //
-  // "The selling price in effect" is Gurgaon's override if the article has one, else the article's
-  // own sellingPrice (rule 111). Unchanged for every article with hasLocationPricing false.
+  // "The selling price in effect" is the article's own base sellingPrice, full stop — no location
+  // is involved (see the read above). This is the price quoted to the party at the counter, and it
+  // stays frozen on this line forever (rule 23); what the order is eventually BILLED at is
+  // recorded separately in billedUnitPrice at billing time.
   //
-  // The UNPRICED_PRODUCT check below deliberately tests the RESOLVED price, not the base one: if
-  // an opted-in article somehow resolves to null it is genuinely unsellable and must be rejected
-  // here rather than writing a null priceAtOrder into a NOT NULL column and failing as a raw
-  // Prisma error several lines later.
+  // A null base price is genuinely unsellable and is rejected here rather than writing a null
+  // priceAtOrder into a NOT NULL column and failing as a raw Prisma error several lines later.
   const resolvedLineItems = [];
   for (const li of lineItems) {
     const bundle = bundleById.get(li.bundleId);
     if (!bundle) {
       return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${li.bundleId}`);
     }
-    const priceAtOrder = resolvePrice({
-      product: bundle.product,
-      locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
-      field: 'sellingPrice',
-    });
+    const priceAtOrder = bundle.product.sellingPrice ?? null;
     if (priceAtOrder == null) {
       return sendError(
         res,
@@ -719,8 +705,22 @@ async function billOrder(req, res) {
           // same fields listOrders' own totalValue reads, just qtySetsPacked-based instead of
           // qtySetsRequested-based (rule 101 — billing commits against what was actually packed,
           // the same basis BillOrderDetail.jsx's frontend total has always used for this screen).
+          //
+          // billingPriceProductSelect adds the two fields the location-aware price needs, narrowed
+          // to THIS bill's location in Postgres (rule 111). `location` is already validated above,
+          // so there is a real id to filter by — no by-name lookup, no null case.
           priceAtOrder: true,
-          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+          bundle: {
+            select: {
+              product: {
+                select: {
+                  isKids: true,
+                  sizes: { select: { sizeLabel: true, qty: true } },
+                  ...billingPriceProductSelect(location.id),
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -737,13 +737,25 @@ async function billOrder(req, res) {
     return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
   }
 
-  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × priceAtOrder, summed
+  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × billedUnitPrice, summed
   // across non-cancelled lines only. Computed from THIS SAME already-fetched order.lineItems,
   // not a second query — a cancelled line's qtySetsPacked is irrelevant either way since it's
   // filtered out here, same as it's excluded from linesToDeduct below.
-  const preTaxAmount = order.lineItems
-    .filter((li) => !li.isCancelled)
-    .reduce((sum, li) => sum + li.qtySetsPacked * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder), 0);
+  //
+  // The unit price is now billedUnitPrice, not priceAtOrder (rule 111 as revised 2026-09-25): for
+  // an opted-in article this order bills from a location with an override, the party is charged
+  // that location's price, and for everything else it resolves straight back to priceAtOrder.
+  // Rule 101's basis is otherwise untouched — same packed-quantity multiplication, same
+  // cancelled-line exclusion, and the discount/GST arithmetic below still receives a plain number.
+  //
+  // computeBilledLines is THE shared resolution, also called by previewOrderFulfillment — so the
+  // preview an owner sees before pressing the irreversible button and the figure actually written
+  // here cannot disagree.
+  const { lines: billedLines, preTaxAmount } = computeBilledLines({
+    lineItems: order.lineItems.filter((li) => !li.isCancelled),
+    locationId: location.id,
+  });
+  const billedUnitPriceByLineId = new Map(billedLines.map((l) => [l.lineItemId, l.billedUnitPrice]));
 
   // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
   // never the original preTaxAmount. Never trusts a client-computed final number; these are the
@@ -921,6 +933,40 @@ async function billOrder(req, res) {
         })),
       });
 
+      // billedUnitPrice, one write per NON-CANCELLED line (rule 111, 2026-09-25) — keyed on
+      // billedLines, not linesToDeduct. The two differ for a line packed at zero: it deducts no
+      // stock, so it has no STOCK_OUT row above, but it IS part of the bill and contributes its
+      // (zero) amount to preTaxAmount, so it must record what it was billed at like every other
+      // line. Recording it only for deducted lines would leave a billed line with a null price
+      // after this date, which this column's schema comment says can never happen.
+      //
+      // Inside the same transaction as the Order's own billing columns deliberately: preTaxAmount
+      // is summed FROM these figures, so an order whose stored total didn't match its stored line
+      // prices would be a contradiction the database briefly published. updateMany per distinct
+      // price rather than one update per line, the same round-trip-reduction shape the STOCK_OUT
+      // batching above uses and for the same cross-region-latency reason (rule 101's P2028
+      // incident, 2026-09-16) — a normal order resolves to exactly one distinct price, so this is
+      // one statement, not one per line.
+      const lineIdsByPrice = new Map();
+      for (const l of billedLines) {
+        const key = String(l.billedUnitPrice);
+        if (!lineIdsByPrice.has(key)) lineIdsByPrice.set(key, { price: l.billedUnitPrice, ids: [] });
+        lineIdsByPrice.get(key).ids.push(l.lineItemId);
+      }
+      for (const { price, ids } of lineIdsByPrice.values()) {
+        // Sorted for a deterministic lock order, same reasoning as the stock updateMany above.
+        ids.sort();
+        const written = await tx.orderLineItem.updateMany({
+          where: { id: { in: ids } },
+          data: { billedUnitPrice: price },
+        });
+        if (written.count !== ids.length) {
+          throw new Error(
+            `billedUnitPrice write matched ${written.count} of ${ids.length} lines on order ${id} — aborting rather than billing with an incomplete price record`
+          );
+        }
+      }
+
       await tx.order.update({
         where: { id },
         data: {
@@ -1028,7 +1074,24 @@ async function previewOrderFulfillment(req, res) {
           qtySetsPacked: true,
           isCancelled: true,
           productNameSnapshot: true,
-          bundle: { select: { color: { select: { name: true } }, product: { select: { articleNo: true, name: true } } } },
+          // priceAtOrder + the piecesPerSetFor shape + billingPriceProductSelect are what
+          // computeBilledLines needs — identical to billOrder's own read, because this endpoint's
+          // whole purpose is to say what billOrder WOULD do.
+          priceAtOrder: true,
+          bundle: {
+            select: {
+              color: { select: { name: true } },
+              product: {
+                select: {
+                  articleNo: true,
+                  name: true,
+                  isKids: true,
+                  sizes: { select: { sizeLabel: true, qty: true } },
+                  ...billingPriceProductSelect(location.id),
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -1048,6 +1111,27 @@ async function previewOrderFulfillment(req, res) {
   const linesToDeduct = deductibleLinesOf(order);
   const { lines } = await checkLocationAvailability(prisma, { lineItems: linesToDeduct, locationId: location.id });
 
+  // The prices this order WOULD be billed at from this location (rule 111, 2026-09-25), via the
+  // SAME computeBilledLines call billOrder makes — not a second implementation of the same rule.
+  // That sharing is the whole point: this endpoint exists so a wrong-location choice is visible
+  // BEFORE the irreversible button, and a preview computing prices its own way could show a
+  // number the bill then contradicts, which is worse than showing no number at all.
+  //
+  // Note the basis difference from billOrder, which is deliberate and matches what this endpoint
+  // already does for stock: billOrder sums every non-cancelled line, while this sums
+  // linesToDeduct (non-cancelled AND qtySetsPacked > 0). A line packed at zero contributes
+  // exactly 0 to either sum — qtySetsPacked is a factor in the multiplication — so the two
+  // preTaxAmounts agree to the rupee regardless.
+  //
+  // NO COST FIELD IS RETURNED HERE, and none is even read: this is an OWNER-only route today, but
+  // the preview is about what a PARTY will be charged, and cost has no business in that answer.
+  // Nothing below derives from Product.costPrice.
+  const { lines: billedLines, preTaxAmount } = computeBilledLines({
+    lineItems: linesToDeduct,
+    locationId: location.id,
+  });
+  const billedPriceByLineId = new Map(billedLines.map((l) => [l.lineItemId, l.billedUnitPrice]));
+
   // Line identity (article/colour) is joined on here purely for display — the check function
   // itself deals only in ids, and the frontend needs something a person can actually read when a
   // line is flagged short.
@@ -1057,6 +1141,10 @@ async function previewOrderFulfillment(req, res) {
     locationId: location.id,
     locationName: location.name,
     canFulfill: lines.every((l) => l.sufficient),
+    // The figure billOrder would store as Order.preTaxAmount for this location. Pre-discount and
+    // pre-GST, exactly like the stored column — the client applies its own live discount/GST
+    // preview on top (utils/orderBilling.js), and billOrder independently recomputes all of it.
+    preTaxAmount,
     lines: lines.map((l) => {
       const li = byId.get(l.lineItemId);
       return {
@@ -1064,6 +1152,9 @@ async function previewOrderFulfillment(req, res) {
         articleNo: li?.bundle?.product?.articleNo ?? null,
         productName: li?.productNameSnapshot ?? li?.bundle?.product?.name ?? null,
         colorName: li?.bundle?.color?.name ?? null,
+        // What this line would be billed at, per piece, from this location. Equal to the line's
+        // priceAtOrder unless the article is opted in AND this location overrides it.
+        billedUnitPrice: billedPriceByLineId.get(l.lineItemId) ?? null,
       };
     }),
   });
@@ -1229,29 +1320,18 @@ async function updateOrderLines(req, res) {
   // a line added to an existing order is still a NEW line, so it snapshots the name as of now,
   // not as of whenever the order it's joining was originally placed.
   //
-  // Rule 111 applies identically to createOrder's copy, deliberately: a line added later is still
-  // priced against Gurgaon, not against the order's eventual fulfillment location (which still
-  // isn't chosen — this endpoint only runs on a PLACED or PACKED order). Pricing an added line by
-  // a different rule than the lines it joins would put two pricing bases on one order.
+  // Rule 111 applies identically to createOrder's copy, deliberately: an added line snapshots the
+  // base price with no location consulted, exactly as the lines it joins did. It picks up its
+  // billedUnitPrice from the same billing-location resolution as every other line on the order, so
+  // one order can never end up with two pricing bases on it.
   const resolvedNewLines = [];
   if (hasNewLines) {
-    const pricingLocationId = await getOrderPricingLocationId(prisma);
     const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
     const bundles = await prisma.bundle.findMany({
       where: { id: { in: bundleIds } },
       select: {
         id: true,
-        product: {
-          select: {
-            sellingPrice: true,
-            name: true,
-            hasLocationPricing: true,
-            locationPrices: {
-              ...(pricingLocationId ? { where: { locationId: pricingLocationId } } : {}),
-              select: { locationId: true, sellingPrice: true },
-            },
-          },
-        },
+        product: { select: { sellingPrice: true, name: true } },
       },
     });
     const bundleById = new Map(bundles.map((b) => [b.id, b]));
@@ -1260,11 +1340,7 @@ async function updateOrderLines(req, res) {
       if (!bundle) {
         return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${nl.bundleId}`);
       }
-      const priceAtOrder = resolvePrice({
-        product: bundle.product,
-        locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
-        field: 'sellingPrice',
-      });
+      const priceAtOrder = bundle.product.sellingPrice ?? null;
       if (priceAtOrder == null) {
         return sendError(
           res,

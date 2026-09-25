@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const { resolvePrice, findLocationPrice } = require('../utils/locationPricing');
+const { findLocationPrice } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -34,14 +34,15 @@ async function listStock(req, res) {
               factoryId: true,
               isActive: true,
               sellingPrice: true,
-              // Rule 111 (2026-09-23). Unfiltered — this endpoint returns rows for every location
-              // at once, so the per-row match happens in JS below.
+              // Rule 111. Unfiltered — this endpoint returns rows for every location at once, so
+              // the per-row match happens in JS below.
               //
-              // costPrice is deliberately absent from this nested select, at every role. GET
-              // /api/stock is ANY-ROLE, so selecting LocationPrice.costPrice here would leak cost
-              // price to STAFF through the relation even though this file has always been careful
-              // never to select Product.costPrice itself. Same never-fetch discipline, one level
-              // deeper — see productController.js's productSelect header.
+              // No cost field appears anywhere in this select, at any role, which is the standing
+              // requirement for this endpoint: GET /api/stock is ANY-ROLE and must never put cost
+              // price in front of STAFF. Product.costPrice has always been excluded here;
+              // LocationPrice carried a costPrice column between 2026-09-23 and 2026-09-25 which
+              // was likewise never selected, and since the 2026-09-25 revision made cost global
+              // that column no longer exists at all.
               hasLocationPricing: true,
               locationPrices: { select: { locationId: true, sellingPrice: true } },
               factory: { select: { name: true } },
@@ -99,21 +100,29 @@ async function listStock(req, res) {
     productArticleNo: s.bundle.product.articleNo,
     productName: s.bundle.product.name,
     productIsActive: s.bundle.product.isActive,
-    // Rule 111 (2026-09-23) — resolved against THIS row's own location, and this is the one
-    // selling-price site in the codebase that is NOT pinned to Gurgaon. The difference is real,
-    // not an inconsistency: a Stock row IS a per-bundle-per-location quantity, so it already knows
-    // the location its price question is about. An OrderLineItem never does (its fulfillment
-    // location isn't chosen until billing), which is the entire reason the Order/Return path has
-    // to name a fixed pricing location instead — see utils/locationPricing.js.
+    // Rule 111 — resolved against THIS row's own location. A Stock row IS a
+    // per-bundle-per-location quantity, so it already knows the location its price question is
+    // about, and the answer is simply "what does this pile of stock, here, sell for" — exactly
+    // what the Owner Dashboard's Live Stock page asks of it.
     //
-    // So this field answers "what does this pile of stock, here, sell for", which is exactly what
-    // the Owner Dashboard's Live Stock page asks of it. It is NOT the price an order for this
-    // article would be written at, and nothing should treat it as such.
-    productSellingPrice: resolvePrice({
-      product: s.bundle.product,
-      locationPrice: findLocationPrice(s.bundle.product.locationPrices, s.locationId),
-      field: 'sellingPrice',
-    }),
+    // Between 2026-09-23 and 2026-09-25 this was the codebase's one location-aware selling-price
+    // site, because orders were pinned to a fixed named location. That pinning is gone: an order
+    // now bills at its own billing location's price too, so this is the normal case rather than
+    // an exception.
+    //
+    // Still NOT the price a given order was or would be written at, and nothing should treat it as
+    // such — an order line carries its own frozen priceAtOrder and, once billed, its own
+    // billedUnitPrice. This field is about stock on a shelf, not about any order.
+    //
+    // The inline fallback rather than a shared resolver: resolveBilledUnitPrice falls back to a
+    // line's priceAtOrder, which a Stock row has no equivalent of, and resolveReturnUnitPrice is
+    // named for a different question. Both would read as the wrong thing here.
+    productSellingPrice: (() => {
+      const p = s.bundle.product;
+      if (!p.hasLocationPricing) return p.sellingPrice ?? null;
+      const override = findLocationPrice(p.locationPrices, s.locationId)?.sellingPrice ?? null;
+      return override ?? p.sellingPrice ?? null;
+    })(),
     factoryId: s.bundle.product.factoryId,
     factoryName: s.bundle.product.factory.name,
     colorName: s.bundle.color.name,

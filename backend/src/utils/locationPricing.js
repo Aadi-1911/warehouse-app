@@ -1,108 +1,162 @@
-// Location-differentiated pricing resolution (05_BUSINESS_RULES.md rule 111, added 2026-09-23).
+// Location-differentiated pricing resolution (05_BUSINESS_RULES.md rule 111).
 //
-// THE WHOLE POINT OF THIS FILE is that the four-way branch below exists exactly once. Every call
-// site that needs "what does this article cost / sell for, here?" imports resolvePrice and asks;
-// none of them re-implements the fallback chain. This is the same treatment
-// utils/orderBillingAmounts.js already gets for the discount/GST arithmetic (rule 108), and for
-// the same reason: money rules that are copied are money rules that silently diverge, and a
-// divergence here means two screens quoting two different prices for the same article at the same
-// location with no way to tell which one is right.
+// THE WHOLE POINT OF THIS FILE is that the "what is this line billed at, here?" decision exists
+// exactly once. billOrder and GET /api/orders/:id/fulfillment-preview both answer it, and they
+// MUST agree to the rupee — the preview's entire job is telling the owner what the bill will say
+// before the irreversible button. Two separately-written copies of that resolution would be two
+// copies free to drift, and a drift here means a preview that quotes one number and a bill that
+// charges another. Same treatment utils/orderBillingAmounts.js gets for the discount/GST
+// arithmetic (rule 108), for the same reason.
 //
-// === Why a price can differ by location at all ===
-// Confirmed as a real business fact 2026-09-23: both halves genuinely vary. Cost varies because
-// the factory deal and the transport cost into Delhi differ from Gurgaon's. Selling varies for
-// the downstream reason. This REPLACES the assumption previously stated on
-// Location.profitSharePercent's schema comment and in utils/locationRevenue.js ("cost price is
-// identical regardless of location"), both corrected in the same commit as this file.
+// === What varies by location, and what doesn't ===
+// SELLING price varies: an article can be sold for more at one location than another, and an order
+// billed from that location is charged its price. COST does not — the owner clarified on
+// 2026-09-25 that an article costs what it costs regardless of where it sits, so every cost site
+// reads Product.costPrice directly and nothing in this file deals in cost at all.
 //
-// === What this file does NOT decide ===
-// WHICH location a caller resolves against. That is the caller's question and it has genuinely
-// different answers in different places — see the selling-price note in orderController.js for
-// why an Order always prices against Gurgaon specifically, while stockController.js resolves
-// against each Stock row's own real location. This function takes a locationPrice row (or none)
-// and applies the fallback chain to it; it never looks a location up itself.
+// === Why the fallback is priceAtOrder, not the current Product.sellingPrice ===
+// A line that resolves no location override falls back to its OWN priceAtOrder — the price
+// snapshotted when the order was placed. NOT the article's current base price. This is rule 23's
+// freeze doing its job: an article repriced between placement and billing must not change what
+// this party is charged, which is the entire guarantee priceAtOrder exists to provide. Reading the
+// live Product.sellingPrice at billing would quietly undo it for every order in the system, not
+// just location-priced ones.
 
-// The fallback chain, in full. Four cases, three of which land on the Product's own value:
+const { piecesPerSetFor } = require('./piecesPerSet');
+
+// The single resolution rule, for one line, stated once.
 //
-//   1. hasLocationPricing false             → product[field]      (the toggle is off; nothing else
-//                                                                  is even consulted)
-//   2. true, no row for that location       → product[field]      (this location has no override)
-//   3. true, row exists, row[field] == null → product[field]      (this location overrides the
-//                                                                  OTHER field, not this one)
-//   4. true, row exists, row[field] set     → locationPrice[field] (the only case that differs)
+//   1. hasLocationPricing false            → priceAtOrder  (toggle off; nothing else consulted)
+//   2. true, no row for the billing location → priceAtOrder  (this location has no override)
+//   3. true, row exists, sellingPrice null   → priceAtOrder  (row exists for a cleared override)
+//   4. true, row exists, sellingPrice set    → the override  (the only case that differs)
 //
-// Cases 2 and 3 are deliberately indistinguishable to callers, and deliberately silent — no
-// badge, no "using base price" indicator. See LocationPrice's schema comment for why.
+// Cases 2 and 3 are deliberately indistinguishable to callers, and deliberately silent — no badge,
+// no "using the quoted price" indicator. See LocationPrice's schema comment for why.
 //
-// Returns null when the resolved value is itself null — a genuinely unpriced article (rule 8's
-// "pending price") stays unpriced. That null is meaningful and must keep reaching the caller:
-// createOrder and createReturn both reject an unpriced article with UNPRICED_PRODUCT, and
-// coercing it to 0 here would silently sell stock for nothing.
+// NEVER returns null: priceAtOrder is a NOT NULL column, so every line always has a real price to
+// fall back to. That is a genuine difference from the pre-2026-09-25 resolver, which could return
+// null for an unpriced article and forced every caller to handle it — an order cannot exist with
+// an unpriced line, because createOrder rejects one at placement (UNPRICED_PRODUCT).
 //
-// `field` is 'costPrice' or 'sellingPrice'. Anything else is a programming error, not a runtime
-// condition to tolerate — throwing beats returning undefined and letting a bad field name become
-// a silent null price several layers downstream.
-function resolvePrice({ product, locationPrice, field }) {
-  if (field !== 'costPrice' && field !== 'sellingPrice') {
-    throw new Error(`resolvePrice: field must be 'costPrice' or 'sellingPrice', got ${JSON.stringify(field)}`);
-  }
+// KEPT AS ONE FUNCTION ON PURPOSE. The next piece of work lets an OWNER override any article's
+// price at billing time, for that one bill, behind a PIN at confirm. That override sits directly
+// on top of this — one more case ahead of case 1 — and nothing else has to move, precisely
+// because every caller asks this function rather than reasoning about the toggle itself.
+function resolveBilledUnitPrice({ product, locationPrice, priceAtOrder }) {
   if (!product) {
-    throw new Error('resolvePrice: product is required');
+    throw new Error('resolveBilledUnitPrice: product is required');
+  }
+  if (priceAtOrder == null) {
+    throw new Error('resolveBilledUnitPrice: priceAtOrder is required — every billed line has one');
   }
 
   // Case 1 — the toggle decides everything. Checked FIRST and on its own, so a LocationPrice row
   // left behind from a previous time the toggle was on can never leak back into a price while the
   // article is switched off. That dormant-not-deleted behaviour is the reason the flag exists.
-  if (!product.hasLocationPricing) return product[field] ?? null;
+  if (!product.hasLocationPricing) return priceAtOrder;
 
-  // Cases 2 and 3 collapse into one expression: no row, or a row whose value for THIS field is
-  // null, both fall back. `?? null` on the end normalises an absent Product value to null too, so
-  // this function's contract is "a Decimal or null", never undefined.
-  const override = locationPrice ? locationPrice[field] : null;
-  if (override == null) return product[field] ?? null;
+  // Cases 2 and 3 collapse into one expression: no row, or a row whose sellingPrice is null.
+  const override = locationPrice ? locationPrice.sellingPrice : null;
+  if (override == null) return priceAtOrder;
 
   // Case 4.
   return override;
 }
 
-// Convenience lookup for the callers that fetch a product's WHOLE locationPrices array and then
-// resolve per row — dashboardController's stockValue KPI and locationRevenue's two aggregations
-// all iterate Stock rows spanning several locations, so they cannot push the location into the
-// Prisma `where` the way a single-location caller (transactionController) can.
-//
-// Trivial on its own; it lives here so `.find()` on a relation array isn't hand-written at five
-// call sites, each free to get the field name subtly wrong.
+// Convenience lookup for callers holding a whole locationPrices array rather than a pre-filtered
+// one. Trivial on its own; it lives here so `.find()` on a relation array isn't hand-written at
+// several call sites, each free to get the field name subtly wrong.
 //
 // Tolerates a missing/undefined array rather than throwing: a caller that legitimately didn't
-// select the relation (because the toggle is off for that product) gets null, which resolvePrice
-// then treats as case 2 and falls back — the correct answer, not an error.
+// select the relation gets null, which resolveBilledUnitPrice then treats as case 2 and falls
+// back — the correct answer, not an error.
 function findLocationPrice(locationPrices, locationId) {
   if (!Array.isArray(locationPrices)) return null;
   return locationPrices.find((lp) => lp.locationId === locationId) ?? null;
 }
 
-// The ONE location an Order or a Return prices against, regardless of where it eventually bills
-// from. A locked business decision (rule 111, 2026-09-23), not a placeholder: Gurgaon's selling
-// price is the article's selling price for party-facing money, full stop. Delhi's selling-price
-// override has no effect on Order/Return pricing at all — that is deliberate, not a gap left to
-// fill in later.
+// The Prisma `select` fragment every billing-price read needs, narrowed to ONE location in
+// Postgres. Exported rather than written out at each call site so the preview and the real bill
+// cannot read different fields and then disagree about what they found.
 //
-// Why this is the only workable answer for Orders specifically: an OrderLineItem has no location
-// and structurally cannot have one at the moment priceAtOrder is captured. WHICH location
-// fulfills a line is chosen by the OWNER at BILLING time (billOrder's required
-// locationId + locationConfirmed, 2026-09-07), which is one or two status transitions after the
-// price is already snapshotted. Resolving against the real fulfillment location would mean either
-// asking STAFF to guess it at order-entry time, or re-reading the price at billing — and that
-// second one would break exactly the guarantee priceAtOrder exists to provide, that "a later
-// Article Pricing change never retroactively alters what this Party was actually charged". Naming
-// one fixed pricing location keeps the quote a party is given at the counter identical to the
-// amount they are billed, which is what actually matters to them.
+// `locationId` is always a real id here — both callers validate the location exists and is active
+// before reaching this — so the `where` can be unconditional, unlike the pre-2026-09-25 version
+// which had to cope with a by-name lookup that could miss.
+function billingPriceProductSelect(locationId) {
+  return {
+    hasLocationPricing: true,
+    locationPrices: { where: { locationId }, select: { locationId: true, sellingPrice: true } },
+  };
+}
+
+// THE shared answer to "what does this order bill for, from this location?" — used by billOrder to
+// write the real figures and by fulfillment-preview to show them beforehand. Both get the identical
+// per-line prices and the identical preTaxAmount because both call this.
 //
-// Returns exist here for a related but distinct reason: priceAtReturn feeds the party's
-// totalReturned, which offsets amountDue (partyController.js). If a return credited the party at
-// a different location's price than the order charged them at, every party balance would drift.
-// Pricing both sides against the same fixed location is what keeps them reconcilable.
-const ORDER_PRICING_LOCATION_NAME = 'Gurgaon';
+// `lineItems` must already be filtered to the lines being billed (non-cancelled), and each must
+// carry priceAtOrder, qtySetsPacked, and bundle.product with the fields billingPriceProductSelect
+// asks for plus isKids/sizes for piecesPerSetFor.
+//
+// preTaxAmount is qtySetsPacked × piecesPerSet × billedUnitPrice, summed — rule 101's basis
+// unchanged in every respect except which unit price it multiplies. Returned alongside the lines
+// rather than recomputed by each caller, so the sum and its parts can never disagree.
+function computeBilledLines({ lineItems, locationId }) {
+  const lines = lineItems.map((li) => {
+    const product = li.bundle.product;
+    const billedUnitPrice = resolveBilledUnitPrice({
+      product,
+      locationPrice: findLocationPrice(product.locationPrices, locationId),
+      priceAtOrder: li.priceAtOrder,
+    });
+    return {
+      lineItemId: li.id,
+      billedUnitPrice,
+      lineTotal: li.qtySetsPacked * piecesPerSetFor(product) * Number(billedUnitPrice),
+    };
+  });
+
+  const preTaxAmount = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  return { lines, preTaxAmount };
+}
+
+// The RETURN-side resolution. Deliberately NOT the same function as resolveBilledUnitPrice above,
+// because the fallback differs in kind and merging them would need a flag that hides exactly the
+// distinction worth seeing:
+//
+//   - A billed line falls back to its own priceAtOrder, because it HAS one — a frozen quote given
+//     to this party for this order (rule 23).
+//   - A return has no such anchor. It is recorded against a party, not an order, so there is no
+//     quoted price belonging to it, and the only sane fallback is the article's current base
+//     sellingPrice. That is what priceAtReturn has always used.
+//
+// Returns null when the resolved value is itself null — a genuinely unpriced article (rule 8's
+// "pending price") stays unpriced, and createReturn rejects it with UNPRICED_PRODUCT. Coercing
+// that to 0 here would silently credit a party nothing for real goods.
+function resolveReturnUnitPrice({ product, locationPrice }) {
+  if (!product) {
+    throw new Error('resolveReturnUnitPrice: product is required');
+  }
+  if (!product.hasLocationPricing) return product.sellingPrice ?? null;
+  const override = locationPrice ? locationPrice.sellingPrice : null;
+  if (override == null) return product.sellingPrice ?? null;
+  return override;
+}
+
+// The ONE location a RETURN prices against. Orders no longer use this — they resolve against the
+// location they actually bill from (see computeBilledLines above) — but returns still do, and the
+// asymmetry is deliberate rather than an oversight. Rule 111 states it explicitly.
+//
+// Why returns stay pinned. priceAtReturn feeds the party's totalReturned, which offsets amountDue
+// (partyController.js). A Good Return is recorded against a PARTY, not against an order —
+// PartyStockReturn has no orderId, and one return can legitimately span goods from several orders
+// billed from different locations — so there is no billed price for it to mirror. Pricing it at
+// "wherever the stock came back to" would credit a party at Gurgaon's price for goods charged at
+// Delhi's, drifting that party's balance for no business reason and leaving no record of why the
+// two sides disagreed. A fixed, named location keeps every credit on one stable, explainable
+// basis until returns can be linked to the order they came from, which is a separate feature with
+// its own schema change.
+const RETURN_PRICING_LOCATION_NAME = 'Gurgaon';
 
 // Looked up BY NAME on every call rather than hardcoding an id, matching the convention this
 // codebase already uses for the same location elsewhere (BillFulfillmentPicker.jsx's
@@ -112,20 +166,23 @@ const ORDER_PRICING_LOCATION_NAME = 'Gurgaon';
 //
 // Returns null when no such Location exists — a fresh or differently-named environment, or a test
 // database seeded without it. Null flows on into findLocationPrice, which treats it as "no
-// override row", so pricing falls back to Product.sellingPrice for everything. That is the
-// correct degradation: an environment with no Gurgaon prices exactly the way it did before rule
-// 111 existed, rather than failing to create orders at all.
-async function getOrderPricingLocationId(prisma) {
+// override row", so a return prices at the article's base sellingPrice. That is the correct
+// degradation: an environment with no Gurgaon prices returns exactly the way it did before rule
+// 111 existed, rather than failing to accept returns at all.
+async function getReturnPricingLocationId(prisma) {
   const location = await prisma.location.findFirst({
-    where: { name: ORDER_PRICING_LOCATION_NAME },
+    where: { name: RETURN_PRICING_LOCATION_NAME },
     select: { id: true },
   });
   return location?.id ?? null;
 }
 
 module.exports = {
-  resolvePrice,
+  resolveBilledUnitPrice,
+  resolveReturnUnitPrice,
   findLocationPrice,
-  getOrderPricingLocationId,
-  ORDER_PRICING_LOCATION_NAME,
+  billingPriceProductSelect,
+  computeBilledLines,
+  getReturnPricingLocationId,
+  RETURN_PRICING_LOCATION_NAME,
 };

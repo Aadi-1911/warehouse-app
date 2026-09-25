@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
 const { applyStockMovement } = require('../utils/stock');
-const { resolvePrice, findLocationPrice, getOrderPricingLocationId } = require('../utils/locationPricing');
+const { resolveReturnUnitPrice, findLocationPrice, getReturnPricingLocationId } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -158,17 +158,21 @@ async function createReturns(req, res) {
     return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${locationId}`);
   }
 
-  // Rule 111 (2026-09-23) — a Return prices against Gurgaon, exactly as an Order does, and
-  // pointedly NOT against `locationId` above (the location the returned stock is physically going
-  // back onto a shelf at). Those are two different questions and only one of them is about money:
-  // locationId decides where the stock lands, this decides what the party is credited.
+  // Rule 111 — a Return prices against one fixed named location (Gurgaon), pointedly NOT against
+  // `locationId` above (the location the returned stock is physically going back onto a shelf at).
+  // Those are two different questions and only one of them is about money: locationId decides
+  // where the stock lands, this decides what the party is credited.
   //
-  // They MUST match the Order side, which is why it's Gurgaon here too rather than the more
-  // intuitive "price it where it came back to". priceAtReturn feeds totalReturned, which offsets
-  // the party's amountDue (partyController.js). Crediting a return at Delhi's price for goods
-  // charged at Gurgaon's would silently drift every party balance that ever saw a return, with no
-  // record of why the two sides disagreed.
-  const pricingLocationId = await getOrderPricingLocationId(prisma);
+  // THIS IS DELIBERATELY ASYMMETRIC WITH ORDERS as of 2026-09-25, and the asymmetry is stated in
+  // rule 111 rather than left to be discovered here. An order resolves its price against the
+  // location it bills FROM, because it HAS one — the owner picks it at billing. A Good Return has
+  // no such anchor: it is recorded against a PARTY, not an order (PartyStockReturn has no
+  // orderId), and one return can span goods from several orders billed from different locations,
+  // so there is no billed price for it to mirror. Pricing it at "wherever it came back to" would
+  // credit a party at one location's price for goods charged at another's, drifting that party's
+  // balance with no record of why. A fixed basis is the honest answer until returns can be linked
+  // to the order they came from — a separate feature with its own schema change.
+  const pricingLocationId = await getReturnPricingLocationId(prisma);
 
   // One batch fetch for every bundle referenced rather than one query per line — same
   // resolve-everything-then-validate shape as createOrder, and no N+1 on a multi-line return.
@@ -203,10 +207,9 @@ async function createReturns(req, res) {
     if (!bundle) {
       return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${line.bundleId}`);
     }
-    const priceAtReturn = resolvePrice({
+    const priceAtReturn = resolveReturnUnitPrice({
       product: bundle.product,
       locationPrice: findLocationPrice(bundle.product.locationPrices, pricingLocationId),
-      field: 'sellingPrice',
     });
     if (priceAtReturn == null) {
       return sendError(

@@ -97,7 +97,8 @@ async function createTransaction(req, res) {
       //
       // Reads product.costPrice directly: cost is GLOBAL (rule 111 as revised 2026-09-25 — one
       // costPrice per article, regardless of which location the goods land at). This briefly went
-      // through resolvePrice against the receipt's own location between 2026-09-23 and 2026-09-25;
+      // through a location-aware resolver against the receipt's own location between 2026-09-23
+      // and 2026-09-25 (that resolver no longer exists);
       // the resolved and base values were identical for every article that ever existed in a real
       // database, since nothing was opted in before the revision landed.
       const costPriceSnapshot = type === 'STOCK_IN' ? bundle.product.costPrice : null;
