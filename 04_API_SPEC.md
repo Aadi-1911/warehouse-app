@@ -224,7 +224,9 @@ Response: `[{ id, name, bundleId }]`
 ### `PUT /api/products/:id/location-prices/:locationId` 📌 — added 2026-09-23, revised 2026-09-25
 Sets or clears this article's SELLING price override at one Location (rule 111).
 
-Body: `{ sellingPrice, pin }`. `sellingPrice` is REQUIRED — a non-negative number, or explicit `null` to clear the override and fall back to the line's `priceAtOrder` at billing. Omitting the key is a 400, and is deliberately distinct from sending `null`.
+Body: `{ sellingPrice, pin }`. `sellingPrice` is REQUIRED — a number **greater than 0**, or explicit `null` to clear the override and fall back to the line's `priceAtOrder` at billing. Omitting the key is a 400, and is deliberately distinct from sending `null`.
+
+**`0` is a 400, not a valid price.** Stricter than `PATCH /api/products/:id`'s own `sellingPrice` check on purpose: an override of 0 would bill a party nothing for goods that still ship, with nothing to notice it by. To stop overriding, send `null`.
 
 **`costPrice` in the body is rejected with 400, never ignored.** Cost is global (rule 111 as revised 2026-09-25) — set it via `PATCH /api/products/:id`. A money endpoint that accepted a price field and silently discarded it would return 200 for a write that never happened.
 

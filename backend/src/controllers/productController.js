@@ -385,6 +385,17 @@ async function updateProduct(req, res) {
 // the operation is an upsert of that row — there is no partial-identity case. sellingPrice is
 // REQUIRED (there is no second field left to make it optional against), and null is its explicit
 // "clear this override, fall back to the price the order was placed at" value.
+//
+// ZERO IS REJECTED, and this is stricter than Product.sellingPrice's own validation deliberately.
+// An override of 0 would mean "at this location, bill this article for nothing" — a real party
+// charged nothing for real goods that still leave the shelf, with no error anywhere to notice it
+// by. There is no business case for it: a location that should bill nothing is not a pricing
+// decision, and the way to stop charging an override is to CLEAR it (send null) so the line bills
+// at the price it was quoted at. Null and 0 are therefore very different answers here, and the
+// one that silently sells stock for free is the one this endpoint refuses to store.
+//
+// Note rule 8's "pending price" (a null Product.costPrice/sellingPrice) is a different thing and
+// is unaffected: that means "nobody has priced this article yet" and blocks ordering outright.
 async function setLocationPrice(req, res) {
   const { id, locationId } = req.params;
   const body = req.body || {};
@@ -409,11 +420,19 @@ async function setLocationPrice(req, res) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'sellingPrice is required (send null to clear the override)');
   }
   const value = body.sellingPrice;
-  // null passes (the explicit "clear this override" signal). Anything else must be a real
-  // non-negative number — never a numeric string, matching how every other money field in this
-  // API validates.
-  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'sellingPrice must be a non-negative number, or null to clear it');
+  // null passes (the explicit "clear this override" signal). Anything else must be a real number
+  // STRICTLY GREATER THAN ZERO — never a numeric string, matching how every other money field in
+  // this API validates, and never 0, for the reason in this function's header. `> 0` is one
+  // character different from the `>= 0` every other price check uses and that is the whole point:
+  // a base price of 0 is a pricing mistake an owner can see on the Article Pricing screen, while
+  // an override of 0 is invisible until a party is billed nothing.
+  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)) {
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      'sellingPrice must be a number greater than 0, or null to clear the override. 0 is not a valid price — send null to bill this location at the order\'s own price instead.'
+    );
   }
 
   // Both parents verified before the upsert, so a bad id produces a clear 404 rather than a raw

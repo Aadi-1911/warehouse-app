@@ -16,8 +16,9 @@
 //   D. Fallbacks, and the freeze. A billing location with no override bills at the line's own
 //      priceAtOrder — and specifically NOT the article's CURRENT base price, proven by repricing
 //      the article between placement and billing.
-//   E. The PIN gate on the price endpoint, the deliberate absence of one on the toggle, and the
-//      400 for a body that still sends costPrice.
+//   E. The PIN gate on the price endpoint, the deliberate absence of one on the toggle, the 400
+//      for a body that still sends costPrice, and the price-range validation — 0 is rejected as
+//      firmly as a negative, because an override of 0 would bill a party nothing.
 //   F. STAFF never receives a cost field — from the product relation, from GET /api/stock, or from
 //      the fulfillment preview.
 //   G. GET /api/stock resolves each row against its OWN location.
@@ -525,11 +526,44 @@ async function main() {
   let badPrice = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: -5, pin: OWNER_PIN });
   check('E12 negative price rejected 400', badPrice.status === 400, `got ${badPrice.status}`);
 
+  let minusOne = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: -1, pin: OWNER_PIN });
+  check('E13 -1 rejected 400', minusOne.status === 400, `got ${minusOne.status}`);
+
+  // ZERO is rejected, and this is the assertion that matters most in this group: an override of 0
+  // means "bill this article for nothing at this location", which would charge a real party
+  // nothing for real goods with no error to notice it by. Distinct from null, which is the
+  // supported way to stop overriding. Asserted as its own case because `>= 0` (every other price
+  // check in this API) and `> 0` (this one) differ by exactly this input and nothing else.
+  let zero = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 0, pin: OWNER_PIN });
+  check('E14 ZERO rejected 400 — an override of 0 would bill a party nothing', zero.status === 400, `got ${zero.status} ${JSON.stringify(zero.body)}`);
+
   let emptyBody = await setLocationPrice(ownerToken, e.productId, created.delhiId, { pin: OWNER_PIN });
-  check('E13 body with no sellingPrice rejected 400', emptyBody.status === 400, `got ${emptyBody.status}`);
+  check('E15 body with no sellingPrice rejected 400', emptyBody.status === 400, `got ${emptyBody.status}`);
+
+  // 1 is the smallest accepted value — proves the boundary is at 0, not somewhere above it.
+  let one = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 1, pin: OWNER_PIN });
+  check('E16 1 is accepted (the boundary is exactly at 0)', one.status === 200 && Number(one.body.sellingPrice) === 1, `got ${one.status} ${JSON.stringify(one.body?.sellingPrice)}`);
 
   let clearIt = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: null, pin: OWNER_PIN });
-  check('E14 explicit null is accepted and clears the override', clearIt.status === 200 && clearIt.body.sellingPrice === null, `got ${clearIt.status} ${JSON.stringify(clearIt.body?.sellingPrice)}`);
+  check('E17 explicit null is accepted and clears the override', clearIt.status === 200 && clearIt.body.sellingPrice === null, `got ${clearIt.status} ${JSON.stringify(clearIt.body?.sellingPrice)}`);
+
+  // Read the row back out of Postgres — the clear has to have actually landed, not just been
+  // echoed by the response shape.
+  const clearedRow = await (await db()).locationPrice.findFirst({
+    where: { productId: e.productId, locationId: created.delhiId },
+    select: { sellingPrice: true },
+  });
+  check('E18 the cleared override is genuinely null in the database', clearedRow !== null && clearedRow.sellingPrice === null, `got ${JSON.stringify(clearedRow)}`);
+
+  // And a rejected 0 must not have overwritten anything on its way to the 400.
+  let restore = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 250, pin: OWNER_PIN });
+  check('E19 override re-set to 250', restore.status === 200, `got ${restore.status}`);
+  await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 0, pin: OWNER_PIN });
+  const afterZero = await (await db()).locationPrice.findFirst({
+    where: { productId: e.productId, locationId: created.delhiId },
+    select: { sellingPrice: true },
+  });
+  check('E20 a rejected 0 wrote NOTHING — the row still holds 250', Number(afterZero.sellingPrice) === 250, `got ${afterZero?.sellingPrice}`);
 
   // =====================================================================================
   console.log('\n=== F. STAFF never receives a cost field, through any surface ===');
