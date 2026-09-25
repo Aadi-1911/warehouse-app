@@ -221,6 +221,24 @@ Sets `isActive: true` — reverses a deactivation.
 Returns only the Colors that have an existing `Bundle` for this Product — used to populate the color dropdown at stock-entry time.
 Response: `[{ id, name, bundleId }]`
 
+### `PUT /api/products/:id/location-prices/:locationId` 📌 — added 2026-09-23, revised 2026-09-25
+Sets or clears this article's SELLING price override at one Location (rule 111).
+
+Body: `{ sellingPrice, pin }`. `sellingPrice` is REQUIRED — a non-negative number, or explicit `null` to clear the override and fall back to the line's `priceAtOrder` at billing. Omitting the key is a 400, and is deliberately distinct from sending `null`.
+
+**`costPrice` in the body is rejected with 400, never ignored.** Cost is global (rule 111 as revised 2026-09-25) — set it via `PATCH /api/products/:id`. A money endpoint that accepted a price field and silently discarded it would return 200 for a write that never happened.
+
+OWNER **and** PIN, both **unconditionally** — the gate is `requireAuth → requireRole('OWNER') → requirePin` with no branch, deliberately NOT the conditional `requirePinForPriceEdits` used by `PATCH /api/products/:id`. See rule 111 for the body-shape bypass this avoids.
+
+Response: `{ id, locationId, location: { id, name }, sellingPrice, updatedAt }`
+
+### `PATCH /api/products/:id/location-pricing` 👑 — added 2026-09-23
+Body: `{ hasLocationPricing }` — a strict boolean; the string `"true"` is a 400.
+
+OWNER only, and deliberately **no PIN**: this writes no price, it selects which already-PIN-gated price is read. Turning it OFF does not delete any `LocationPrice` row — the overrides go dormant and return unchanged if it is switched back on.
+
+Response: the updated product, same shape as `GET /api/products/:id`.
+
 ---
 
 ## Parties 🔒
@@ -423,10 +441,10 @@ Server-side logic:
 2. Party must exist (`404 PARTY_NOT_FOUND`) and be active (`409 PARTY_ARCHIVED`).
 3. Every `bundleId` must resolve to a real Bundle (`404 BUNDLE_NOT_FOUND`).
 4. Every referenced Product must have a non-null `sellingPrice` (`400 UNPRICED_PRODUCT`) — a pending-price article can't be ordered.
-5. `priceAtOrder` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body**, same principle as `Transaction.costPriceSnapshot`.
+5. `priceAtOrder` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body**, same principle as `Transaction.costPriceSnapshot`. It is the article's plain BASE price: no Location is consulted here, because a line has none yet (rule 111). What the order is eventually BILLED at is resolved at billing and stored separately in `billedUnitPrice`.
 6. `Order.createdById` comes from the authenticated session, never the request body. `status` defaults to `PLACED`.
 
-Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, productIsKids, productSizes, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder }] }`. `productIsKids`/`productSizes` (`[{ sizeLabel, qty }]`) are the `piecesPerSetFor` shape (`utils/piecesPerSet.js`) — added 2026-08-20 so a client can convert a line's sets to pieces itself (e.g. Bill Order's per-article total) without a second request. `qty` joined that shape on 2026-08-25 (rule 102): an adult article's pieces-per-set is `SUM(qty)`, so a client computing its own total needs it or it would under-count any article that repeats a size.
+Response: `{ id, partyId, partyName, status, createdById, createdByName, createdAt, packedAt, billedAt, shippedAt, lineItems: [{ id, bundleId, productId, productArticleNo, productName, productIsKids, productSizes, colorId, colorName, qtySetsRequested, qtySetsPacked, priceAtOrder, billedUnitPrice }] }`. `billedUnitPrice` (rule 111, 2026-09-25) is what the line was actually charged per piece — `null` until the order is billed, and `null` on any order billed before 2026-09-25; read it as "no billed price recorded", never as zero. It is **not** role-gated: like `priceAtOrder` beside it this is a selling figure and carries no cost information. `productIsKids`/`productSizes` (`[{ sizeLabel, qty }]`) are the `piecesPerSetFor` shape (`utils/piecesPerSet.js`) — added 2026-08-20 so a client can convert a line's sets to pieces itself (e.g. Bill Order's per-article total) without a second request. `qty` joined that shape on 2026-08-25 (rule 102): an adult article's pieces-per-set is `SUM(qty)`, so a client computing its own total needs it or it would under-count any article that repeats a size.
 Errors: `400 VALIDATION_ERROR`, `400 UNPRICED_PRODUCT`, `404 PARTY_NOT_FOUND`, `404 BUNDLE_NOT_FOUND`, `409 PARTY_ARCHIVED`.
 
 ### `GET /api/orders` 🔒
@@ -463,6 +481,17 @@ Server-side logic:
 Response: full order, same shape as `GET /api/orders/:id`.
 Errors: `400 VALIDATION_ERROR`, `404 ORDER_NOT_FOUND`, `409 ORDER_NOT_PLACED`.
 
+### `GET /api/orders/:id/fulfillment-preview?locationId=...` 👑 — added 2026-09-07, extended 2026-09-25
+What billing this order from `locationId` would do, shown BEFORE the irreversible button. Documented here from 2026-09-25; the endpoint itself predates this entry.
+
+`locationId` is a required query param and must name a real, active Location (`400 VALIDATION_ERROR` otherwise — same validation as `PATCH /:id/bill`, so a preview can never claim a bill would succeed from a location the bill itself would reject). The order must be `PACKED` and not cancelled (`409 ORDER_NOT_PACKED` / `409 ORDER_CANCELLED`), mirroring the bill endpoint's own guards.
+
+Response: `{ orderId, locationId, locationName, canFulfill, preTaxAmount, lines: [{ lineItemId, bundleId, needed, available, sufficient, articleNo, productName, colorName, billedUnitPrice }] }`
+
+`preTaxAmount` and each line's `billedUnitPrice` (both rule 111, added 2026-09-25) come from the **same resolver `PATCH /:id/bill` uses**, not a second implementation — so what this quotes and what the bill then charges cannot disagree. `preTaxAmount` is pre-discount and pre-GST, matching the stored `Order.preTaxAmount` column; the client applies its own live discount/GST preview on top, and billing independently recomputes all of it.
+
+**No cost field of any kind is returned**, and none is read to produce this — the preview answers what a PARTY will be charged, and cost has no part in that. The route is OWNER-only regardless.
+
 ### `PATCH /api/orders/:id/bill` 👑
 Body *(added 2026-08-25, rule 101; `billNo` added 2026-08-30)*: `{ discountApplicable?, discountPercent?, gstApplicable?, gstPercent?, billNo? }` — all optional, defaulting to no discount/no GST. `discountPercent`/`gstPercent` are plain numbers (percent, e.g. `5` for 5%), required and validated only when their own `*Applicable` flag is `true` — `discountPercent` bounded 0–100, `gstPercent` bounded 0–5. **No PIN** — gating matches billing's own existing weight exactly (OWNER-only, the existing heavy confirm modal, nothing new); this is not a cost/selling-price edit, so rule 71's PIN gate doesn't apply.
 
@@ -480,7 +509,7 @@ Server-side logic:
 5. If total available stock across all locations can't cover a line's `qtySetsPacked`, the whole request is rejected (`409 INSUFFICIENT_STOCK`) — no partial deduction, same everything-or-nothing atomicity as order creation. Unlike at pack time this can genuinely fire in normal use: stock may have moved between packing and billing (another order billed first, a transfer, a correction).
 
    **Every line is checked before returning, not just up to the first failure.** The response carries an `insufficientLines` array alongside `error` — `[{ lineItemId, bundleId, needed, available }]` — so a caller can show the full scope of the shortage at once rather than discovering it one line per retry. `error.message` names the single line when there's exactly one, or summarises the count when there are several.
-6. `preTaxAmount` is computed as `Σ (qtySetsPacked × piecesPerSet × priceAtOrder)` across the order's non-cancelled lines — the same qtySetsPacked-based basis the deduction above already uses, not `qtySetsRequested` (rule 101). `finalAmount = discountApplicable ? preTaxAmount − (preTaxAmount × discountPercent / 100) : preTaxAmount`. `actualPayable = gstApplicable ? finalAmount + (finalAmount × gstPercent / 100) : finalAmount` — **GST is computed on `finalAmount` (post-discount), never on the original `preTaxAmount`.**
+6. `preTaxAmount` is computed as `Σ (qtySetsPacked × piecesPerSet × billedUnitPrice)` across the order's non-cancelled lines — the same qtySetsPacked-based basis the deduction above already uses, not `qtySetsRequested` (rule 101). `billedUnitPrice` is resolved per line against **this bill's `locationId`** (rule 111, revised 2026-09-25): the article's `LocationPrice.sellingPrice` there if it is opted in and that Location overrides it, otherwise the line's own frozen `priceAtOrder` — never the article's *current* `Product.sellingPrice`, which would undo rule 23's freeze. It is written to every non-cancelled line in the same transaction as the Order's own billing columns, and is always non-null for any order billed from 2026-09-25 on. `finalAmount = discountApplicable ? preTaxAmount − (preTaxAmount × discountPercent / 100) : preTaxAmount`. `actualPayable = gstApplicable ? finalAmount + (finalAmount × gstPercent / 100) : finalAmount` — **GST is computed on `finalAmount` (post-discount), never on the original `preTaxAmount`.**
 7. `Order.status` → `BILLED`, `billedAt` set to now. `discountApplicable`, `discountPercent`, `gstApplicable`, `gstPercent`, `preTaxAmount`, `finalAmount`, `actualPayable` are all written in this same update. One `OrderAdjustment` row is written (`field: "status"`, `oldValue: "PACKED"`, `newValue: "BILLED"`, `reason: null` — routine progress).
 8. All of the above happens atomically in one transaction.
 
@@ -509,7 +538,7 @@ Allowed only while the order is `PLACED` or `PACKED` (`409 ORDER_NOT_EDITABLE` o
 
 Server-side logic:
 1. Each `lineChanges` entry must reference a live (non-cancelled) line on this order (`404 LINE_ITEM_NOT_FOUND` / `409 LINE_ALREADY_CANCELLED`) with a positive-integer `qtySetsRequested` that actually differs from the current value (`400 VALIDATION_ERROR` if it matches — nothing to change).
-2. Each `newLines` entry's `priceAtOrder` is resolved server-side from `Product.sellingPrice` **at the moment of this request** — never trusted from the request body, same principle `POST /api/orders` already applies (`400 UNPRICED_PRODUCT` if the article has no selling price set).
+2. Each `newLines` entry's `priceAtOrder` is resolved server-side from `Product.sellingPrice` **at the moment of this request** — never trusted from the request body, and with no Location consulted, exactly as `POST /api/orders` does (`400 UNPRICED_PRODUCT` if the article has no selling price set). An added line picks up its `billedUnitPrice` from the same billing-location resolution as every other line on the order, so one order can never carry two pricing bases.
 3. For every changed or added line, `qtySetsPacked` resets to `0` — **only on that line**, not on every other live line on the order. A packed count against the OLD quantity is meaningless once the quantity has changed; a different line's real packed count is untouched historical data with nowhere else it's recorded. This is safe specifically because nothing in the frontend reads `qtySetsPacked` for a `PLACED` order, and the next real `PATCH /:id/pack` call fully overwrites every live line's value regardless (see `LEARNING_LOG.md` for the investigation this was based on).
 4. One `OrderAdjustment` per changed line (`field: "qtySetsRequested"`, `reason: QUANTITY_CHANGED`) and per added line (`field: "qtySetsRequested"`, `oldValue: "0"`, `reason: LINE_ADDED` — a new line has no real "old" value, so "didn't exist" is recorded as "requested 0").
 5. **If the order was `PACKED`, this reverts it to `PLACED`** (`packedAt` cleared to `null`) and writes one more `OrderAdjustment` (`field: "status"`, `oldValue: "PACKED"`, `newValue: "PLACED"`, `reason: ORDER_EDITED` — a logged exception, not routine progress, since it's a backward transition). Safe unconditionally: Pack no longer touches stock, so nothing can double-deduct from re-packing, and Bill re-checks real stock availability regardless of what pack last recorded. If the order was already `PLACED`, no status adjustment is written.
@@ -586,7 +615,7 @@ Body: `{ partyId, locationId, lines: [{ bundleId, qtySets, reason, note? }] }`
 3. **`note` is required when `reason` is `OTHER`** (`400 NOTE_REQUIRED`), optional otherwise. A conditional requirement the schema can't express, so it lives here — an "Other" with no explanation records nothing usable. Whitespace-only is treated as absent.
 4. Party must exist (`404 PARTY_NOT_FOUND`) and be active (`409 PARTY_ARCHIVED`). Location must exist (`404 LOCATION_NOT_FOUND`). Every Bundle must be real (`404 BUNDLE_NOT_FOUND`).
 5. Every Product must have a non-null `sellingPrice` (`400 UNPRICED_PRODUCT`) — an unpriced article can't be valued.
-6. `priceAtReturn` is computed server-side from `Product.sellingPrice` at this exact moment — **never trusted from the request body** (a supplied value is ignored outright), and never sourced from `costPrice` (rule 10). Same principle as `priceAtOrder` and `costPriceSnapshot`.
+6. `priceAtReturn` is computed server-side from the selling price at this exact moment — **never trusted from the request body** (a supplied value is ignored outright), and never sourced from `costPrice` (rule 10). Same principle as `priceAtOrder` and `costPriceSnapshot`. For an article with location pricing on, it resolves against one fixed named Location (Gurgaon), **not** the `locationId` the stock is being returned to and **not** the location any order was billed from — deliberately asymmetric with Orders, because a return is recorded against a Party rather than an order and so has no billed price to mirror. See rule 111.
 
 Per line this creates one `PartyStockReturn`, **increases** real `Stock` at `locationId`, and writes one `Transaction` of type `STOCK_IN` linked via `partyStockReturnId`. The stock increase uses the same shared `applyStockMovement` helper as `POST /api/transactions` — including its find-or-create, so returning goods into a location that has never held that bundle works rather than failing on a missing `Stock` row.
 
