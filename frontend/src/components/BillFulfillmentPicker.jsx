@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
 import { listLocations } from '../api/locations';
-import { getOrderFulfillmentPreview } from '../api/orders';
 
 // The "which location is this order actually shipping out of?" block, shared by BOTH real billing
 // entry points — BillOrderDetail.jsx (mobile) and dashboard/Orders.jsx's "Mark billed" modal —
@@ -18,6 +17,16 @@ import { getOrderFulfillmentPreview } from '../api/orders';
 //   3. Require an explicit confirmation checkbox, which the parent uses to disable its confirm
 //      button — the client half of a double-enforced guard whose server half rejects
 //      `locationConfirmed !== true` regardless of what any UI does.
+//
+// PREVIEW FETCHING MOVED OUT (rule 113, 2026-09-25). This component used to fetch
+// GET /api/orders/:id/fulfillment-preview itself. It now receives `previewStatus`/`preview`/
+// `previewError` as props instead, from useFulfillmentPreview — called once by the PARENT screen,
+// not once here. Rule 113 needs the identical preview data one level up too, for the priced total
+// shown above this component and for the `seenPrices` echo the bill request must send; fetching it
+// twice would risk the parent and this component disagreeing about what the owner was actually
+// shown, which is exactly the kind of drift the backend's own shared computeBilledLines exists to
+// rule out server-side. This component still owns the LOCATION list and the default-location
+// selection — those are its own concern and don't need to live in the parent.
 
 // The toggle's short labels. Keyed on the location's real NAME rather than a hardcoded id, so
 // nothing here breaks if the database is reseeded — and the fallback is the full name, so a third
@@ -25,17 +34,33 @@ import { getOrderFulfillmentPreview } from '../api/orders';
 const SHORT_LABELS = { Gurgaon: 'GGN' };
 const DEFAULT_LOCATION_NAME = 'Gurgaon';
 
-export default function BillFulfillmentPicker({ orderId, locationId, onLocationChange, confirmed, onConfirmedChange }) {
+// Same formatting convention BillOrderDetail.jsx and dashboard/Orders.jsx each already have
+// locally — kept local here too rather than imported, since this is the one place in the app that
+// needed it before either screen did (07_UI_DESIGN_BRIEF has no shared currency-formatting module
+// to reach for instead).
+function formatCurrency(amount) {
+  return `₹${Number(amount).toLocaleString('en-IN')}`;
+}
+
+// `orderId` is no longer a prop here — it was only ever used to key the preview fetch this
+// component used to make itself, which now lives in the parent's useFulfillmentPreview call (see
+// the header comment). This component receives the RESULT (previewStatus/preview/previewError),
+// never the id needed to fetch it.
+export default function BillFulfillmentPicker({
+  locationId,
+  onLocationChange,
+  confirmed,
+  onConfirmedChange,
+  previewStatus,
+  preview,
+  previewError,
+}) {
   // Explicit status rather than a bare boolean, per this project's own standing rule: a `false`
   // loading flag is indistinguishable from "loaded, found nothing," which would flash a false
   // empty state before the first fetch has even started.
   const [locationsStatus, setLocationsStatus] = useState('idle');
   const [locations, setLocations] = useState([]);
   const [locationsError, setLocationsError] = useState(null);
-
-  const [previewStatus, setPreviewStatus] = useState('idle');
-  const [preview, setPreview] = useState(null);
-  const [previewError, setPreviewError] = useState(null);
 
   // Which article groups are expanded, keyed by group key (below). Starts empty on every mount —
   // ConfirmModal unmounts this component entirely on close (`if (!open) return null`), so a plain
@@ -74,32 +99,6 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Re-runs on every location change — that live update is the whole point of the toggle: the
-  // owner flips GGN→Delhi and immediately sees whether Delhi can actually cover this order.
-  useEffect(() => {
-    if (!orderId || !locationId) return;
-    let cancelled = false;
-    setPreviewStatus('loading');
-    setPreviewError(null);
-    getOrderFulfillmentPreview(orderId, locationId)
-      .then((data) => {
-        // Guards against an out-of-order response overwriting a newer one when the toggle is
-        // flipped twice quickly — without this, a slow first request can land after a fast second
-        // and show the WRONG location's availability under the newly-selected label.
-        if (cancelled) return;
-        setPreview(data);
-        setPreviewStatus('loaded');
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setPreviewError(err.message);
-        setPreviewStatus('loaded');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [orderId, locationId]);
 
   const shortLabel = (name) => SHORT_LABELS[name] ?? name;
 
@@ -205,6 +204,17 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
                               <span className="bill-fulfillment-line-qty">
                                 need {l.needed} · InStock {l.available}
                                 {l.sufficient ? '' : ' — short'}
+                                {/* billedUnitPrice (rule 111/113) — what THIS line bills at from
+                                    the currently selected location: the location's own selling
+                                    override if the article is opted in and one is set, otherwise
+                                    the price this line was quoted at order time. Never priceAtOrder
+                                    directly — this is the same resolver billOrder() itself uses
+                                    (utils/locationPricing.js), so this figure and the bill can
+                                    never disagree. Absent (null) only if this preview predates the
+                                    field, which cannot happen for a live server — guarded anyway so
+                                    a stale cached response degrades to hiding the price rather than
+                                    rendering "₹null". */}
+                                {l.billedUnitPrice != null && <> · {formatCurrency(l.billedUnitPrice)}/set</>}
                               </span>
                             </li>
                           ))}
@@ -214,6 +224,17 @@ export default function BillFulfillmentPicker({ orderId, locationId, onLocationC
                   );
                 })}
               </div>
+              {/* The order's real pre-tax total from THIS location is deliberately NOT repeated
+                  here — both parent screens already show it, right above this component, as
+                  "Order total: …" (now sourced from this same preview.preTaxAmount rather than
+                  recomputed here). One number, shown once, is the point: showing it a second time
+                  in a different place invites the two copies drifting in appearance even though
+                  both read the same field, and there's no reason to risk that for a figure this
+                  screen's caller already displays. Deliberately NOT summed from the per-line
+                  `needed` figures above either way — those are in SETS, and needed × unit price
+                  would silently ignore piecesPerSet and could disagree with what billOrder()
+                  actually charges (see utils/orderBillingAmounts.js's own warning against exactly
+                  this "two numbers for one fact" drift). */}
             </>
           ) : null}
         </div>

@@ -8,11 +8,16 @@ import { piecesPerSetFor } from './piecesPerSet';
 // recomputes and stores the authoritative figures inside billOrder() itself; nothing computed
 // here is ever trusted as the value that gets written.
 
-// The order's pre-tax billed total — qtySetsPacked, deliberately NOT qtySetsRequested, because
-// billing commits against what was actually packed (BillOrderDetail.jsx's own established basis
-// for this exact screen, predating this task; rule 101 restates it explicitly for billOrder()
-// itself). A short-packed line is billed for what's really going out, not what was originally
-// asked for. Cancelled lines contribute nothing.
+// NO LONGER CALLED BY EITHER BILLING SCREEN (rule 113, 2026-09-25). This computed the pre-tax
+// total from each line's priceAtOrder — the price the party was QUOTED at order time — but billing
+// now charges billedUnitPrice, which can legitimately differ once an article has a location-level
+// selling override (rule 111) or an at-billing change (rule 113, not yet built in the UI). Using
+// this for the confirm-screen total would show a figure the bill might not actually charge. Both
+// screens now read `preTaxAmount` directly from GET /api/orders/:id/fulfillment-preview instead —
+// the SAME resolver billOrder() itself uses, so what's shown and what's charged cannot disagree.
+// Kept rather than deleted: a grep at the time of this change found no remaining callers anywhere
+// in frontend/src, but removing an exported function is a separate, deliberate cleanup task, not a
+// side effect of this one.
 export function preBillingTotal(lineItems) {
   return lineItems
     .filter((li) => !li.isCancelled)
@@ -66,4 +71,36 @@ export function clampPercent(rawValue, max) {
   if (num < 0) return '0';
   if (num > max) return String(max);
   return rawValue;
+}
+
+// The seenPrices echo the backend now REQUIRES on every bill (rule 113, 2026-09-25) — the per-line
+// prices the fulfillment preview showed, sent back so the server can refuse to bill at a figure the
+// owner never actually saw (409 PRICES_CHANGED). Built from exactly the preview object that's on
+// screen, never recomputed or guessed — the request must describe what the owner was SHOWN, not
+// what the client thinks the price should be. `preview.lines` is already scoped by the server to
+// the lines a bill would actually deduct (non-cancelled, qtySetsPacked > 0), so no filtering is
+// needed here.
+export function seenPricesFromPreview(preview) {
+  return preview.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
+// Turns a 409 PRICES_CHANGED response's `changedLines` (04_API_SPEC.md: `[{ lineItemId, articleNo,
+// productName, colorName, shown, current }]`) into one line of copy per changed article/colour.
+// Takes a `formatCurrency` function rather than formatting money itself, so this stays free of any
+// screen's own currency-display convention — both BillOrderDetail.jsx and dashboard/Orders.jsx
+// already have their own local formatCurrency and this reuses whichever one is calling.
+//
+// `shown === null` is a real, distinct case documented by the backend (orderController.js's
+// staleLines comment): it means the line wasn't part of the preview the owner last looked at at
+// all — e.g. it went from qtySetsPacked 0 to packed, becoming billable only after that preview was
+// taken. That is not "a price moved," so it gets its own sentence rather than a nonsensical
+// "null is now ₹X".
+export function describeChangedLines(changedLines, formatCurrency) {
+  return changedLines.map((l) => {
+    const label = [l.productName, l.colorName].filter(Boolean).join(' ') || l.articleNo || 'A line';
+    if (l.shown == null) {
+      return `${label}: wasn't part of your last review — now ${formatCurrency(l.current)}`;
+    }
+    return `${label}: ${formatCurrency(l.shown)} is now ${formatCurrency(l.current)}`;
+  });
 }
