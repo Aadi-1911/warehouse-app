@@ -345,7 +345,12 @@ async function main() {
   created.categoryId = categories.body[0]?.id;
   if (!created.categoryId) throw new Error('No Category exists on the test branch — cannot create a Product.');
 
-  const staffUsername = `lp_staff_${stamp}`;
+  // "probe" prefix required, not cosmetic: cleanup() hard-deletes this account, and rule 75
+  // forbids hard-deleting a User except for exactly this one case — usernames starting with
+  // "probe", which are test artifacts that never belonged to a real person. The old `lp_staff_`
+  // name sat outside that exception, so the delete below was a rule violation in everything but
+  // intent.
+  const staffUsername = `probe_lp_staff_${stamp}`;
   const staffPassword = 'LpStaff!2026';
   r = await api('/api/users', {
     method: 'POST',
