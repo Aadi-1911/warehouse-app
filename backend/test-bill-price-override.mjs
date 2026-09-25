@@ -401,8 +401,11 @@ async function main() {
     body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices: staleEcho },
   });
   check('C1 stale echo on an UNCHANGED line -> 409 PRICES_CHANGED', r.status === 409 && r.body?.error?.code === 'PRICES_CHANGED', JSON.stringify(r.body));
-  check('C2 the 409 names what moved, old and new', Array.isArray(r.body?.changedLines) && r.body.changedLines.length === 2 &&
-    r.body.changedLines.every((l) => l.shown === 500 && l.current === 550), JSON.stringify(r.body?.changedLines));
+  // Order e has ONE line (one bundle, 2 sets) — createAndPackOrder(ownerToken, [[eBundle, 2]]) — so
+  // exactly one line can have moved, not two.
+  check('C2 the 409 names what moved, old and new', Array.isArray(r.body?.changedLines) && r.body.changedLines.length === 1 &&
+    r.body.changedLines[0].lineItemId === e.lineItemIds[0] &&
+    r.body.changedLines[0].shown === 500 && r.body.changedLines[0].current === 550, JSON.stringify(r.body?.changedLines));
   ord = await orderRow(e.orderId);
   check('C3 order still PACKED after a 409', ord.status === 'PACKED', `(${ord.status})`);
 
