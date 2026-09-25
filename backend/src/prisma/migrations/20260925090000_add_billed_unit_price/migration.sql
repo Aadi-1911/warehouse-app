@@ -1,0 +1,32 @@
+-- Rule 111 revision (2026-09-25) — the unit price an order line was ACTUALLY BILLED at, as
+-- distinct from the price it was quoted at when the order was placed.
+--
+-- Why a new column instead of overwriting OrderLineItem.priceAtOrder. Under the revised rule 111
+-- a line's billed price resolves against the location the order bills FROM, which is the owner's
+-- explicit choice at billing time — one or two status transitions after priceAtOrder was
+-- captured. So the two figures can genuinely differ, and both are real facts somebody will need:
+-- priceAtOrder is what the party was quoted at the counter, this is what they were charged.
+-- Overwriting priceAtOrder would have destroyed the first to store the second in its slot, which
+-- is exactly the silent-rewrite this schema's snapshot columns exist to prevent (the same
+-- reasoning behind Transaction.costPriceSnapshot, OrderLineItem.productNameSnapshot,
+-- Order.partyNameSnapshot, and OrderBillingCorrection's six old*/new* columns).
+--
+-- NULLABLE, and FORWARD-ONLY — no backfill, exactly the treatment Order.roundingAdjustment got
+-- when rule 109 shipped. Null means one of two things, and the distinction is not recoverable
+-- from this column alone: the line belongs to an order billed BEFORE this change, or the line
+-- isn't billed yet at all. Neither can be given a value honestly. Backfilling from priceAtOrder
+-- would assert that a pre-2026-09-25 order was billed at its quoted price, which is true but was
+-- never RECORDED as a billing-time fact — and fabricating a record of a decision nobody made is
+-- worse than a null that says "not recorded".
+--
+-- For every line billed from here on this is ALWAYS written, never null: billOrder resolves a
+-- real number for each deducted line and writes it in the same transaction as the STOCK_OUT and
+-- the Order's own billing columns. A billed line carrying null here after this date would mean
+-- billing wrote money without recording what it charged.
+--
+-- DECIMAL(65,30) — Prisma's default for a bare `Decimal`, matching priceAtOrder directly beside
+-- it, so the quoted and billed figures can never differ in precision and a comparison between
+-- them is exact.
+
+-- AlterTable
+ALTER TABLE "OrderLineItem" ADD COLUMN     "billedUnitPrice" DECIMAL(65,30);
