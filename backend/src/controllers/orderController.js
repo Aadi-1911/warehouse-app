@@ -755,7 +755,6 @@ async function billOrder(req, res) {
     lineItems: order.lineItems.filter((li) => !li.isCancelled),
     locationId: location.id,
   });
-  const billedUnitPriceByLineId = new Map(billedLines.map((l) => [l.lineItemId, l.billedUnitPrice]));
 
   // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
   // never the original preTaxAmount. Never trusts a client-computed final number; these are the
