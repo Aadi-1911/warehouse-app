@@ -2,7 +2,6 @@ const { PrismaClient } = require('@prisma/client');
 const { piecesPerSetFor } = require('../utils/piecesPerSet');
 const { revenueForPeriod, VALID_PERIODS } = require('../utils/revenue');
 const { orderValueOf } = require('../utils/orderValue');
-const { resolvePrice, findLocationPrice } = require('../utils/locationPricing');
 
 const prisma = new PrismaClient();
 
@@ -58,10 +57,6 @@ async function getOverview(req, res) {
             select: {
               isKids: true,
               costPrice: true,
-              // Unfiltered — this read spans every location at once, so the per-row match happens
-              // in JS via findLocationPrice, the same shape utils/locationRevenue.js uses.
-              hasLocationPricing: true,
-              locationPrices: { select: { locationId: true, costPrice: true, sellingPrice: true } },
               sizes: { select: { sizeLabel: true, qty: true } },
             },
           },
@@ -85,17 +80,11 @@ async function getOverview(req, res) {
     // payable, so the two owner-facing money figures agree about what a unit of stock is worth.
     // A null costPrice (article still pending-price) contributes 0 rather than being guessed at.
     //
-    // Resolved per Stock row against that row's own location (rule 111, 2026-09-23), NOT once per
-    // article: the same bundle can sit at two locations with two genuinely different costs, and
-    // this total has to add up the real value of each pile rather than applying one of the two
-    // prices to both. Identical to product.costPrice for every article with hasLocationPricing
-    // false, so this KPI does not move for any existing data.
-    const resolvedCost = resolvePrice({
-      product,
-      locationPrice: findLocationPrice(product.locationPrices, row.locationId),
-      field: 'costPrice',
-    });
-    const unitCost = resolvedCost != null ? Number(resolvedCost) : 0;
+    // One cost per article, read straight off the Product: cost is GLOBAL (rule 111 as revised
+    // 2026-09-25). This resolved per Stock row against each row's own location between 2026-09-23
+    // and 2026-09-25; the per-row loop stays regardless, because qtySets genuinely varies per row
+    // even though the unit cost no longer does.
+    const unitCost = product.costPrice != null ? Number(product.costPrice) : 0;
 
     setsInStock += row.qtySets;
     piecesInStock += row.qtySets * piecesPerSet;

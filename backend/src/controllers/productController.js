@@ -33,6 +33,11 @@ function productSelect(role) {
     ...(role === 'OWNER' ? { costPrice: true } : {}),
     // Rule 111. Purely additive for every existing caller — a client that ignores these two fields
     // is unaffected, and hasLocationPricing is false on every pre-existing article anyway.
+    //
+    // No role branch on the nested rows, unlike Product.costPrice above: a LocationPrice carries
+    // SELLING price only (cost is global, rule 111 as revised 2026-09-25), and selling price has
+    // always been visible to STAFF — they quote it. The nested costPrice that existed here between
+    // 2026-09-23 and 2026-09-25 was gated; there is now no cost field on this relation to gate.
     hasLocationPricing: true,
     locationPrices: {
       select: {
@@ -40,8 +45,6 @@ function productSelect(role) {
         locationId: true,
         location: { select: { id: true, name: true } },
         sellingPrice: true,
-        // The nested half of the never-fetch guarantee — see this function's header.
-        ...(role === 'OWNER' ? { costPrice: true } : {}),
       },
       // Stable ordering so a client rendering a per-location price grid gets the same row order on
       // every request, rather than whatever Postgres returns. By location name, matching the
@@ -350,8 +353,13 @@ async function updateProduct(req, res) {
   }
 }
 
-// PUT /api/products/:id/location-prices/:locationId — OWNER + PIN, UNCONDITIONALLY (rule 111,
-// 2026-09-23). Sets or clears this article's per-location cost/selling override.
+// PUT /api/products/:id/location-prices/:locationId — OWNER + PIN, UNCONDITIONALLY (rule 111).
+// Sets or clears this article's per-location SELLING price override.
+//
+// SELLING ONLY. Cost is global (rule 111 as revised 2026-09-25) — there is no per-location cost
+// to write. A body carrying `costPrice` is REJECTED with 400, never silently ignored: a money
+// endpoint that accepts a price field and quietly drops it is the worst available failure mode,
+// since the caller gets a 200 and reasonably believes a cost was recorded.
 //
 // WHY THIS IS A SEPARATE ENDPOINT WITH ITS OWN UNCONDITIONAL GATE, and not a nested field on
 // PATCH /api/products/:id — this is the single most important safety decision in rule 111, so it
@@ -360,47 +368,51 @@ async function updateProduct(req, res) {
 // routes/products.js decides whether a PATCH needs a PIN by inspecting the body shape:
 //     const editingPrice = 'costPrice' in req.body || 'sellingPrice' in req.body;
 // That check is correct for the body it was written for, and silently WRONG for a nested one. Had
-// location prices been folded into PATCH as, say, { locationPrices: [{ locationId, costPrice }] },
-// then `'costPrice' in req.body` is FALSE — the price is one level down — and the PIN gate would
-// not fire at all. An OWNER could rewrite every location's cost and selling price with no PIN,
-// straight through a route that looks PIN-protected, breaking CLAUDE.md's non-negotiable rule
-// ("requires OWNER role AND a separate PIN match, never role alone") without anyone touching the
-// PIN code.
+// location prices been folded into PATCH as, say, { locationPrices: [{ locationId, sellingPrice }] },
+// then `'sellingPrice' in req.body` is FALSE — the price is one level down — and the PIN gate would
+// not fire at all. An OWNER could rewrite every location's selling price with no PIN, straight
+// through a route that looks PIN-protected, breaking CLAUDE.md's non-negotiable rule ("requires
+// OWNER role AND a separate PIN match, never role alone") without anyone touching the PIN code.
 //
 // The fix is not to teach that conditional check about nested shapes — that's more logic to get
 // subtly wrong on the next body shape. It's to give price writes their own route whose gate is
 // unconditional: requireAuth → requireRole('OWNER') → requirePin, with no branch to bypass. The
-// body here is deliberately FLAT ({ costPrice, sellingPrice }) so it is impossible for a future
-// edit to hide a price field from a body-shape inspection again.
+// body here is deliberately FLAT ({ sellingPrice }) so it is impossible for a future edit to hide
+// a price field from a body-shape inspection again.
 //
 // PUT, not PATCH, because the target is a whole override row keyed by (productId, locationId) and
-// the operation is an upsert of that row — there is no partial-identity case. WITHIN the row,
-// though, the two fields ARE independently optional, matching how PATCH /api/products/:id already
-// treats costPrice/sellingPrice: omit a key to leave it exactly as it was, send null to clear it
-// back to "no override, fall back to the base price".
+// the operation is an upsert of that row — there is no partial-identity case. sellingPrice is
+// REQUIRED (there is no second field left to make it optional against), and null is its explicit
+// "clear this override, fall back to the price the order was placed at" value.
 async function setLocationPrice(req, res) {
   const { id, locationId } = req.params;
   const body = req.body || {};
 
-  // Explicit null is meaningful here and is NOT the same as omitting the key: null clears the
-  // override (fall back to the Product's own price), omission leaves the stored value untouched.
-  // `in` is what distinguishes them — a truthiness or `!= null` check would collapse both into
-  // "no change" and make it impossible to ever remove an override once set.
-  const settingCost = 'costPrice' in body;
-  const settingSelling = 'sellingPrice' in body;
-
-  if (!settingCost && !settingSelling) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'Provide costPrice and/or sellingPrice');
+  // Rejected LOUDLY, not ignored. Between 2026-09-23 and 2026-09-25 this endpoint accepted a
+  // costPrice; a client still sending one is working from the old contract and must be told, not
+  // silently given a 200 for a write that never happened.
+  if ('costPrice' in body) {
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      'costPrice is not accepted here — cost is global (rule 111). Set it via PATCH /api/products/:id.'
+    );
   }
-  for (const [field, present] of [['costPrice', settingCost], ['sellingPrice', settingSelling]]) {
-    if (!present) continue;
-    const value = body[field];
-    // null passes (it's the explicit "clear this override" signal). Anything else must be a real
-    // non-negative number — never a numeric string, matching how every other money field in this
-    // API validates.
-    if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
-      return sendError(res, 400, 'VALIDATION_ERROR', `${field} must be a non-negative number, or null to clear it`);
-    }
+
+  // Explicit null is meaningful and is NOT the same as omitting the key: null clears the override
+  // (fall back to the line's priceAtOrder at billing), omission is simply a missing required
+  // field. `in` is what distinguishes them — a truthiness or `!= null` check would collapse both
+  // into "not provided" and make it impossible to ever remove an override once set.
+  if (!('sellingPrice' in body)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'sellingPrice is required (send null to clear the override)');
+  }
+  const value = body.sellingPrice;
+  // null passes (the explicit "clear this override" signal). Anything else must be a real
+  // non-negative number — never a numeric string, matching how every other money field in this
+  // API validates.
+  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'sellingPrice must be a non-negative number, or null to clear it');
   }
 
   // Both parents verified before the upsert, so a bad id produces a clear 404 rather than a raw
@@ -416,31 +428,21 @@ async function setLocationPrice(req, res) {
     return sendError(res, 404, 'LOCATION_NOT_FOUND', `No location with id ${locationId}`);
   }
 
-  const data = {};
-  if (settingCost) data.costPrice = body.costPrice;
-  if (settingSelling) data.sellingPrice = body.sellingPrice;
-
   // Upsert, so the caller never has to know whether an override row already exists — "set Delhi's
-  // price for this article" is one request either way. `create` spreads the same data, leaving the
-  // unsupplied field null, which is exactly right: a brand-new row with only a cost override set
-  // should fall back to the base price for selling.
+  // price for this article" is one request either way.
   const saved = await prisma.locationPrice.upsert({
     where: { productId_locationId: { productId: id, locationId } },
-    update: data,
-    create: { productId: id, locationId, ...data },
+    update: { sellingPrice: value },
+    create: { productId: id, locationId, sellingPrice: value },
     select: {
       id: true,
       locationId: true,
       location: { select: { id: true, name: true } },
-      costPrice: true,
       sellingPrice: true,
       updatedAt: true,
     },
   });
 
-  // costPrice is safe to return here without a role branch, unlike productSelect's nested version:
-  // this route is unconditionally requireRole('OWNER'), so a STAFF request can never reach this
-  // line at all.
   res.json(saved);
 }
 
@@ -449,7 +451,7 @@ async function setLocationPrice(req, res) {
 // The PIN gate exists for MONEY (rule 71), and this flag writes no money: it decides which
 // already-PIN-gated value gets read, and every value it can select between was itself only ever
 // writable behind a PIN (Product.costPrice/sellingPrice via PATCH /api/products/:id, and
-// LocationPrice's two columns via the PUT above). Turning the toggle on can therefore only ever
+// LocationPrice.sellingPrice via the PUT above). Turning the toggle on can therefore only ever
 // surface a price an OWNER already entered with a PIN; it cannot introduce a number nobody
 // authorised. That is the same reasoning that leaves `name`, `categoryId` and `isKids` PIN-free
 // on an OWNER-gated route.
