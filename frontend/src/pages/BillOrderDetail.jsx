@@ -7,8 +7,9 @@ import { useAuth } from '../hooks/useAuth';
 import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders';
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
-import { preBillingTotal, computeBillingAmounts, clampPercent } from '../utils/orderBilling';
+import { computeBillingAmounts, clampPercent, seenPricesFromPreview, describeChangedLines } from '../utils/orderBilling';
 import BillFulfillmentPicker from '../components/BillFulfillmentPicker';
+import { useFulfillmentPreview } from '../hooks/useFulfillmentPreview';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
@@ -92,6 +93,16 @@ export default function BillOrderDetail() {
   const [fulfillLocationId, setFulfillLocationId] = useState(null);
   const [locationConfirmed, setLocationConfirmed] = useState(false);
 
+  // The SAME preview BillFulfillmentPicker shows, fetched once here rather than a second time
+  // inside it (see that component's header comment and useFulfillmentPreview's own). This is what
+  // rule 113 needs the total, the per-line prices, and the seenPrices echo to come from — never a
+  // client-side recomputation from priceAtOrder, which is a different, possibly outdated figure
+  // once an article has a location-level or at-billing price.
+  const { status: previewStatus, preview, error: previewError, refetch: refetchPreview } = useFulfillmentPreview(
+    id,
+    fulfillLocationId
+  );
+
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling] = useState(false);
@@ -154,11 +165,21 @@ export default function BillOrderDetail() {
 
   async function handleConfirmBill() {
     setSubmitError(null);
+    // Defensive, not decorative — the confirm button is disabled while `preview` is unready (see
+    // billingInputIncomplete below), so this should be unreachable in normal use. But a UI-only
+    // guard is never trusted as the real one anywhere else in this app (locationConfirmed is the
+    // same pattern), and billing is the one irreversible action in the whole lifecycle.
+    if (!preview) {
+      setSubmitError('Prices are still loading for this location — wait a moment and try again.');
+      return;
+    }
     setSubmitting(true);
     try {
-      // Only the raw applicable/percent inputs go over the wire — the server independently
-      // recomputes preTaxAmount/finalAmount/actualPayable from live order data and stores those;
-      // nothing computed for the preview below is ever sent as-is.
+      // Only the raw applicable/percent inputs and the seenPrices echo go over the wire — the
+      // server independently recomputes preTaxAmount/finalAmount/actualPayable from live order
+      // data and stores those; nothing computed for display is ever sent as a value to be trusted.
+      // The body is exactly the keys PATCH /api/orders/:id/bill allows (04_API_SPEC.md) — the
+      // server 400s on anything else, so there is nothing here beyond this list.
       await billOrder(id, {
         discountApplicable,
         discountPercent: discountApplicable ? Number(discountPercent) : null,
@@ -172,6 +193,10 @@ export default function BillOrderDetail() {
         // Omitted entirely when blank rather than sent as '' — optional means optional, and the
         // order simply ends up with a null tag it can be given later.
         ...(cleanBillNo(billNo) ? { billNo: cleanBillNo(billNo) } : {}),
+        // Rule 113 — required on every bill. Built from exactly the `preview` object rendered on
+        // screen (never re-fetched or recomputed here), so this describes what the owner actually
+        // saw, not what the client currently believes the price to be.
+        seenPrices: seenPricesFromPreview(preview),
       });
       setConfirmOpen(false);
       navigate('/bill-orders', {
@@ -179,13 +204,22 @@ export default function BillOrderDetail() {
         state: { billedOutcome: { partyName: order.partyName } },
       });
     } catch (err) {
-      // The two realistic failures both carry a real backend message worth showing verbatim:
-      // INSUFFICIENT_STOCK (stock moved between packing and billing) and ORDER_NOT_PACKED
-      // (someone else billed it first). Discount/GST inputs are deliberately NOT cleared on this
-      // path — a real, valid entry the owner already typed shouldn't vanish just because billing
-      // failed for an unrelated stock reason; they can retry without re-entering it.
+      // PRICES_CHANGED (rule 113) gets its own message naming what moved, and forces a fresh
+      // preview — the owner must look again and press Bill a second time; this never retries the
+      // bill itself. The two pre-existing realistic failures (INSUFFICIENT_STOCK, ORDER_NOT_PACKED)
+      // keep showing their real backend message verbatim, unchanged from before.
+      if (err.code === 'PRICES_CHANGED' && Array.isArray(err.extra?.changedLines)) {
+        setSubmitError(
+          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review the new prices and bill again.`
+        );
+        refetchPreview();
+      } else {
+        setSubmitError(err.message);
+      }
+      // Discount/GST inputs are deliberately NOT cleared on this path — a real, valid entry the
+      // owner already typed shouldn't vanish just because billing failed for an unrelated reason;
+      // they can retry without re-entering it.
       setConfirmOpen(false);
-      setSubmitError(err.message);
     } finally {
       setSubmitting(false);
     }
@@ -277,13 +311,23 @@ export default function BillOrderDetail() {
   const isBlocked = (li) => !li.isCancelled && li.qtySetsPacked > 0 && availableFor(li) < li.qtySetsPacked;
   const blockedLines = order.lineItems.filter(isBlocked);
 
-  // Live discount/GST preview (rule 101) — computed from the exact same liveLines/qtySetsPacked
-  // basis as `groups` above (utils/orderBilling.js, shared with dashboard/Orders.jsx so both
-  // real billing entry points can never disagree on the same order). Purely a client-side
-  // preview: billOrder() independently recomputes and stores the authoritative figures.
-  const preTaxAmount = preBillingTotal(liveLines);
+  // Whether there's a real, CURRENT preview to bill from — "current" meaning it matches
+  // fulfillLocationId, which useFulfillmentPreview guarantees by resetting `preview` to null the
+  // instant the location changes (see that hook's own comment). previewError counts as NOT ready:
+  // a failed fetch means there is nothing safe to build seenPrices from, so billing must stay
+  // blocked exactly as if nothing had loaded at all.
+  const previewReady = previewStatus === 'loaded' && !!preview && !previewError;
+
+  // Live discount/GST preview (rule 101/113) — now built on preview.preTaxAmount, the SAME
+  // billedUnitPrice-based figure billOrder() itself computes and charges (utils/locationPricing.js),
+  // rather than a client-side sum of priceAtOrder. That distinction is the whole point of this
+  // task: priceAtOrder is what the party was quoted, which can differ from what they're actually
+  // billed once an article has a location-level selling override (rule 111). preTaxAmount is
+  // `null` until previewReady — computeBillingAmounts tolerates that the same way it already
+  // tolerates an empty percent field, returning 0s rather than NaN.
+  const preTaxAmount = previewReady ? preview.preTaxAmount : null;
   const { discountAmount, finalAmount, gstAmount, actualPayable, hasDiscount, hasGst } = computeBillingAmounts({
-    preTaxAmount,
+    preTaxAmount: preTaxAmount ?? 0,
     discountApplicable,
     discountPercent,
     gstApplicable,
@@ -297,8 +341,13 @@ export default function BillOrderDetail() {
   // "can't press through a half-answered question" guard the discount/GST fields already use,
   // extended to the fulfilment location. The server enforces both independently; this is the
   // affordance that stops the owner reaching a 400 in the first place.
+  //
+  // !previewReady is new (rule 113) and is the button-disabling half of "never bill with a
+  // previous location's prices": the confirm button stays disabled for the whole window between
+  // picking/switching a location and that location's own preview actually resolving, so there is
+  // no tick where the owner could press Bill against a stale or wrong-location total.
   const billingInputIncomplete =
-    (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst) || !fulfillLocationId || !locationConfirmed;
+    (discountApplicable && !hasDiscount) || (gstApplicable && !hasGst) || !fulfillLocationId || !locationConfirmed || !previewReady;
 
   return (
     <div className="page">
@@ -425,7 +474,18 @@ export default function BillOrderDetail() {
         <button
           type="button"
           className="btn-primary"
-          onClick={() => setConfirmOpen(true)}
+          onClick={() => {
+            setConfirmOpen(true);
+            // Force a fresh preview every time this modal is opened, even if orderId/locationId
+            // are unchanged from a previous open on this same page visit — the location choice
+            // deliberately persists across a cancelled confirm (see handleCancelBillConfirm), so
+            // without this a reopened modal could show a preview fetched minutes ago. Harmless
+            // either way for correctness (billOrder's own stale-price check is the real guard),
+            // but this keeps what's ON SCREEN honest rather than relying on that check to catch a
+            // display the owner is actually looking at. A no-op the first time fulfillLocationId
+            // is still null — useFulfillmentPreview only fetches once a location exists.
+            refetchPreview();
+          }}
           disabled={submitting || blockedLines.length > 0}
         >
           {submitting ? 'Billing…' : 'Bill this order'}
@@ -477,17 +537,34 @@ export default function BillOrderDetail() {
         confirmDisabled={submitting || billingInputIncomplete}
       >
         <div className="bill-pricing-questions">
-          <p className="muted bill-pricing-pretax">Order total: {formatCurrency(preTaxAmount)}</p>
+          {/* Rule 113 — sourced from the fulfillment preview, not priceAtOrder. Three explicit
+              states rather than one line that might show a wrong number: no location chosen yet
+              (nothing to preview), the fetch in flight (never show a stale or placeholder total —
+              same discipline dashboard/Orders.jsx already applies to billPreTaxAmount), and a
+              failed fetch (billing is blocked either way — see previewReady — so this says why). */}
+          {!fulfillLocationId ? (
+            <p className="muted bill-pricing-pretax">Choose a fulfilment location to see the order total.</p>
+          ) : previewError ? (
+            <p className="error-banner" role="alert">
+              Could not load prices for this location: {previewError}
+            </p>
+          ) : !previewReady ? (
+            <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
+          ) : (
+            <p className="muted bill-pricing-pretax">Order total: {formatCurrency(preTaxAmount)}</p>
+          )}
 
           {/* Fulfilment location first, above the money questions — it decides which physical
               stock leaves the building, which is the more consequential of the two decisions and
               the one that used to be made invisibly. */}
           <BillFulfillmentPicker
-            orderId={id}
             locationId={fulfillLocationId}
             onLocationChange={setFulfillLocationId}
             confirmed={locationConfirmed}
             onConfirmedChange={setLocationConfirmed}
+            previewStatus={previewStatus}
+            preview={preview}
+            previewError={previewError}
           />
 
 
