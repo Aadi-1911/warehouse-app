@@ -213,8 +213,17 @@ export default function BillFulfillmentPicker({
                                     never disagree. Absent (null) only if this preview predates the
                                     field, which cannot happen for a live server — guarded anyway so
                                     a stale cached response degrades to hiding the price rather than
-                                    rendering "₹null". */}
-                                {l.billedUnitPrice != null && <> · {formatCurrency(l.billedUnitPrice)}/set</>}
+                                    rendering "₹null".
+                                    PER PIECE, not per set — computeBilledLines multiplies
+                                    qtySetsPacked × piecesPerSet × billedUnitPrice
+                                    (backend/src/utils/locationPricing.js), so this is a piece
+                                    price, same as every other cost/selling price figure in the app.
+                                    "(per piece)" is this codebase's own existing wording for
+                                    exactly this distinction — dashboard/History.jsx's "Corrected
+                                    cost price (per piece)" field label — reused here rather than
+                                    inventing a second phrasing ("/set" was wrong: it implied this
+                                    price was already multiplied by piecesPerSet, which it isn't). */}
+                                {l.billedUnitPrice != null && <> · {formatCurrency(l.billedUnitPrice)} (per piece)</>}
                               </span>
                             </li>
                           ))}
