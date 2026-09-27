@@ -1742,6 +1742,16 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* Rule 113's PIN step inside the bill-confirm modal. Separated by its own rule because it replaces
+   the modal's confirm button rather than adding to the form above it — PinPrompt's own field and
+   button are full-width, which is already right inside a 300px card, so nothing is capped here (see
+   .dash-pricing-pin-row for the desktop-row case where it isn't). */
+.bill-pricing-pin {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
 /* --- At-billing price review (components/BillPriceReview.jsx, rule 113, 2026-09-27). Sits between
    the fulfilment picker and the discount/GST questions: the location decides the baseline price, so
    this must read as a consequence of that choice, and the discount/GST percentages then apply on top

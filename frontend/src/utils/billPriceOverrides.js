@@ -19,6 +19,13 @@ import { piecesPerSetFor } from './piecesPerSet';
 // copies move together.
 export const MAX_PRICE_DECIMALS = 2;
 
+// The three PIN failures PATCH /api/orders/:id/bill can answer with (04_API_SPEC.md:540). Shared by
+// both screens because both need the same branch: PinPrompt already renders these itself — the
+// message, and INVALID_PIN's "(N attempts remaining)" from the response's sibling field — so a
+// screen must NOT also raise its own banner for them, or the owner reads the same failure twice in
+// two different places. Every other error code is the screen's own to display.
+export const PIN_ERROR_CODES = new Set(['MISSING_PIN', 'INVALID_PIN', 'PIN_LOCKED']);
+
 // Validates ONE typed price string against exactly the rules the server enforces (> 0, at most two
 // decimals, no exponential notation). Returns an error message, or null when the value is fine.
 //
