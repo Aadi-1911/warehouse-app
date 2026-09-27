@@ -226,6 +226,23 @@ export default function Orders() {
     setPriceResetNote(`Prices reset for ${locationName} — review again`);
   }
 
+  // Rule 113 + the location tick, reset together — five pieces of state that all describe trust
+  // earned about ONE specific review (this order, this location, these typed prices) and must never
+  // survive past it. Three call sites need exactly this reset: dismissing the confirm dialog without
+  // billing (handleCancelBillConfirm, unchanged from before), a billing attempt that failed for a
+  // reason unrelated to price (INSUFFICIENT_STOCK, VALIDATION_ERROR, ...) — which used to leave all
+  // five sitting here, so clicking "Mark billed" on a DIFFERENT order sharing an article could
+  // silently inherit the first order's typed price and PIN progress — and opening the modal fresh,
+  // as a second line of defence regardless of how it got dirty. One function so those three sites
+  // can't drift into resetting four of the five and forgetting the fifth.
+  function resetPriceAndLocationReview() {
+    setPriceOverrides({});
+    setPinStaged(false);
+    setPriceResetNote(null);
+    setStaleNote(null);
+    setLocationConfirmed(false);
+  }
+
   // Independent of the fetched data — a pure calendar fact, computed once at mount, so it never
   // resets back to "this month" on a refetch (e.g. after billing an order) if the owner had
   // already navigated to a different month.
@@ -347,8 +364,12 @@ export default function Orders() {
         refetchPreview();
       } else if (!PIN_ERROR_CODES.has(err.code)) {
         // Every non-PIN failure keeps its pre-existing behaviour: the real backend message in the
-        // page-level banner, modal closed.
+        // page-level banner, modal closed. The rule 113 / location-tick state must NOT survive this
+        // close — this page lists every order in one place, so a stale typed price left sitting here
+        // would otherwise reappear the moment "Mark billed" is clicked on a DIFFERENT order that
+        // happens to share an article.
         setBillError(err.message);
+        resetPriceAndLocationReview();
         setBillTarget(null);
       }
       // MISSING_PIN / INVALID_PIN / PIN_LOCKED fall through untouched — PinPrompt renders those
@@ -369,17 +390,11 @@ export default function Orders() {
     setDiscountPercent('');
     setGstApplicable(false);
     setGstPercent('');
-    // Confirmation resets every time; the location choice persists (see BillOrderDetail's
-    // identical reasoning) — a stale tick must never carry into the next order.
-    setLocationConfirmed(false);
-    // Typed prices reset too, and for a stronger reason than the tick: a price is a money decision
-    // about one specific bill, authorised by a PIN in that sitting. Carrying one into the next open —
-    // which on THIS screen could easily be a different order's row — is exactly what this reset is
-    // for.
-    setPriceOverrides({});
-    setPinStaged(false);
-    setPriceResetNote(null);
-    setStaleNote(null);
+    // Confirmation tick, typed prices and PIN progress all reset here; the location CHOICE persists
+    // (see BillOrderDetail's identical reasoning) — a stale tick or typed price must never carry into
+    // the next order, which on THIS screen could easily be a different row entirely. One shared
+    // function with the other two sites that need this identical reset — see its own comment.
+    resetPriceAndLocationReview();
   }
 
   // One row's markup, shared by both sections — only the order and which date to show for it
@@ -426,6 +441,12 @@ export default function Orders() {
               className="btn-primary btn-inline"
               onClick={() => {
                 setBillTarget(order);
+                // Second line of defence, alongside the reset already in handleCancelBillConfirm and
+                // in handleConfirmBill's non-PIN catch branch: whatever closed the modal last time
+                // (for THIS order or a previous one — this page lists many), opening it again always
+                // starts from a clean price/PIN/location-tick review rather than trusting every close
+                // path to have already cleared it.
+                resetPriceAndLocationReview();
                 // Keeps the row's own expanded-body detail in sync — this button is reachable
                 // from the collapsed header, so the row isn't necessarily expanded (and its
                 // detail fetched) already. NOT what the confirm modal's pricing depends on any

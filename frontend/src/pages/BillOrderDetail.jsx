@@ -162,6 +162,24 @@ export default function BillOrderDetail() {
     setPriceResetNote(`Prices reset for ${locationName} — review again`);
   }
 
+  // Rule 113 + the location tick, reset together — five pieces of state that all describe trust
+  // earned about ONE specific review (this order, this location, these typed prices) and must never
+  // survive past it. Three call sites need exactly this reset: dismissing the confirm dialog without
+  // billing (handleCancelBillConfirm, unchanged from before), a billing attempt that failed for a
+  // reason unrelated to price (INSUFFICIENT_STOCK, VALIDATION_ERROR, ...) — which used to leave all
+  // five sitting here, so a SECOND bill attempt (or, on the desktop dashboard, a different order
+  // sharing an article) could silently inherit the first attempt's typed price and PIN progress —
+  // and opening the modal fresh, as a second line of defence against the same staleness regardless
+  // of how it happened. One function so those three sites can't drift into resetting four of the
+  // five and forgetting the fifth.
+  function resetPriceAndLocationReview() {
+    setPriceOverrides({});
+    setPinStaged(false);
+    setPriceResetNote(null);
+    setStaleNote(null);
+    setLocationConfirmed(false);
+  }
+
   // Same single-target pattern as PackOrderDetail — { kind: 'line', line } or { kind: 'order' }.
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling] = useState(false);
@@ -301,7 +319,11 @@ export default function BillOrderDetail() {
         setSubmitError(err.message);
         // Discount/GST inputs are deliberately NOT cleared on this path — a real, valid entry the
         // owner already typed shouldn't vanish just because billing failed for an unrelated reason;
-        // they can retry without re-entering it.
+        // they can retry without re-entering it. The rule 113 / location-tick state is the opposite
+        // case: it must NOT survive this close, or a later attempt on this order (or, on the
+        // dashboard screen, a different order) would silently inherit a typed price and PIN
+        // progress that were never re-confirmed for it.
+        resetPriceAndLocationReview();
         setConfirmOpen(false);
       }
       // MISSING_PIN / INVALID_PIN / PIN_LOCKED deliberately fall through with no state change at
@@ -323,19 +345,12 @@ export default function BillOrderDetail() {
     setGstApplicable(false);
     setGstPercent('');
     setBillNo('');
-    // The confirmation resets, the location choice does NOT. Re-opening must never carry over a
-    // stale "yes I checked it" — that tick has to be earned again every time. The location itself
-    // is a harmless starting point to re-show (the picker re-previews it live on open anyway), and
-    // clearing it would just make the owner re-pick GGN every time for no safety gain.
-    setLocationConfirmed(false);
-    // Typed prices reset too, for the same reason the tick does and a stronger one: a price is a
-    // money decision made about one specific bill in one specific sitting, and rule 113's PIN
-    // authorises it there and then. Carrying one silently into the next open — possibly for a
-    // different order — is exactly the "half-filled previous attempt" this reset exists to prevent.
-    setPriceOverrides({});
-    setPinStaged(false);
-    setPriceResetNote(null);
-    setStaleNote(null);
+    // The confirmation tick, the typed prices and the PIN progress all reset here — the location
+    // CHOICE itself does NOT (fulfillLocationId is untouched): re-opening must never carry over a
+    // stale "yes I checked it" or a stale typed price, but re-showing the last picked location is a
+    // harmless starting point (the picker re-previews it live on open anyway). One shared function
+    // with the other two sites that need this identical reset — see its own comment.
+    resetPriceAndLocationReview();
   }
 
   if (orderStatus !== 'loaded') {
@@ -589,6 +604,11 @@ export default function BillOrderDetail() {
           className="btn-primary"
           onClick={() => {
             setConfirmOpen(true);
+            // Second line of defence, alongside the reset already in handleCancelBillConfirm and in
+            // handleConfirmBill's non-PIN catch branch: whatever closed the modal last time, opening
+            // it again always starts from a clean price/PIN/location-tick review rather than trusting
+            // every close path to have already cleared it.
+            resetPriceAndLocationReview();
             // Force a fresh preview every time this modal is opened, even if orderId/locationId
             // are unchanged from a previous open on this same page visit — the location choice
             // deliberately persists across a cancelled confirm (see handleCancelBillConfirm), so
