@@ -46,11 +46,18 @@ function formatCurrency(amount) {
 // component used to make itself, which now lives in the parent's useFulfillmentPreview call (see
 // the header comment). This component receives the RESULT (previewStatus/preview/previewError),
 // never the id needed to fetch it.
+// `onLocationSwitched` (optional, rule 113) is called ONLY when the owner taps a location that is
+// not the current one — the same single branch that clears the confirmation tick. It is deliberately
+// a separate prop from `onLocationChange`, which is also fired by the default-location resolution
+// below: a parent needs to distinguish "the picker settled on its default" from "the owner switched
+// away", because only the second invalidates work the owner had already done (their tick, and any
+// at-billing price they typed against the old location's baseline).
 export default function BillFulfillmentPicker({
   locationId,
   onLocationChange,
   confirmed,
   onConfirmedChange,
+  onLocationSwitched,
   previewStatus,
   preview,
   previewError,
@@ -145,6 +152,12 @@ export default function BillFulfillmentPicker({
                 if (loc.id !== locationId) {
                   onLocationChange(loc.id);
                   onConfirmedChange(false);
+                  // Rule 113: a typed at-billing price was approved against the OLD location's
+                  // baseline, so it must not survive a switch either. Fired from THIS branch
+                  // specifically — never from the default-location pick above (which is not a
+                  // switch and has nothing to invalidate), and never from a preview re-fetch,
+                  // which doesn't come through here at all.
+                  onLocationSwitched?.(loc.id, loc.name);
                 }
               }}
             >
