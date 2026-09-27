@@ -670,11 +670,19 @@ export default function Orders() {
   // depends on it.
   //
   // Rule 113: once a price is typed, preview.preTaxAmount is the total for the OLD prices, so the
-  // discount/GST preview must build on the estimate instead. estimatedPreTax uses the same formula
-  // the backend sums and equals preview.preTaxAmount exactly when nothing was typed, so this is one
-  // expression rather than a branch. The fallback covers the window before the order detail lands
-  // (no piecesPerSet shape, so no honest estimate), which carries no typed prices anyway.
-  const billPreTaxAmount = previewReady ? (pricing.estimatedPreTax ?? preview.preTaxAmount) : 0;
+  // discount/GST preview must build on the estimate instead. Gated explicitly on pricing.pinRequired
+  // — not just "use the estimate whenever it exists" — for the identical reason
+  // BillOrderDetail.jsx's own copy of this expression is: with nothing typed, estimatedPreTax and
+  // preview.preTaxAmount are mathematically equal, so showing the client-computed one anyway would
+  // discard the more trustworthy of two equal numbers on every ordinary bill for no reason. The
+  // `?? preview.preTaxAmount` fallback covers pinRequired being true while the estimate is still
+  // null (the order detail hasn't landed yet) — billingInputIncomplete already blocks confirming
+  // through that window regardless.
+  const billPreTaxAmount = previewReady
+    ? pricing.pinRequired
+      ? (pricing.estimatedPreTax ?? preview.preTaxAmount)
+      : preview.preTaxAmount
+    : 0;
   const billAmounts = computeBillingAmounts({
     preTaxAmount: billPreTaxAmount,
     discountApplicable,

@@ -439,12 +439,19 @@ export default function BillOrderDetail() {
   //
   // Rule 113 layers one more thing on top: once the owner types a price, `preview.preTaxAmount` is
   // the total for the OLD prices, so the discount/GST preview must be built on the estimate instead.
-  // `estimatedPreTax` is the same formula the backend sums (qtySetsPacked × piecesPerSet × price) and
-  // equals preview.preTaxAmount exactly when nothing has been typed — so this is one expression, not
-  // a branch between "overridden" and "not". It falls back to the preview's own figure if the order
-  // detail hasn't arrived yet (no piecesPerSet shape, so no honest estimate); that window is the
-  // same one previewReady already covers and it carries no typed prices.
-  const preTaxAmount = previewReady ? (pricing.estimatedPreTax ?? preview.preTaxAmount) : null;
+  // Gated explicitly on `pricing.pinRequired` — NOT just "use the estimate whenever it exists" —
+  // because `estimatedPreTax` is a client-side sum over a snapshot and is only actually needed once
+  // a typed price makes it disagree with the server's own preview figure. With nothing typed, the
+  // two are mathematically equal, but showing the estimate anyway would mean the more trustworthy of
+  // two equal numbers is discarded for no reason on every ordinary bill. `?? preview.preTaxAmount` is
+  // the fallback for the one case pinRequired can be true while the estimate is still null: the order
+  // detail (needed for the piecesPerSet shape) hasn't arrived yet, which billingInputIncomplete
+  // already keeps the owner from confirming through regardless.
+  const preTaxAmount = previewReady
+    ? pricing.pinRequired
+      ? (pricing.estimatedPreTax ?? preview.preTaxAmount)
+      : preview.preTaxAmount
+    : null;
   const { discountAmount, finalAmount, gstAmount, actualPayable, hasDiscount, hasGst } = computeBillingAmounts({
     preTaxAmount: preTaxAmount ?? 0,
     discountApplicable,
