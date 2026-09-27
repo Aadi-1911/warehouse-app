@@ -249,6 +249,25 @@ export default function BillOrderDetail() {
     const fromPinPrompt = pin != null;
     setSubmitError(null);
     setStaleNote(null);
+    // `billingInputIncomplete` is declared further down this same component function (after the
+    // order-loading early returns), but that's fine here: this closure isn't invoked until a later
+    // click, well after that `const` has been assigned for the current render — the ordinary JS rule
+    // that a function can reference an enclosing `const` declared below it, as long as it only runs
+    // after that declaration has executed, which every event handler here does.
+    //
+    // This check exists specifically for the PIN step: once `pinStaged` is true, ConfirmModal's own
+    // button is HIDDEN (hideConfirm), so `confirmDisabled={billingInputIncomplete}` on that button no
+    // longer guards anything — the only thing left calling this function is PinPrompt's own submit,
+    // which knows nothing about discount/GST validity, stock, or rule 113's own price/PIN inputs.
+    // Without this, staging the PIN step and then invalidating one of those (e.g. the order becomes
+    // blocked by a stock check between staging and submitting) would let PinPrompt push the request
+    // through anyway.
+    if (billingInputIncomplete) {
+      const message = 'Some billing details are incomplete or invalid — review them before confirming.';
+      setSubmitError(message);
+      if (fromPinPrompt) throw new Error(message);
+      return;
+    }
     // Defensive, not decorative — the confirm button is disabled while `preview` is unready (see
     // billingInputIncomplete below), so this should be unreachable in normal use. But a UI-only
     // guard is never trusted as the real one anywhere else in this app (locationConfirmed is the

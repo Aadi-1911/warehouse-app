@@ -308,6 +308,23 @@ export default function Orders() {
     const target = billTarget;
     setBillError(null);
     setStaleNote(null);
+    // `billingInputIncomplete` is declared further down this same component function, but that's
+    // fine here: this closure isn't invoked until a later click, well after that `const` has been
+    // assigned for the current render — identical reasoning to BillOrderDetail.jsx's own copy of
+    // this check.
+    //
+    // This exists specifically for the PIN step: once `pinStaged` is true, ConfirmModal's own button
+    // is HIDDEN (hideConfirm), so `confirmDisabled={billingInputIncomplete}` no longer guards
+    // anything — the only thing left calling this function is PinPrompt's own submit, which knows
+    // nothing about discount/GST validity, stock, or rule 113's own price/PIN inputs. Without this, a
+    // stock check turning blocking (or a discount % becoming invalid) between staging the PIN and
+    // submitting it would let PinPrompt push the request through anyway.
+    if (billingInputIncomplete) {
+      const message = 'Some billing details are incomplete or invalid — review them before confirming.';
+      setBillError(message);
+      if (fromPinPrompt) throw new Error(message);
+      return;
+    }
     // Defensive, not decorative — the confirm button is disabled while `preview` is unready (see
     // billingInputIncomplete below). Same guard BillOrderDetail.jsx's identical handler uses,
     // and for the same reason: a UI-only guard is never trusted as the real one on the one
