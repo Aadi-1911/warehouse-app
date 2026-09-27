@@ -1853,6 +1853,15 @@ body {
 
 .bill-fulfillment-line {
   display: flex;
+  /* wrap ADDED (rule 113's per-line price made the qty text long enough that it and the colour
+     name no longer both fit on one line at the modal's ~240px usable width — see
+     .bill-fulfillment-line-qty's own comment below for the other half of this fix). Once the two
+     don't fit together, this drops qty onto its own line under the name rather than the flex
+     default of squeezing whichever item has room to shrink (the name, via its min-width: 0 below)
+     down to nothing. A SHORT row (short name + short qty) is unaffected: if both fit on one line
+     at their natural widths, wrap has nothing to do and space-between still puts them at opposite
+     ends of that one line exactly as before. */
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-3);
   font-size: 12px;
@@ -1867,13 +1876,30 @@ body {
   font-weight: 700;
 }
 
+/* min-width: 0 lets this shrink below its own content width when the row can't fit both children
+   on one line, which is what makes flex-wrap above actually move qty to a new line instead of both
+   items getting stuck fighting over one line's space. overflow-wrap: anywhere is a safety net for
+   the genuinely pathological case a real colour name could still hit — one word wider than the
+   whole row (e.g. a single very long compound name) — not the normal path: once qty wraps onto its
+   own line (the usual case for anything longer than a couple of words), the name gets the FULL row
+   width to itself and never needs to shrink at all, so it renders as one normal, unbroken line. */
 .bill-fulfillment-line-name {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+/* white-space CHANGED from nowrap to normal. This is the fix's other necessary half — flex-wrap
+   above only decides whether qty gets pushed onto its OWN line; it says nothing about what happens
+   once qty is alone there and its full text is still wider than the line. With nowrap, that text
+   could not break at all and would overflow the modal horizontally (a real failure mode with a
+   long qty string like "need 12 · InStock 150 — short · ₹1,250 (per piece)" — this is not
+   hypothetical, it is the worst case this rule has to hold for). With normal, once qty is alone on
+   its own flex line, its automatic minimum width is only as wide as its longest single unbreakable
+   token (e.g. "InStock" or "₹1,250") — comfortably under the ~240px usable width — so flex-shrink
+   (the default, already in effect) can narrow the box down and the text wraps at its natural word
+   boundaries into two or three short lines, never past the container's edge. */
 .bill-fulfillment-line-qty {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* accent-color overrides .checkbox-field's danger-red default: this box is a required
