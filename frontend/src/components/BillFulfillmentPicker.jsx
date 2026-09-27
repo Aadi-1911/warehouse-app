@@ -138,7 +138,15 @@ export default function BillFulfillmentPicker({
               type="button"
               className={`bill-fulfillment-option${loc.id === locationId ? ' bill-fulfillment-option-active' : ''}`}
               aria-pressed={loc.id === locationId}
-              onClick={() => onLocationChange(loc.id)}
+              onClick={() => {
+                // Switching to a DIFFERENT location invalidates any earlier tick — it was a read
+                // of the OLD location, not this one. Tapping the already-selected location is a
+                // no-op here on purpose, so it never clears a tick that's still valid.
+                if (loc.id !== locationId) {
+                  onLocationChange(loc.id);
+                  onConfirmedChange(false);
+                }
+              }}
             >
               {shortLabel(loc.name)}
             </button>
