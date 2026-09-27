@@ -1742,6 +1742,114 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* --- At-billing price review (components/BillPriceReview.jsx, rule 113, 2026-09-27). Sits between
+   the fulfilment picker and the discount/GST questions: the location decides the baseline price, so
+   this must read as a consequence of that choice, and the discount/GST percentages then apply on top
+   of whatever this settles on. Styled once here for both billing entry points, same as the picker
+   below. */
+.bill-price-review {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.bill-price-review-heading {
+  margin: 0 0 6px;
+}
+
+/* A short note, not a banner — this fires on an ordinary, correct action (switching location), so it
+   must not look like an error. Uses the accent tint rather than --danger-text for that reason. */
+.bill-price-review-reset {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-text);
+  margin: 0 0 var(--space-3);
+}
+
+.bill-price-review-row {
+  margin-bottom: var(--space-3);
+}
+
+.bill-price-review-article {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+/* The one flex row in this block, and deliberately the SAFE shape for it: both children are short,
+   fixed-ish widths (a formatted rupee figure and a capped-width input), so neither can squeeze the
+   other the way a long colour name did in the picker's own rows before 40997e8. flex-wrap is set
+   anyway so the pair drops to two lines rather than overflowing if a figure ever runs long. */
+.bill-price-review-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bill-price-review-baseline {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Capped narrow for the same reason .bill-pricing-percent-field is: a rupee figure needs 4-5 digits,
+   not the full width of an already-narrow 300px modal card. */
+.bill-price-review-input {
+  max-width: 110px;
+}
+
+.bill-price-review-error {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger-text);
+  margin: 4px 0 0;
+}
+
+.bill-price-review-changed {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 4px 0 0;
+}
+
+/* Amber, not red: below cost is explicitly allowed (rule 113 warns and never blocks), so it must
+   not wear the same colour as .bill-price-review-error above, which marks input the server WILL
+   reject. Same amber/red severity split BillOrderDetail.jsx's own header comment describes between
+   Pack Order's shortfall tint and its own blocked-line tint. */
+.bill-price-review-belowcost {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--warning-text);
+  margin: 4px 0 0;
+}
+
+.bill-price-review-summary {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.bill-price-review-summary-heading {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+.bill-price-review-summary-line {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin: 0 0 2px;
+}
+
+.bill-price-review-summary-note,
+.bill-price-review-cost-pending {
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
 /* --- Fulfilment location picker inside the bill-confirm modal (components/BillFulfillmentPicker
    .jsx, 2026-09-07). Shared by BOTH billing entry points, so this styling is deliberately written
    once here rather than per-screen. Sits above the discount/GST questions and is separated from
