@@ -5,7 +5,12 @@ import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
 import { computeBillingAmounts, clampPercent, seenPricesFromPreview, describeChangedLines } from '../../utils/orderBilling';
 import BillFulfillmentPicker from '../../components/BillFulfillmentPicker';
+import BillPriceReview from '../../components/BillPriceReview';
+import PinPrompt from '../../components/PinPrompt';
 import { useFulfillmentPreview } from '../../hooks/useFulfillmentPreview';
+import { useOwnerCostPrices } from '../../hooks/useOwnerCostPrices';
+import { useAuth } from '../../hooks/useAuth';
+import { deriveBillPricing, PIN_ERROR_CODES } from '../../utils/billPriceOverrides';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
@@ -173,6 +178,54 @@ export default function Orders() {
     fulfillLocationId
   );
 
+  // At-billing price overrides (rule 113) — same five pieces of state, same meanings, as
+  // BillOrderDetail.jsx's. Raw typed strings keyed by productId so a half-typed value round-trips
+  // unchanged; pinStaged is the owner's progress through the two-step confirm; the two notes are
+  // "look again" messages that belong inside the modal rather than in the page banner behind it.
+  const [priceOverrides, setPriceOverrides] = useState({});
+  const [pinStaged, setPinStaged] = useState(false);
+  const [priceResetNote, setPriceResetNote] = useState(null);
+  const [staleNote, setStaleNote] = useState(null);
+
+  // Cost prices for the below-cost warning. The whole /dashboard tree is OWNER-only at the route, so
+  // this is always an owner fetch — the flag is belt-and-braces over GET /api/products' own role
+  // gate (productController.js's productSelect(role)), which is what actually keeps cost from STAFF.
+  const { user } = useAuth();
+  const { status: costStatus, costPriceByProductId } = useOwnerCostPrices(user.role === 'OWNER');
+
+  // THE one derivation, shared with BillOrderDetail.jsx (utils/billPriceOverrides.js) so the two
+  // billing screens cannot disagree about the same order. The line items come from this page's own
+  // lazily-fetched detail cache, and only for the estimated total (the preview carries no
+  // piecesPerSet shape) — `?? null` covers the window where "Mark billed" has opened the modal but
+  // ensureDetail's fetch hasn't landed, which deriveBillPricing answers with a null estimate rather
+  // than a sum missing an article.
+  const pricing = deriveBillPricing({
+    preview,
+    lineItems: billTarget ? (details[billTarget.id]?.order?.lineItems ?? null) : null,
+    overrides: priceOverrides,
+    costPriceByProductId,
+  });
+
+  // Typing a price invalidates the PIN step — the PIN is about a specific set of numbers, so
+  // changing them has to send the owner back to review rather than leave a PIN field under a figure
+  // it no longer matches.
+  function handleOverrideChange(productId, value) {
+    setPriceOverrides((prev) => ({ ...prev, [productId]: value }));
+    setPinStaged(false);
+    setPriceResetNote(null);
+    setStaleNote(null);
+  }
+
+  // A real location SWITCH only — fired from BillFulfillmentPicker's single tap branch, never from
+  // its default-location pick and never from a preview re-fetch. A price approved against Gurgaon's
+  // baseline is a different decision against Delhi's, so it cannot survive the switch.
+  function handleLocationSwitched(_locationId, locationName) {
+    setPriceOverrides({});
+    setPinStaged(false);
+    setStaleNote(null);
+    setPriceResetNote(`Prices reset for ${locationName} — review again`);
+  }
+
   // Independent of the fetched data — a pure calendar fact, computed once at mount, so it never
   // resets back to "this month" on a refetch (e.g. after billing an order) if the owner had
   // already navigated to a different month.
@@ -229,15 +282,23 @@ export default function Orders() {
     });
   }
 
-  async function handleConfirmBill() {
+  // `pin` is present only when PinPrompt called this (the rule 113 path); the plain confirm button
+  // calls it with nothing. That argument also decides the error contract — PinPrompt needs a THROWN
+  // error to stop its spinner and render the failure, the plain button path has nowhere to throw to.
+  // Identical to BillOrderDetail.jsx's handler, deliberately.
+  async function handleConfirmBill(pin) {
+    const fromPinPrompt = pin != null;
     const target = billTarget;
     setBillError(null);
+    setStaleNote(null);
     // Defensive, not decorative — the confirm button is disabled while `preview` is unready (see
     // billingInputIncomplete below). Same guard BillOrderDetail.jsx's identical handler uses,
     // and for the same reason: a UI-only guard is never trusted as the real one on the one
     // irreversible action in the whole order lifecycle.
     if (!preview) {
-      setBillError('Prices are still loading for this location — wait a moment and try again.');
+      const message = 'Prices are still loading for this location — wait a moment and try again.';
+      setBillError(message);
+      if (fromPinPrompt) throw new Error(message);
       return;
     }
     setBilling(true);
@@ -258,6 +319,13 @@ export default function Orders() {
         // Rule 113 — required on every bill. Built from exactly the `preview` object rendered on
         // screen, so this describes what the owner actually saw, never a recomputation.
         seenPrices: seenPricesFromPreview(preview),
+        // Rule 113 — ONLY the articles whose typed price actually differs from the baseline, with the
+        // key omitted entirely when nothing changed. An override equal to the baseline is a no-op
+        // server-side, so sending one would claim a change the owner did not make.
+        ...(pricing.priceOverrides.length > 0 ? { priceOverrides: pricing.priceOverrides } : {}),
+        // Only when PinPrompt supplied one — the server decides for itself whether a PIN was
+        // required, so an omitted PIN on a changed price is a 403, not an unauthorised bill.
+        ...(fromPinPrompt ? { pin } : {}),
       });
       setBillTarget(null);
       // Reflect the new status immediately in both the collapsed row (from the list refetch,
@@ -267,18 +335,26 @@ export default function Orders() {
       setDetails((prev) => ({ ...prev, [target.id]: { status: 'loaded', order: updated } }));
     } catch (err) {
       // PRICES_CHANGED (rule 113) gets its own message naming what moved, and forces a fresh
-      // preview for the next attempt — the owner must look again and press "Mark billed" a second
-      // time; this never retries the bill itself. The two pre-existing realistic failures
-      // (INSUFFICIENT_STOCK, ORDER_NOT_PACKED) keep their real backend message verbatim.
+      // preview — the owner must look again and confirm a second time; this never retries the bill
+      // itself. The modal STAYS OPEN and every typed price is KEPT: their pricing decision is still
+      // what they want, it is the baseline underneath it that moved. Dropping out of the PIN step is
+      // the "confirm again" half — the PIN authorises a specific delta, and that delta has changed.
       if (err.code === 'PRICES_CHANGED' && Array.isArray(err.extra?.changedLines)) {
-        setBillError(
-          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review the new prices and mark billed again.`
+        setStaleNote(
+          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review and mark billed again.`
         );
+        setPinStaged(false);
         refetchPreview();
-      } else {
+      } else if (!PIN_ERROR_CODES.has(err.code)) {
+        // Every non-PIN failure keeps its pre-existing behaviour: the real backend message in the
+        // page-level banner, modal closed.
         setBillError(err.message);
+        setBillTarget(null);
       }
-      setBillTarget(null);
+      // MISSING_PIN / INVALID_PIN / PIN_LOCKED fall through untouched — PinPrompt renders those
+      // itself, including INVALID_PIN's "(N attempts remaining)", and the modal must stay open and
+      // staged so the owner can retry the PIN.
+      if (fromPinPrompt) throw err;
     } finally {
       setBilling(false);
     }
@@ -296,6 +372,14 @@ export default function Orders() {
     // Confirmation resets every time; the location choice persists (see BillOrderDetail's
     // identical reasoning) — a stale tick must never carry into the next order.
     setLocationConfirmed(false);
+    // Typed prices reset too, and for a stronger reason than the tick: a price is a money decision
+    // about one specific bill, authorised by a PIN in that sitting. Carrying one into the next open —
+    // which on THIS screen could easily be a different order's row — is exactly what this reset is
+    // for.
+    setPriceOverrides({});
+    setPinStaged(false);
+    setPriceResetNote(null);
+    setStaleNote(null);
   }
 
   // One row's markup, shared by both sections — only the order and which date to show for it
@@ -563,7 +647,13 @@ export default function Orders() {
   // billDetailReady as the readiness gate — the order detail (`details[billTarget.id]`) still gets
   // fetched via ensureDetail for the row's own expanded body, but the confirm modal no longer
   // depends on it.
-  const billPreTaxAmount = previewReady ? preview.preTaxAmount : 0;
+  //
+  // Rule 113: once a price is typed, preview.preTaxAmount is the total for the OLD prices, so the
+  // discount/GST preview must build on the estimate instead. estimatedPreTax uses the same formula
+  // the backend sums and equals preview.preTaxAmount exactly when nothing was typed, so this is one
+  // expression rather than a branch. The fallback covers the window before the order detail lands
+  // (no piecesPerSet shape, so no honest estimate), which carries no typed prices anyway.
+  const billPreTaxAmount = previewReady ? (pricing.estimatedPreTax ?? preview.preTaxAmount) : 0;
   const billAmounts = computeBillingAmounts({
     preTaxAmount: billPreTaxAmount,
     discountApplicable,
@@ -573,12 +663,15 @@ export default function Orders() {
   });
   // !previewReady is new (rule 113) and is the button-disabling half of "never bill with a
   // previous location's prices" — same reasoning as BillOrderDetail.jsx's identical guard.
+  // pricing.hasErrors is the same guard applied to rule 113's inputs: a typed price the server would
+  // reject (0, negative, three decimals) must not be pressable through to a 400.
   const billingInputIncomplete =
     (discountApplicable && !billAmounts.hasDiscount) ||
     (gstApplicable && !billAmounts.hasGst) ||
     !fulfillLocationId ||
     !locationConfirmed ||
-    !previewReady;
+    !previewReady ||
+    pricing.hasErrors;
 
   return (
     <>
@@ -643,11 +736,19 @@ export default function Orders() {
             ? `This immediately deducts real stock and permanently locks ${billTarget.partyName}'s order — no quantity, price or packing change is possible after this, ever. There is no way to reverse it.`
             : ''
         }
-        confirmLabel={billing ? 'Billing…' : 'Bill and lock order'}
+        // Rule 113 makes this a TWO-STEP confirm whenever a price changed: this button stages the
+        // PIN step, and PinPrompt's own submit (which replaces this one — ConfirmModal's hideConfirm)
+        // bills. Unchanged prices leave it the one-step confirm it always was. The arrow wrapper is
+        // load-bearing on the non-PIN path: ConfirmModal calls onConfirm as a click handler, so
+        // passing handleConfirmBill bare would hand it the click EVENT as its `pin`.
+        confirmLabel={
+          pricing.pinRequired ? 'Review changes & enter PIN' : billing ? 'Billing…' : 'Bill and lock order'
+        }
         tone="danger"
-        onConfirm={handleConfirmBill}
+        onConfirm={pricing.pinRequired ? () => setPinStaged(true) : () => handleConfirmBill()}
         onCancel={handleCancelBillConfirm}
         confirmDisabled={billing || billingInputIncomplete}
+        hideConfirm={pinStaged}
       >
         <div className="bill-pricing-questions">
           {/* Rule 113 — sourced from the fulfillment preview, not priceAtOrder. Same three-plus-one
@@ -664,7 +765,12 @@ export default function Orders() {
           ) : !previewReady ? (
             <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
           ) : (
-            <p className="muted bill-pricing-pretax">Order total: {formatCurrency(billPreTaxAmount)}</p>
+            <p className="muted bill-pricing-pretax">
+              Order total: {formatCurrency(billPreTaxAmount)}
+              {/* Called an estimate only once a typed price is in play — with nothing typed this is
+                  the server's own preview figure, which is not an estimate. */}
+              {pricing.pinRequired ? ' (estimate at your new prices)' : ''}
+            </p>
           )}
 
           {/* Fulfilment location above the money questions, same order as mobile. Rendered
@@ -676,10 +782,56 @@ export default function Orders() {
             onLocationChange={setFulfillLocationId}
             confirmed={locationConfirmed}
             onConfirmedChange={setLocationConfirmed}
+            onLocationSwitched={handleLocationSwitched}
             previewStatus={previewStatus}
             preview={preview}
             previewError={previewError}
           />
+
+          {/* Rule 113's price review, between the location and the money questions — same placement
+              and same shared component as mobile. Gated on previewReady because with no preview there
+              are no baselines to price against. Inputs disable on the PIN step so the figures the PIN
+              covers can't move underneath it. */}
+          {previewReady && (
+            <BillPriceReview
+              pricing={pricing}
+              onOverrideChange={handleOverrideChange}
+              formatCurrency={formatCurrency}
+              costStatus={costStatus}
+              resetNote={priceResetNote}
+              disabled={billing || pinStaged}
+            />
+          )}
+
+          {staleNote && (
+            <p className="error-banner" role="alert">
+              {staleNote}
+            </p>
+          )}
+
+          {/* The PIN step — the shared PinPrompt, not a hand-copied field. It owns the input, the
+              submit button, the in-flight label and the INVALID_PIN "(N attempts remaining)"
+              rendering, which is why handleConfirmBill re-throws a PIN failure rather than swallowing
+              it. Same "stage the other fields, then swap to PinPrompt" shape this dashboard's
+              History and Parties screens already use. */}
+          {pinStaged && (
+            <div className="bill-pricing-pin">
+              <p className="muted hint-text">
+                {pricing.changedArticles.length} price
+                {pricing.changedArticles.length === 1 ? '' : 's'} changed — enter your PIN to bill at
+                the new prices.
+              </p>
+              <PinPrompt
+                submitLabel="Bill and lock order"
+                submittingLabel="Billing…"
+                autoFocus
+                onSubmit={handleConfirmBill}
+              />
+              <button type="button" className="link-button" onClick={() => setPinStaged(false)}>
+                Change prices
+              </button>
+            </div>
+          )}
 
           <label className="checkbox-field">
             <input
