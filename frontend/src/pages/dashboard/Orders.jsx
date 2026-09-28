@@ -161,8 +161,8 @@ export default function Orders() {
   // Discount/GST questions (added 2026-08-25, rule 101) — same shape and same shared
   // computeBillingAmounts (utils/orderBilling.js) as BillOrderDetail.jsx, so this screen's live
   // preview can never disagree with mobile's for the identical order. The pre-tax figure it's
-  // applied on top of now comes from useFulfillmentPreview on both screens (rule 113), not from
-  // preBillingTotal — see that function's own comment for why.
+  // applied on top of now comes from useFulfillmentPreview on both screens (rule 113), not from a
+  // client-side sum of priceAtOrder (the quote) — billing charges billedUnitPrice, which can differ.
   const [discountApplicable, setDiscountApplicable] = useState(false);
   const [discountPercent, setDiscountPercent] = useState('');
   const [gstApplicable, setGstApplicable] = useState(false);

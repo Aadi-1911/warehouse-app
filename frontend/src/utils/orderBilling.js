@@ -1,5 +1,3 @@
-import { piecesPerSetFor } from './piecesPerSet';
-
 // Shared by both real billing entry points — BillOrderDetail.jsx (mobile) and dashboard/
 // Orders.jsx's "Mark billed" flow — so the live discount/GST preview each shows can never
 // silently drift apart for the same order. Added 2026-08-25 alongside the backend's own
@@ -24,27 +22,6 @@ import { piecesPerSetFor } from './piecesPerSet';
 // currently does).
 export function chargedUnitPrice(line) {
   return line.billedUnitPrice ?? line.priceAtOrder;
-}
-
-// NO LONGER CALLED BY EITHER BILLING SCREEN (rule 113, 2026-09-25). This computed the pre-tax
-// total from each line's priceAtOrder — the price the party was QUOTED at order time — but billing
-// now charges billedUnitPrice, which can legitimately differ once an article has a location-level
-// selling override (rule 111) or an at-billing price change (rule 113, entered through
-// components/BillPriceReview.jsx on both billing screens). Using this for the confirm-screen
-// total would show a figure the bill might not actually charge. Both screens now read
-// `preTaxAmount` directly from GET /api/orders/:id/fulfillment-preview instead —
-// the SAME resolver billOrder() itself uses, so what's shown and what's charged cannot disagree.
-// Kept rather than deleted: a grep at the time of this change found no remaining callers anywhere
-// in frontend/src, but removing an exported function is a separate, deliberate cleanup task, not a
-// side effect of this one.
-export function preBillingTotal(lineItems) {
-  return lineItems
-    .filter((li) => !li.isCancelled)
-    .reduce(
-      (sum, li) =>
-        sum + li.qtySetsPacked * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(li.priceAtOrder),
-      0,
-    );
 }
 
 // The exact calculation rules 101 and 109 define — GST is applied to the POST-discount amount,
