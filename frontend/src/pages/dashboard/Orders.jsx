@@ -929,6 +929,17 @@ export default function Orders() {
           )}
           {billAmounts.hasGst && <p className="bill-pricing-line">+{formatCurrency(billAmounts.gstAmount)} GST</p>}
 
+          {/* Rule 109's rounding, shown only when it actually did something — the same "omit at exactly 0"
+              and explicit-sign convention as the post-billing footer in dashboard/Orders.jsx. This
+              is what explains why "Total to bill" is a whole rupee while the lines above it carry
+              paise. toFixed(2) rather than formatCurrency, whose toLocaleString('en-IN') defaults to
+              3 fraction digits and would render a 0.1653 adjustment as "₹0.165". */}
+          {billAmounts.roundingAdjustment !== 0 && (
+            <p className="bill-pricing-line">
+              Rounding {billAmounts.roundingAdjustment > 0 ? '+' : '−'}₹{Math.abs(billAmounts.roundingAdjustment).toFixed(2)}
+            </p>
+          )}
+
           <p className="bill-pricing-final">Total to bill: {formatCurrency(billAmounts.actualPayable)}</p>
         </div>
       </ConfirmModal>
