@@ -8,6 +8,24 @@ import { piecesPerSetFor } from './piecesPerSet';
 // recomputes and stores the authoritative figures inside billOrder() itself; nothing computed
 // here is ever trusted as the value that gets written.
 
+// The unit price a line was actually CHARGED, for any screen that shows a line's value on an order
+// that may already be billed. `billedUnitPrice` (rules 111/113) is what billOrder() charged;
+// `priceAtOrder` is only the QUOTE at order placement and is never overwritten, so on a billed
+// order it can be wrong by exactly the amount of a location price or an at-billing override (a
+// line quoted at ₹500 and billed at ₹520 must read ₹520, not ₹500).
+//
+// Deliberately decided by the DATA, not by the order's status. billedUnitPrice is written in exactly
+// one place — inside billOrder()'s transaction (orderController.js) — so it is non-null if and only
+// if the line has been billed under rule 111/113. That makes `??` correct in all three cases with
+// no status check to keep in step: an unbilled order (null -> the quote, which is all that exists),
+// an order billed before 2026-09-25 (null -> priceAtOrder really WAS what was charged), and an
+// order billed since (the charged price). A status check would add a second source of truth that
+// could disagree with the row. Never use this for a figure that must stay the QUOTE (nothing
+// currently does).
+export function chargedUnitPrice(line) {
+  return line.billedUnitPrice ?? line.priceAtOrder;
+}
+
 // NO LONGER CALLED BY EITHER BILLING SCREEN (rule 113, 2026-09-25). This computed the pre-tax
 // total from each line's priceAtOrder — the price the party was QUOTED at order time — but billing
 // now charges billedUnitPrice, which can legitimately differ once an article has a location-level

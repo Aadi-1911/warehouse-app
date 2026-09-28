@@ -3,7 +3,7 @@ import { ChevronIcon } from '../../components/icons';
 import ConfirmModal from '../../components/ConfirmModal';
 import { listOrders, getOrder, billOrder } from '../../api/orders';
 import { piecesPerSetFor } from '../../utils/piecesPerSet';
-import { computeBillingAmounts, clampPercent, seenPricesFromPreview, describeChangedLines } from '../../utils/orderBilling';
+import { computeBillingAmounts, chargedUnitPrice, clampPercent, seenPricesFromPreview, describeChangedLines } from '../../utils/orderBilling';
 import BillFulfillmentPicker from '../../components/BillFulfillmentPicker';
 import BillPriceReview from '../../components/BillPriceReview';
 import PinPrompt from '../../components/PinPrompt';
@@ -103,9 +103,14 @@ function pluralSets(n) {
 // so a line's value and the order's total agree, rather than mixing two different bases on one
 // screen. (BillOrderDetail.jsx uses qtySetsPacked instead, but that's the pre-billing screen
 // specifically showing what will actually be committed — a different question than this one.)
+//
+// The PRICE is chargedUnitPrice(li), not priceAtOrder: this expanded view is shown for orders of
+// EVERY status, including BILLED/SHIPPED, and on those the quote (priceAtOrder) can differ from
+// what the bill actually charged (a location price or an at-billing override, rules 111/113). For
+// a PLACED/PACKED order billedUnitPrice is null so this is the quote, exactly as before.
 function lineValue(li) {
   if (li.isCancelled) return 0;
-  return li.qtySetsRequested * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(li.priceAtOrder);
+  return li.qtySetsRequested * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(chargedUnitPrice(li));
 }
 
 // Groups an order's lines by Article, Colour lines nested inside — same shape BillOrderDetail.jsx
