@@ -1691,6 +1691,20 @@ With a body of `{ locationPrices: [{ locationId, costPrice: 999 }] }`, `'costPri
 
 **Not verified in a browser.** `npm run build` passes and the two functions were compared in node, but no confirm screen was rendered and no order was billed. One display edge to know about: a sub-half-paisa adjustment (e.g. 0.004) prints as "+₹0.00" under the 2-decimal rule, the same as the existing post-billing footer does.
 
+### The price-override History entry rounded a typed price to the rupee — `inr()` was the wrong formatter for an audit record (fixed in 05df542, 2026-09-28)
+
+**(1) The original approach and why it seemed right.** Commit 2a10e23 ("Show at-billing price changes in History") added the `PRICE_OVERRIDE` entry to `backend/src/controllers/historyController.js`, describing a change as `<product> (<article no>): <from> → <to> at billing`. Every money figure in that file was already formatted with the local `inr()` helper, which is `Math.round(Number(amount))` followed by `toLocaleString('en-IN')` — so reusing it looked like simply following the file's convention, and it is exactly right for what the rest of History uses it for.
+
+**(2) What actually went wrong.** `inr()` rounds to the whole rupee. That is correct when money is only being *summarised* (an order total on a feed row, where the exact paise are noise). It is wrong when the figure is the *record of one specific price a person typed*: rule 113 lets the owner type a price with up to 2 decimals, so a ₹319.97 override would have been written into History as "₹320" — an audit entry stating a price the bill never used. The commit history does not record how the discrepancy was first spotted; the fix (05df542) came the same day, after the feature, and this entry deliberately does not guess at more than that.
+
+**(3) How the real cause was diagnosed.** By asking what `inr()` *promises* rather than whether it "works": it promises a rounded figure, and the two inputs here (the baseline `min`–`max` range and `overriddenUnitPrice`) are not summaries. Prices are validated to at most 2 decimals on the way in (`utils/billPriceOverrides.js`), so a formatter that keeps exactly two is lossless for them and `inr()` is provably lossy.
+
+**(4) The fix.** A second helper, `inrExact()`, that does not round. It works in paise — `Math.round(amount * 100)` — and prints whole-rupee values with no decimals ("₹320", "₹1,250", so the common case reads the same as before) and anything with paise with exactly 2 ("₹319.97", "₹1,250.50"), forcing `minimumFractionDigits`/`maximumFractionDigits` because `toLocaleString` would otherwise choose 1 or 3 on its own. Whether a value is "whole" is decided on the paise-rounded number, not with `Number.isInteger` on the raw float, so a stray sub-paisa float artefact cannot turn "₹320" into "₹320.00". All four figures in the entry (both ends of the baseline range, and the new price) switched to it; `inr()` is unchanged and still used everywhere else.
+
+**(5) Why that specific fix is correct.** It fixes the category, not the instance: the entry is an audit record, so *every* figure in it has to be exact, and changing only the new price would leave a baseline range like "₹319.97–₹320.50" still rounded and the "from → to" line internally inconsistent. Adding a sibling helper rather than changing `inr()` matters because `inr()` is used for summarised money across the file, where rounding is the intended behaviour; making it non-rounding would have quietly changed every other History line. Working in paise is safe rather than a second rounding rule because the inputs are already constrained to 2 decimals.
+
+**The general lesson.** A formatter's rounding is a *semantic* choice, not a display detail: pick the formatter by what the figure *means* (summary vs. record of a specific value), not by what the neighbouring lines use. This is the same instinct as rule 109's `roundingAdjustment` — never let a figure that someone acts on or is audited against be silently rounded.
+
 ---
 
 ## Concepts
