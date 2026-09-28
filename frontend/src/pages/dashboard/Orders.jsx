@@ -98,29 +98,46 @@ function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
 }
 
-// A line's value is qtySetsRequested-based (not qtySetsPacked), matching the basis GET
-// /api/orders' own totalValue already uses for the row-level figure this page shows collapsed —
-// so a line's value and the order's total agree, rather than mixing two different bases on one
-// screen. (BillOrderDetail.jsx uses qtySetsPacked instead, but that's the pre-billing screen
-// specifically showing what will actually be committed — a different question than this one.)
+// Which quantity a line's VALUE is computed from depends on how far the order has got, and this is
+// the ONE place that decides it (lineValue and the group totals both go through it).
+//   - PLACED / PACKED: qtySetsRequested. Nothing has been charged yet, and this matches the
+//     collapsed row, whose figure (GET /api/orders' totalValue, orderController.js listOrders) falls
+//     back to qtySetsRequested × piecesPerSet × priceAtOrder while the order has no billing
+//     snapshot.
+//   - BILLED / SHIPPED: qtySetsPacked. billOrder() charges qtySetsPacked × piecesPerSet ×
+//     billedUnitPrice (utils/locationPricing.js computeBilledLines), and the collapsed row now shows
+//     actualPayable, which is built from that same pre-tax figure — so requested-based lines on a
+//     short-packed billed order (say 3 sets requested, 2 packed) would overstate the value and
+//     disagree with the "Pre-tax total" footer below them. An earlier version of this comment claimed
+//     the requested basis was right for every status; that only held for unbilled orders.
+// Decided from the order's STATUS rather than billedAt: status is already loaded with the order and
+// is what the rest of this row branches on (the "Not yet packed" text below), and billedAt is set by
+// the very same PACKED -> BILLED transition, so the two cannot disagree — status is just the one
+// this screen already reads.
+const BILLED_ORDER_STATUSES = ['BILLED', 'SHIPPED'];
+function valuedQtySets(li, orderStatus) {
+  return BILLED_ORDER_STATUSES.includes(orderStatus) ? li.qtySetsPacked : li.qtySetsRequested;
+}
+
+// A line's value = the chosen quantity (valuedQtySets) × pieces per set × the unit price actually
+// charged. A cancelled line is worth 0 on every status.
 //
 // The PRICE is chargedUnitPrice(li), not priceAtOrder: this expanded view is shown for orders of
 // EVERY status, including BILLED/SHIPPED, and on those the quote (priceAtOrder) can differ from
 // what the bill actually charged (a location price or an at-billing override, rules 111/113). For
 // a PLACED/PACKED order billedUnitPrice is null so this is the quote, exactly as before.
-function lineValue(li) {
+function lineValue(li, orderStatus) {
   if (li.isCancelled) return 0;
-  return li.qtySetsRequested * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(chargedUnitPrice(li));
+  return valuedQtySets(li, orderStatus) * piecesPerSetFor({ isKids: li.productIsKids, sizes: li.productSizes }) * Number(chargedUnitPrice(li));
 }
 
 // Groups an order's lines by Article, Colour lines nested inside — same shape BillOrderDetail.jsx
-// already builds for the identical order data (grouped-by-productId, sorted by article number),
-// just keyed on qtySetsRequested/lineValue instead of that screen's pre-billing qtySetsPacked
-// basis (see lineValue's own comment above for why this screen uses the requested-quantity
-// basis). Pure grouping — every number here is lineValue() summed, so the order's real
+// already builds for the identical order data (grouped-by-productId, sorted by article number).
+// Pure grouping — every number here is lineValue() summed, so the order's real
 // preTaxAmount/actualPayable footer (computed server-side, read from detail.order directly) is
-// completely unaffected by how these lines are arranged on screen.
-function buildArticleGroups(lineItems) {
+// completely unaffected by how these lines are arranged on screen. `orderStatus` is passed through
+// to lineValue so the group totals use the same quantity basis as the lines inside them.
+function buildArticleGroups(lineItems, orderStatus) {
   return lineItems
     .reduce((acc, li) => {
       let group = acc.find((g) => g.productId === li.productId);
@@ -129,7 +146,7 @@ function buildArticleGroups(lineItems) {
         acc.push(group);
       }
       group.lines.push(li);
-      group.total += lineValue(li);
+      group.total += lineValue(li, orderStatus);
       return acc;
     }, [])
     .sort((a, b) => a.articleNo.localeCompare(b.articleNo));
@@ -524,14 +541,14 @@ export default function Orders() {
                         <span className="muted dash-order-line-meta">
                           Ordered: {pluralSets(li.qtySetsRequested)} · Packed:{' '}
                           {detail.order.status === 'PLACED' ? 'Not yet packed' : pluralSets(li.qtySetsPacked)} ·{' '}
-                          {formatCurrency(lineValue(li))}
+                          {formatCurrency(lineValue(li, detail.order.status))}
                         </span>
                       )}
                     </div>
                   );
                 }
 
-                const groups = buildArticleGroups(detail.order.lineItems);
+                const groups = buildArticleGroups(detail.order.lineItems, detail.order.status);
 
                 // Established "no accordion wrapper for a single item" convention (Transfer's
                 // single-colour articles, Live Stock's single-location articles) applied one
