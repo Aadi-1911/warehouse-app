@@ -158,6 +158,26 @@ function inr(amount) {
   return `₹${Math.round(Number(amount)).toLocaleString('en-IN')}`;
 }
 
+// Rupee formatting that does NOT round, for entries that are an audit record of one specific
+// price. inr() above is right for money that is only being summarised, but a price a person typed
+// (rule 113's at-billing override) has to read back exactly: ₹319.97 shown as "₹320" would be a
+// History entry stating a figure the bill never used.
+//
+// Whole-rupee values print with no decimals ("₹320", "₹1,250") so the common case reads the same
+// as inr() would; anything with paise prints exactly 2 decimals ("₹319.97", "₹1,250.50") — never
+// 1 or 3, which toLocaleString would otherwise pick on its own. Whole-ness is decided on the value
+// rounded to paise, not with Number.isInteger on the raw float, so a stray sub-paisa artefact
+// can't turn "₹320" into "₹320.00". Prices are validated to at most 2 decimals on the way in
+// (utils/billPriceOverrides.js), so nothing real is lost by working in paise here.
+function inrExact(amount) {
+  const paise = Math.round(Number(amount) * 100);
+  const whole = paise % 100 === 0;
+  return `₹${(paise / 100).toLocaleString('en-IN', {
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  })}`;
+}
+
 // "PACKED" -> "packed", used to build "Order packed" / "Order billed" / "Order dispatched" without
 // a separate lookup table that would need updating every time OrderStatus gains a value.
 //
@@ -781,7 +801,11 @@ async function listHistory(req, res) {
     // Compared as numbers, not Decimals: both come from the same DECIMAL(65,30) column and are
     // rupee figures, so equality is exact here for the same reason utils/billPriceOverrides.js's
     // priceEquals documents.
-    const from = min === max ? inr(min) : `${inr(min)}–${inr(max)}`;
+    //
+    // inrExact, not inr: this entry is an audit record of a price change, so every figure in it
+    // (the baseline, both ends of the range, and the new price below) must show paise rather than
+    // rounding to the rupee.
+    const from = min === max ? inrExact(min) : `${inrExact(min)}–${inrExact(max)}`;
     entries.push({
       id: `PRICE_OVERRIDE:${o.id}`,
       type: 'PRICE_OVERRIDE',
@@ -793,7 +817,7 @@ async function listHistory(req, res) {
       partyName,
       // Article NUMBER as well as name: names are not unique and article numbers are unique per
       // Factory, so the pair is what actually identifies the article to a person reading the feed.
-      description: `${o.productNameSnapshot} (${o.articleNoSnapshot}): ${from} → ${inr(o.overriddenUnitPrice)} at billing`,
+      description: `${o.productNameSnapshot} (${o.articleNoSnapshot}): ${from} → ${inrExact(o.overriddenUnitPrice)} at billing`,
     });
   }
 
