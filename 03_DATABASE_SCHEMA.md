@@ -540,6 +540,50 @@ model PartyPayment {
 
 ---
 
+### 1.2 Designed, not yet built (whole-article out-of-stock auto-archive — rule 112)
+
+Everything in this subsection is **designed and agreed, but not migrated and not built** — designed 2026-09-09 alongside rule 110's zero-stock suppression, ported onto this document 2026-09-24 with the design itself unchanged (verified against `staging`'s current state before porting, not assumed). Kept separate from §1's model blocks above deliberately: those describe the schema as it actually exists, and inlining an unbuilt column into `model Product` would make this document disagree with `schema.prisma` in a way that reads as drift rather than as a plan. Move each piece up into §1 when it is actually migrated.
+
+Numbered rule 112, not 111: rule 111 on `main` is already claimed by the separate, already-built and tested `add-location-pricing-111` branch (per-article/per-location pricing) — confirmed before this section was renumbered. See `LEARNING_LOG.md` for the full reasoning.
+
+**Addition to `model Product`:**
+
+```prisma
+  // Stamped the instant an Article's stock reaches zero across EVERY colour and EVERY
+  // location simultaneously; cleared back to null the instant any stock returns (rule 112).
+  // Deliberately stored rather than derived: current qtySets can tell you an Article is
+  // dead, but never WHEN it died, and the auto-archive countdown needs the crossing time.
+  // Same irreducible-snapshot reasoning as priceAtReturn / costPriceSnapshot.
+  // A later re-death overwrites this with the NEW crossing time — countdowns never resume.
+  wentOutOfStockAt DateTime?
+```
+
+**New table — `AppSetting`:**
+
+```prisma
+model AppSetting {
+  // A general-purpose key-value store for small operational settings, deliberately NOT
+  // single-purpose. It exists because rule 112's out-of-stock archive threshold must be
+  // owner-editable rather than hardcoded, but it is shaped so that any future setting of
+  // the same shape (a scalar the owner can tune) needs a row here, not a new table and a
+  // new migration each time.
+  //
+  // Values are stored as String regardless of their logical type — the reading code parses
+  // (e.g. parseInt for a day count). This keeps one table viable for mixed-type settings;
+  // the trade-off accepted is that the database cannot type-check a value, so the endpoint
+  // that writes a setting must validate it.
+  key       String   @id   // e.g. "outOfStockArchiveThresholdDays" — the unique identifier
+  value     String         // e.g. "60"
+  updatedAt DateTime @updatedAt
+}
+```
+
+**Seed:** one row, `key: "outOfStockArchiveThresholdDays"`, `value: "60"`.
+
+**Gating (rule 112):** writing this setting requires `role == OWNER` but **no PIN** — it is an operational tuning value, not a price field, so the rule 71 / `priceEditPinHash` gate deliberately does not apply here.
+
+---
+
 ## 2. Future Phases (documented for context — NOT implemented in Phase 1)
 
 ### Phase 2 — Orders & Parties
