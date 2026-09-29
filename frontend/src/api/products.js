@@ -56,6 +56,38 @@ export function updateProduct(id, { costPrice, sellingPrice, name, pin }) {
   return apiFetch(`/api/products/${id}`, { method: 'PATCH', body: { costPrice, sellingPrice, name, pin } });
 }
 
+// PATCH /api/products/:id/location-pricing -> the updated Product (same shape as any other GET/
+// PATCH here, including hasLocationPricing/locationPrices). OWNER only, deliberately NO pin —
+// this flag only selects which already-PIN-gated price gets read at billing, it writes no money
+// itself (rule 111, setLocationPricingEnabled in productController.js). Written as its own
+// two-arg function rather than folded into updateProduct()'s body, matching that endpoint's own
+// separate route (PATCH /api/products/:id/location-pricing, not PATCH /api/products/:id) —
+// 05_BUSINESS_RULES.md rule 111 is explicit that this flag was deliberately NOT nested into the
+// existing PATCH body, specifically so a body-shape PIN sniff could never miss it.
+export function setLocationPricingEnabled(id, hasLocationPricing) {
+  return apiFetch(`/api/products/${id}/location-pricing`, { method: 'PATCH', body: { hasLocationPricing } });
+}
+
+// PUT /api/products/:id/location-prices/:locationId -> the saved LocationPrice row ({ id,
+// locationId, location: { id, name }, sellingPrice, updatedAt }) — NOT a Product, a narrower
+// response than every other write in this file, matching what setLocationPrice actually returns
+// server-side (productController.js). OWNER + PIN UNCONDITIONALLY, via requirePin directly
+// (routes/products.js) rather than updateProduct's body-sniffing requirePinForPriceEdits — this
+// endpoint's entire body is a price, so there's nothing to sniff for.
+//
+// Written as an explicit { sellingPrice, pin } whitelist, same reasoning updateProduct's own
+// comment gives: this client can then never forward a field the endpoint doesn't accept, in
+// particular costPrice — the server 400s on it (cost is global, rule 111; set it via
+// updateProduct() above instead). `sellingPrice: null` is the supported way to CLEAR an override
+// (falls back to the article's own base price at billing) — it is a real, meaningful value here,
+// not "no value provided", so callers pass it explicitly rather than omitting the key.
+export function setLocationPrice(id, locationId, { sellingPrice, pin }) {
+  return apiFetch(`/api/products/${id}/location-prices/${locationId}`, {
+    method: 'PUT',
+    body: { sellingPrice, pin },
+  });
+}
+
 // PATCH /api/products/:id/deactivate -> the updated Product ({ ...fields, isActive }). Any
 // authenticated role, no PIN — deactivate is never a price action, matching every other
 // archive/reactivate action in this app. Archives the WHOLE article, all its colors together

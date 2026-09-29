@@ -1488,11 +1488,17 @@ body {
 
 /* Alternating rows (2026-08-27) — same reasoning as .receipt-table above: this is the one screen
    with the widest real column count (7) on this app's mobile surface, so losing track of which
-   row you're on while scanning right toward Margin/Edit is the exact risk this is for. Plain
-   :nth-child is safe here too — one <tr> per `sortedProducts` entry, no inserted extra rows (the
-   inline edit form for a selected article renders in its own block below the table, never as an
-   additional <tr> inside it). */
-.pricing-table tbody tr:nth-child(even) {
+   row you're on while scanning right toward Margin/Edit is the exact risk this is for.
+   Originally plain :nth-child(even), safe at the time because this table inserted no extra rows
+   (the inline edit form rendered in its own block below the table, never as an additional <tr>).
+   Rule 111 (F3, 2026-09-29) broke that invariant: an article with per-location pricing on now
+   gets a genuine extra <tr> directly below its own row (the read-only location price list), so
+   :nth-child would start counting that extra row as a "product" and shift every later row's
+   stripe — the exact bug dash-pricing-table's own comment (further down this file) already
+   describes and works around on the desktop screen. Switched to the same fix: striped by DATA
+   POSITION (`.pricing-table-row-alt`, applied by ArticlePricing.jsx from `index % 2`), immune to
+   how many extra rows happen to be open elsewhere in the table. */
+.pricing-table-row-alt {
   background: var(--row-stripe-fill);
 }
 
@@ -1513,6 +1519,53 @@ body {
    since the cell's own text-align: right already lays inline buttons out correctly. */
 .pricing-table-action .link-button + .link-button {
   margin-left: 14px;
+}
+
+/* --- Rule 111 (F3, 2026-09-29) — read-only per-location prices, mobile Article Pricing --- */
+
+/* Sits inline after the article's own name text — margin-left rather than block layout, since
+   this is one more fact about the same name, not a separate line. badge-accent (not
+   badge-warning): informational, not a problem to fix the way "Pending" is. */
+.pricing-location-badge {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* The extra full-width row holding the read-only per-location table — no tint, matching
+   dash-pricing-location-row's own reasoning (this isn't an error or a confirm step). */
+.pricing-location-row > td {
+  padding: var(--space-1) 10px var(--space-2) 18px;
+}
+
+/* Read-only per-location grid — same 12px scale as .pricing-table above it (mobile has only the
+   one size class, unlike the dashboard's two), own class since it nests inside a <td> rather than
+   sitting at the page's top level. */
+.pricing-location-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.pricing-location-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 10px 6px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.pricing-location-table td {
+  padding: var(--space-1) 10px var(--space-1) 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.pricing-location-table tr:last-child td {
+  border-bottom: none;
 }
 
 /* --- Manage Users: account list rows --- */
@@ -4670,6 +4723,78 @@ body {
 .dash-pricing-pin-row .field,
 .dash-pricing-pin-row .btn-primary {
   max-width: 280px;
+}
+
+/* --- Rule 111 (F3, 2026-09-29) — per-location pricing on Article Pricing --- */
+
+/* The "Different price per location" toggle — sits inside the same .dash-table-action-row flex
+   row as the Edit/Rename buttons it lives beside, so .checkbox-field's own block-level
+   margin-top/layout (built for a standalone form field) would misalign it; this is a distinct,
+   inline-friendly class instead of an override of that one. Neutral accent, not
+   .checkbox-field's default danger-red — this flips a display/pricing-source setting, not a
+   danger-role flag like "Damaged on arrival" is. */
+.dash-pricing-location-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dash-pricing-location-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--text-secondary);
+  cursor: pointer;
+}
+
+/* The extra full-width row holding the per-location sub-table (below whichever product's toggle
+   is on) — same "extra row spans the whole table" shape .dash-pricing-error-row/.dash-pricing-
+   pin-row already use, but no tint: this isn't an error or a confirm step, just nested data, so
+   tinting it the same as those would visually claim more urgency than it has. */
+.dash-pricing-location-row > td {
+  padding: var(--space-2) 14px var(--space-3) 28px;
+}
+
+/* The per-location grid itself — same 13px/scoped-text-align shape .dash-pricing-table uses one
+   size class up, deliberately its OWN class rather than reusing that one directly: this table is
+   always small (one row per location) and nested a level deeper, so it gets a quieter, slightly
+   smaller scale to read as subordinate to the article row above it, not a second identical grid. */
+.dash-location-pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dash-location-pricing-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-tertiary);
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+}
+
+.dash-location-pricing-table td {
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.dash-location-pricing-table tr:last-child > td {
+  border-bottom: none;
+}
+
+/* Same specificity fight .dash-pricing-table th.dash-pricing-num/td.dash-pricing-num already
+   documents — a bare .dash-pricing-num class alone loses to this table's own th text-align:left. */
+.dash-location-pricing-table th.dash-pricing-num,
+.dash-location-pricing-table td.dash-pricing-num {
+  text-align: center;
 }
 
 /* --- Factories (added 2026-09-02) — same 14px desktop table scale as .dash-pricing-table above,

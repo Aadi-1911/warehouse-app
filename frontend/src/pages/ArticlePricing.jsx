@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { TagIcon, KeyIcon } from '../components/icons';
 import ScreenHeader from '../components/ScreenHeader';
 import ConfirmModal from '../components/ConfirmModal';
 import { listFactories } from '../api/factories';
+import { listLocations } from '../api/locations';
 import { listProducts, updateProduct, deactivateProduct, reactivateProduct } from '../api/products';
 import { listStock } from '../api/stock';
+import { computeMargin } from '../utils/margin';
 
 function formatCurrency(amount) {
   return `₹${Number(amount).toLocaleString('en-IN')}`;
@@ -19,6 +21,11 @@ function isPending(product) {
   return product.costPrice == null || product.sellingPrice == null;
 }
 
+// Fixed column count for this page's own <table> (S.No./Name/Article No/Cost/Selling/Margin/
+// Actions) — referenced wherever a per-product extra row (rule 111's read-only per-location
+// block below) needs to span the table's full width.
+const PRICING_TABLE_COLUMN_COUNT = 7;
+
 // Article Pricing — 07_UI_DESIGN_BRIEF.md §5.10. Owner-only screen, added to Home's "More"
 // list. Backed entirely by endpoints that already existed and already enforce the right rules:
 // GET /api/products?factoryId= (already role-aware — costPrice is never fetched from Postgres
@@ -26,6 +33,16 @@ function isPending(product) {
 // (already OWNER+PIN gated the moment costPrice/sellingPrice appear in the body). No new
 // backend code exists for this screen at all — see LEARNING_LOG.md for why reusing
 // productSelect() here, rather than writing a second role-aware select, was the whole point.
+//
+// Rule 111 (F3, 2026-09-29) — per-location selling prices, READ-ONLY here. This screen gets NO
+// edit affordance for them at all: setting/clearing a location's override, and flipping the
+// per-article toggle, are both owner desktop actions (dashboard/ArticlePricing.jsx) — mobile
+// only needs to show what's already true, the same "mobile shows, desktop edits" split this
+// screen already has relative to the dashboard for everything else. Cost and margin are shown
+// per location only when `user.role === 'OWNER'` — belt-and-braces over the server's own gate
+// (productSelect only selects costPrice for an OWNER request), matching CLAUDE.md's non-
+// negotiable "cost_price is never returned to STAFF" rule at the client layer too, on the chance
+// this route's own requireRole="OWNER" gate (App.jsx) is ever relaxed to admit STAFF.
 export default function ArticlePricing() {
   const { user } = useAuth();
 
@@ -34,6 +51,11 @@ export default function ArticlePricing() {
   const [factories, setFactories] = useState([]);
   const [factoriesStatus, setFactoriesStatus] = useState('idle');
   const [factoriesError, setFactoriesError] = useState(null);
+
+  // Rule 111 (F3) — every ACTIVE location, for the read-only per-location price rows below.
+  // Locations aren't Factory-scoped (unlike Product), so this fetches once up front rather than
+  // re-fetching per Factory selection, the same way `factories` above does.
+  const [locations, setLocations] = useState([]);
 
   const [factoryId, setFactoryId] = useState('');
 
@@ -83,9 +105,14 @@ export default function ArticlePricing() {
   useEffect(() => {
     let cancelled = false;
     setFactoriesStatus('loading');
-    listFactories()
-      .then((list) => {
-        if (!cancelled) setFactories(list.filter((f) => f.isActive));
+    Promise.all([listFactories(), listLocations()])
+      .then(([factoryList, locationList]) => {
+        if (cancelled) return;
+        setFactories(factoryList.filter((f) => f.isActive));
+        // Active only, alphabetical — matches the order the backend's own `locationPrices`
+        // relation is returned in (productSelect's `orderBy: { location: { name: 'asc' } }`),
+        // so this list and any given article's own locationPrices rows never disagree on order.
+        setLocations(locationList.filter((l) => l.isActive).sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch((err) => {
         if (!cancelled) setFactoriesError(err.message);
@@ -487,9 +514,25 @@ export default function ArticlePricing() {
                   {sortedProducts.map((product, index) => {
                     const pending = isPending(product);
                     return (
-                      <tr key={product.id}>
+                      <Fragment key={product.id}>
+                      {/* className keyed to `index` (this product's own position in
+                          sortedProducts), not :nth-child — see .pricing-table-row-alt's own
+                          comment in index.css for why plain :nth-child broke once the
+                          per-location row below could insert an extra <tr>. */}
+                      <tr className={index % 2 === 1 ? 'pricing-table-row-alt' : undefined}>
                         <td className="pricing-table-sno">{index + 1}</td>
-                        <td>{product.name}</td>
+                        <td>
+                          {product.name}
+                          {/* Rule 111 (F3) — informational only, no interaction: this badge is
+                              the mobile screen's ENTIRE indication that per-location pricing is
+                              on for this article (the toggle itself lives on the owner desktop
+                              screen). badge-accent, deliberately not badge-warning — this isn't a
+                              problem to fix like "Pending" is, just a fact about how the article
+                              is priced. */}
+                          {product.hasLocationPricing && (
+                            <span className="badge badge-accent pricing-location-badge">Per-location pricing</span>
+                          )}
+                        </td>
                         <td>{product.articleNo}</td>
                         {pending ? (
                           <>
@@ -507,12 +550,20 @@ export default function ArticlePricing() {
                           <>
                             <td className="pricing-table-num">{formatCurrency(product.costPrice)}</td>
                             <td className="pricing-table-num">{formatCurrency(product.sellingPrice)}</td>
-                            {/* costPrice/sellingPrice are raw Prisma Decimals — arrive as
-                                STRINGS ("250.5"), not numbers — Number() both before
-                                subtracting, never string-concatenate them. */}
-                            <td className="pricing-table-num">
-                              {formatCurrency(Number(product.sellingPrice) - Number(product.costPrice))}
-                            </td>
+                            {/* computeMargin (utils/margin.js) — the ONE shared margin
+                                calculation, same one dashboard/ArticlePricing.jsx uses, so the
+                                two screens can never disagree about what "margin" means. Now
+                                shows margin % alongside ₹ (rule 111's F3 task), where before this
+                                cell showed only the rupee figure; it Number()s the raw Prisma
+                                Decimal strings ("250.5") itself before subtracting. */}
+                            {(() => {
+                              const margin = computeMargin(product.costPrice, product.sellingPrice, formatCurrency);
+                              return (
+                                <td className="pricing-table-num">
+                                  {margin.rupees} · {margin.percent}
+                                </td>
+                              );
+                            })()}
                           </>
                         )}
                         <td className="pricing-table-action">
@@ -558,6 +609,80 @@ export default function ArticlePricing() {
                           )}
                         </td>
                       </tr>
+                      {/* Rule 111 (F3) — read-only per-location selling prices, shown only when
+                          the article's toggle (set on the owner desktop screen) is on. One row
+                          per ACTIVE location, extra full-width <tr> below the article's own row
+                          — no edit affordance anywhere in it, matching this whole screen's
+                          READ-ONLY treatment of location pricing. Cost/Margin columns are
+                          entirely absent for a non-OWNER viewer, not just blanked — see this
+                          file's header comment. */}
+                      {product.hasLocationPricing && (
+                        <tr className="pricing-location-row">
+                          <td colSpan={PRICING_TABLE_COLUMN_COUNT}>
+                            {locations.length === 0 ? (
+                              <p className="muted">No active locations.</p>
+                            ) : (
+                              <table className="pricing-location-table">
+                                <thead>
+                                  <tr>
+                                    <th>Location</th>
+                                    <th className="pricing-table-num">Selling Price</th>
+                                    {user.role === 'OWNER' && (
+                                      <>
+                                        <th className="pricing-table-num">Cost</th>
+                                        <th className="pricing-table-num">Margin ₹</th>
+                                        <th className="pricing-table-num">Margin %</th>
+                                      </>
+                                    )}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {locations.map((location) => {
+                                    // Same fallback rule 111 itself defines: a row with no
+                                    // override, or one explicitly cleared (sellingPrice: null),
+                                    // both fall back to the article's own base price — no visual
+                                    // distinction between the two, same as the desktop screen.
+                                    const override = product.locationPrices.find(
+                                      (lp) => lp.locationId === location.id
+                                    );
+                                    const effectivePrice = override?.sellingPrice ?? product.sellingPrice;
+                                    const margin =
+                                      user.role === 'OWNER'
+                                        ? computeMargin(product.costPrice, effectivePrice, formatCurrency)
+                                        : null;
+                                    return (
+                                      <tr key={location.id}>
+                                        <td>{location.name}</td>
+                                        <td className="pricing-table-num">
+                                          {effectivePrice != null ? (
+                                            formatCurrency(effectivePrice)
+                                          ) : (
+                                            <span className="badge badge-warning">Pending</span>
+                                          )}
+                                        </td>
+                                        {user.role === 'OWNER' && (
+                                          <>
+                                            <td className="pricing-table-num">
+                                              {product.costPrice != null ? (
+                                                formatCurrency(product.costPrice)
+                                              ) : (
+                                                <span className="badge badge-warning">Pending</span>
+                                              )}
+                                            </td>
+                                            <td className="pricing-table-num">{margin.rupees}</td>
+                                            <td className="pricing-table-num">{margin.percent}</td>
+                                          </>
+                                        )}
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>

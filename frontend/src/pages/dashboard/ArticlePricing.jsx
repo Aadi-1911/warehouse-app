@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { KeyIcon, ChevronIcon } from '../../components/icons';
 import { listFactories } from '../../api/factories';
-import { listProducts, updateProduct } from '../../api/products';
+import { listLocations } from '../../api/locations';
+import { listProducts, updateProduct, setLocationPricingEnabled, setLocationPrice } from '../../api/products';
 import PinPrompt from '../../components/PinPrompt';
+import { computeMargin } from '../../utils/margin';
 
 // Owner Dashboard — Article Pricing (added 2026-08-21, beyond 07_UI_DESIGN_BRIEF.md §8's
 // original 5-item nav — same "append sensibly, don't renumber the existing list" precedent
@@ -90,6 +92,29 @@ function isPending(product) {
   return product.costPrice == null || product.sellingPrice == null;
 }
 
+// The location override's own validation (rule 111 — F3, 2026-09-29): a real number strictly
+// greater than 0, with AT MOST 2 decimal places. Checked on the raw STRING before Number() ever
+// runs — Number("12.345") is a perfectly finite, valid number, so checking decimal count on the
+// parsed value can't catch it; the regex has to see the original text. This mirrors, but does not
+// call, the server's own `sellingPrice > 0` check in setLocationPrice (productController.js) —
+// that check has no decimal-count rule of its own (Postgres' Decimal column just stores whatever
+// arrives), so the 2-decimal cap here is a client-side money-formatting convention, not a rule
+// this duplicates from the server and could drift out of sync with.
+function parseLocationSellingPrice(raw) {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) {
+    return { error: 'Enter a selling price.' };
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return { error: 'Enter a price greater than 0, with at most 2 decimal places.' };
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { error: 'Enter a price greater than 0, with at most 2 decimal places.' };
+  }
+  return { parsed };
+}
+
 // Fixed table shape for every factory group's own table — Factory itself is deliberately absent
 // from this list now: it's stated once in the enclosing accordion header, the same "state it once
 // in the group header, drop it from every row inside" convention Live Stock's own locationGroups
@@ -102,6 +127,14 @@ export default function DashboardArticlePricing() {
 
   const [factories, setFactories] = useState([]);
   const [products, setProducts] = useState([]);
+  // Rule 111 (F3) — every ACTIVE location, for the per-location pricing rows. Fetched once
+  // alongside factories/products, same "one mount fetch, no per-row re-fetch" shape this screen
+  // already uses. Archived locations are excluded (rule 85's "hidden from daily pickers by
+  // default" convention) — an archived location can still HOLD a saved LocationPrice row (the
+  // backend's own PUT deliberately allows editing one, per rule 111's comment on
+  // setLocationPrice), but this screen has no reason to offer a NEW row for a location nobody
+  // picks from day to day.
+  const [locations, setLocations] = useState([]);
   // 'idle' | 'loading' | 'loaded' — never a bare boolean, same discipline as every other
   // mount-fetching screen in this app.
   const [status, setStatus] = useState('idle');
@@ -129,15 +162,43 @@ export default function DashboardArticlePricing() {
   const [renameError, setRenameError] = useState(null);
   const [renameSubmitting, setRenameSubmitting] = useState(false);
 
+  // --- Rule 111 (F3) — per-location pricing state, deliberately its own three blocks below,
+  // none merged with the price-edit or rename state above (same "don't let two different forms
+  // fight over one piece of state" reasoning this file already gives for keeping rename separate
+  // from price edits).
+
+  // The toggle itself — OWNER-only, no PIN (rule 111). `toggleInFlightId` names the ONE product
+  // currently mid-request, so its checkbox (and only its checkbox) can show a disabled/"working"
+  // state; `toggleError` is scoped to a specific product (not a bare string) so a failure on one
+  // article's toggle can't get misread as belonging to a different article's row.
+  const [toggleInFlightId, setToggleInFlightId] = useState(null);
+  const [toggleError, setToggleError] = useState(null); // { productId, message } | null
+
+  // Which location row (if any) is mid-edit, across ALL products/locations on the page — a
+  // single { productId, locationId }, not a Set, extending the same "only one row mid-edit at a
+  // time" discipline editingId/renamingId already enforce to this new third kind of row.
+  const [editingLocation, setEditingLocation] = useState(null);
+  const [locationPriceInput, setLocationPriceInput] = useState('');
+  const [locationFormError, setLocationFormError] = useState(null);
+  // Staged { productId, locationId, sellingPrice } once step 1 is validated (sellingPrice is
+  // `null` for "Use base price") — presence is what swaps THIS location row over to PinPrompt,
+  // the same draft-object-as-step-gate shape priceDraft above already uses.
+  const [locationDraft, setLocationDraft] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setLoadError(null);
-    Promise.all([listFactories(), listProducts()])
-      .then(([factoryList, productList]) => {
+    Promise.all([listFactories(), listProducts(), listLocations()])
+      .then(([factoryList, productList, locationList]) => {
         if (cancelled) return;
         setFactories(factoryList);
         setProducts(productList);
+        // Active only (see the state's own comment above), sorted alphabetically — matches the
+        // order the backend already returns `locationPrices` in (productSelect's own
+        // `orderBy: { location: { name: 'asc' } }`), so a location's row here and its row inside
+        // any given article's `locationPrices` array can never disagree about ordering.
+        setLocations(locationList.filter((l) => l.isActive).sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message);
@@ -272,6 +333,97 @@ export default function DashboardArticlePricing() {
       event.preventDefault();
       handleSubmitRename(product);
     }
+  }
+
+  // The toggle — PATCH /api/products/:id/location-pricing, no PIN (rule 111). Fires immediately
+  // on the checkbox's own onChange rather than needing a separate confirm step: unlike the price
+  // edits below, this writes no money (see setLocationPricingEnabled's own comment in
+  // api/products.js), so there is nothing here for a PIN — or a second click — to protect.
+  async function handleToggleLocationPricing(product, enabled) {
+    setToggleError(null);
+    setToggleInFlightId(product.id);
+    try {
+      await setLocationPricingEnabled(product.id, enabled);
+      // Re-fetch so the row's locationPrices/hasLocationPricing reflect the real saved state,
+      // never patched optimistically — same discipline every other mutation on this page follows.
+      setStatus('loading');
+      const fresh = await listProducts();
+      setProducts(fresh);
+      setStatus('loaded');
+    } catch (err) {
+      setToggleError({ productId: product.id, message: err.message });
+    } finally {
+      setToggleInFlightId(null);
+    }
+  }
+
+  // Step 1 open — pre-filled with the row's CURRENT EFFECTIVE price (its own override if it has
+  // one, else the article's base price), same "pre-fill with what's already true" reasoning
+  // handleStartEdit above already uses for cost/selling. `effectivePrice` is passed in by the
+  // caller rather than recomputed here because the row already had to compute it once to render
+  // itself — see the JSX below.
+  function handleStartLocationEdit(product, locationId, effectivePrice) {
+    setEditingLocation({ productId: product.id, locationId });
+    setLocationPriceInput(effectivePrice != null ? String(effectivePrice) : '');
+    setLocationFormError(null);
+    setLocationDraft(null);
+  }
+
+  function handleCancelLocationEdit() {
+    setEditingLocation(null);
+    setLocationPriceInput('');
+    setLocationFormError(null);
+    setLocationDraft(null);
+  }
+
+  // Step 1 -> step 2 (typed value branch): validate, then stage — this is what reveals PinPrompt
+  // for this location row. Mirrors handleContinueToPin above.
+  function handleContinueLocationEdit() {
+    setLocationFormError(null);
+    const { parsed, error } = parseLocationSellingPrice(locationPriceInput);
+    if (error) {
+      setLocationFormError(error);
+      return;
+    }
+    setLocationDraft({ ...editingLocation, sellingPrice: parsed });
+  }
+
+  // Step 1 -> step 2 (the OTHER branch): "Use base price" stages `sellingPrice: null` directly,
+  // with no typed value required — clearing an override is a real, deliberate action in its own
+  // right (rule 111), not just "leave the field blank and hit Save".
+  function handleUseBaseLocationPrice() {
+    setLocationFormError(null);
+    setLocationDraft({ ...editingLocation, sellingPrice: null });
+  }
+
+  function handleLocationEnterKeyContinue(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleContinueLocationEdit();
+    }
+  }
+
+  // Step 2: PinPrompt calls this with just the pin — throws on failure, which PinPrompt's own
+  // error/lockout rendering catches (see PinPrompt.jsx and handleConfirmEdit above for why
+  // nothing is duplicated here). NEVER sends costPrice — the body is exactly
+  // { sellingPrice, pin }, built by setLocationPrice (api/products.js).
+  async function handleConfirmLocationEdit(pin) {
+    const { productId, locationId, sellingPrice } = locationDraft;
+    const product = products.find((p) => p.id === productId);
+    const location = locations.find((l) => l.id === locationId);
+    await setLocationPrice(productId, locationId, { sellingPrice, pin });
+    setSuccessMessage(
+      sellingPrice === null
+        ? `${product.articleNo} — ${location.name} now bills at the base price again.`
+        : `${product.articleNo} — ${location.name} price updated.`
+    );
+    handleCancelLocationEdit();
+    // Re-fetch so the table reflects the edit just made, never patched optimistically.
+    setStatus('loading');
+    const fresh = await listProducts();
+    setProducts(fresh);
+    setStatus('loaded');
+    setTimeout(() => setSuccessMessage(null), 3000);
   }
 
   const factoryNameById = new Map(factories.map((f) => [f.id, f.name]));
@@ -411,12 +563,28 @@ export default function DashboardArticlePricing() {
                           const isEditing = editingId === product.id;
                           const isStaged = isEditing && !!priceDraft;
                           const isRenaming = renamingId === product.id;
-                          // Only one row total may be mid-edit OR mid-rename at once — the same
-                          // single-active-edit discipline this page already enforces for price
-                          // edits, extended to cover rename as a second exclusive mode.
+
+                          // Rule 111 (F3) — is THIS product's location-pricing sub-table
+                          // currently the one with a row mid-edit (step 1 open, or step 2 staged
+                          // with PinPrompt showing)? Read from the single page-wide
+                          // editingLocation/locationDraft, whichever is set — they're never both
+                          // set to different rows at once (locationDraft is only ever built from
+                          // the current editingLocation).
+                          const activeLocationEdit = editingLocation ?? locationDraft;
+                          const thisProductLocationBusy = activeLocationEdit?.productId === product.id;
+                          const anyLocationEditBusy = activeLocationEdit !== null;
+
+                          // Only one row total may be mid-edit, mid-rename, OR mid-location-edit
+                          // at once, across the WHOLE page — the same single-active-edit
+                          // discipline this page already enforces for price edits and rename,
+                          // extended to cover the new per-location rows as a third exclusive mode.
+                          // A location edit busies every OTHER product's row (including this
+                          // product's own Edit/Rename, via thisProductLocationBusy below) exactly
+                          // the way editingId/renamingId already busy every row but their own.
                           const anyOtherRowBusy =
                             (editingId !== null && editingId !== product.id) ||
-                            (renamingId !== null && renamingId !== product.id);
+                            (renamingId !== null && renamingId !== product.id) ||
+                            (anyLocationEditBusy && !thisProductLocationBusy);
 
                           return (
                             <Fragment key={product.id}>
@@ -484,9 +652,19 @@ export default function DashboardArticlePricing() {
                                   <>
                                     <td className="dash-pricing-num">{formatCurrency(priceDraft.costPrice)}</td>
                                     <td className="dash-pricing-num">{formatCurrency(priceDraft.sellingPrice)}</td>
-                                    <td className="dash-pricing-num">
-                                      {formatCurrency(priceDraft.sellingPrice - priceDraft.costPrice)}
-                                    </td>
+                                    {/* computeMargin (utils/margin.js) — the ONE shared margin
+                                        calculation, used here instead of the plain subtraction
+                                        this cell used before rule 111's F3 task, so the base row
+                                        and every per-location row below can never disagree about
+                                        what "margin" means. */}
+                                    {(() => {
+                                      const margin = computeMargin(priceDraft.costPrice, priceDraft.sellingPrice, formatCurrency);
+                                      return (
+                                        <td className="dash-pricing-num">
+                                          {margin.rupees} · {margin.percent}
+                                        </td>
+                                      );
+                                    })()}
                                   </>
                                 ) : pending ? (
                                   <>
@@ -504,11 +682,19 @@ export default function DashboardArticlePricing() {
                                   <>
                                     <td className="dash-pricing-num">{formatCurrency(product.costPrice)}</td>
                                     <td className="dash-pricing-num">{formatCurrency(product.sellingPrice)}</td>
-                                    {/* Raw Prisma Decimals arrive as STRINGS ("250.5") — Number() both
-                                        before subtracting, never string-concatenate them. */}
-                                    <td className="dash-pricing-num">
-                                      {formatCurrency(Number(product.sellingPrice) - Number(product.costPrice))}
-                                    </td>
+                                    {/* computeMargin (utils/margin.js) itself Number()s both raw
+                                        Prisma Decimal strings ("250.5") before subtracting — see
+                                        that file's own comment. Now shows margin % alongside ₹
+                                        (rule 111's F3 task), where before this cell showed only
+                                        the rupee figure. */}
+                                    {(() => {
+                                      const margin = computeMargin(product.costPrice, product.sellingPrice, formatCurrency);
+                                      return (
+                                        <td className="dash-pricing-num">
+                                          {margin.rupees} · {margin.percent}
+                                        </td>
+                                      );
+                                    })()}
                                   </>
                                 )}
                                 <td className="dash-pricing-action">
@@ -549,7 +735,7 @@ export default function DashboardArticlePricing() {
                                           type="button"
                                           className="link-button"
                                           onClick={() => handleStartEdit(product)}
-                                          disabled={!user.hasPinSet || anyOtherRowBusy}
+                                          disabled={!user.hasPinSet || anyOtherRowBusy || thisProductLocationBusy}
                                         >
                                           Edit
                                         </button>
@@ -561,15 +747,47 @@ export default function DashboardArticlePricing() {
                                           type="button"
                                           className="link-button"
                                           onClick={() => handleStartRename(product)}
-                                          disabled={anyOtherRowBusy}
+                                          disabled={anyOtherRowBusy || thisProductLocationBusy}
                                         >
                                           Rename
                                         </button>
                                       </>
                                     )}
+                                    {/* Rule 111 (F3) — the per-location pricing toggle. No PIN
+                                        (writes no money, see handleToggleLocationPricing's own
+                                        comment), so it fires on its own onChange rather than
+                                        needing Continue/Cancel like the price-edit form does.
+                                        Disabled while ANY row on the page is mid-edit — including
+                                        this SAME product's own price/rename form — because
+                                        flipping this changes which price the article's own base
+                                        row would need to reconcile against a form that's still
+                                        open. */}
+                                    <label className="dash-pricing-location-toggle">
+                                      <input
+                                        type="checkbox"
+                                        checked={product.hasLocationPricing}
+                                        onChange={(e) => handleToggleLocationPricing(product, e.target.checked)}
+                                        disabled={
+                                          toggleInFlightId !== null ||
+                                          editingId !== null ||
+                                          renamingId !== null ||
+                                          anyLocationEditBusy
+                                        }
+                                      />
+                                      Different price per location
+                                    </label>
                                   </div>
                                 </td>
                               </tr>
+                              {toggleError?.productId === product.id && (
+                                <tr className="dash-pricing-error-row">
+                                  <td colSpan={TABLE_COLUMN_COUNT}>
+                                    <p className="error-banner" role="alert">
+                                      {toggleError.message}
+                                    </p>
+                                  </td>
+                                </tr>
+                              )}
                               {isEditing && !isStaged && formError && (
                                 <tr className="dash-pricing-error-row">
                                   <td colSpan={TABLE_COLUMN_COUNT}>
@@ -616,6 +834,222 @@ export default function DashboardArticlePricing() {
                                     <button type="button" className="link-button" onClick={handleCancelEdit}>
                                       Cancel
                                     </button>
+                                  </td>
+                                </tr>
+                              )}
+                              {/* Rule 111 (F3) — per-location pricing rows, one per ACTIVE
+                                  location, only while the toggle above is on. A nested table
+                                  inside its own full-width <tr>, the same "extra row spans
+                                  TABLE_COLUMN_COUNT" shape this file already uses for the
+                                  error/rename/PIN rows above — the outer table's own 6-column
+                                  shape is untouched. */}
+                              {product.hasLocationPricing && (
+                                <tr className="dash-pricing-location-row">
+                                  <td colSpan={TABLE_COLUMN_COUNT}>
+                                    {locations.length === 0 ? (
+                                      <p className="muted">No active locations to price against.</p>
+                                    ) : (
+                                      <table className="dash-location-pricing-table">
+                                        <thead>
+                                          <tr>
+                                            <th>Location</th>
+                                            <th className="dash-pricing-num">Cost</th>
+                                            <th className="dash-pricing-num">Selling Price</th>
+                                            <th className="dash-pricing-num">Margin ₹</th>
+                                            <th className="dash-pricing-num">Margin %</th>
+                                            <th className="dash-pricing-action">
+                                              <span className="visually-hidden">Actions</span>
+                                            </th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {locations.map((location) => {
+                                            // The row's own override, if any — a row can exist
+                                            // with sellingPrice explicitly null (a CLEARED
+                                            // override) as well as simply not existing yet;
+                                            // rule 111 treats those two exactly the same way
+                                            // (fall back to the base price), so this reads
+                                            // ?? straight through both.
+                                            const override = product.locationPrices.find(
+                                              (lp) => lp.locationId === location.id
+                                            );
+                                            const effectivePrice = override?.sellingPrice ?? product.sellingPrice;
+                                            const isEditingThisRow =
+                                              editingLocation?.productId === product.id &&
+                                              editingLocation?.locationId === location.id;
+                                            const isStagedThisRow =
+                                              locationDraft?.productId === product.id &&
+                                              locationDraft?.locationId === location.id;
+                                            // Busy from anything OTHER than this exact row —
+                                            // another location row on this or another product,
+                                            // or the article's own price/rename form.
+                                            const rowBusy =
+                                              editingId !== null ||
+                                              renamingId !== null ||
+                                              (anyLocationEditBusy && !isEditingThisRow && !isStagedThisRow);
+
+                                            return (
+                                              <Fragment key={location.id}>
+                                                <tr>
+                                                  <td>{location.name}</td>
+                                                  {/* Cost is GLOBAL (Product.costPrice) — read-only
+                                                      here, never a location-level input. Rule 111:
+                                                      "cost is global and never varies by Location." */}
+                                                  <td className="dash-pricing-num">
+                                                    {product.costPrice != null ? (
+                                                      formatCurrency(product.costPrice)
+                                                    ) : (
+                                                      <span className="badge badge-warning">Pending</span>
+                                                    )}
+                                                  </td>
+                                                  {isEditingThisRow && !isStagedThisRow ? (
+                                                    <td className="dash-pricing-num">
+                                                      <input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        min="0.01"
+                                                        step="0.01"
+                                                        className="dash-pricing-inline-input"
+                                                        value={locationPriceInput}
+                                                        onChange={(e) => setLocationPriceInput(e.target.value)}
+                                                        onKeyDown={handleLocationEnterKeyContinue}
+                                                        autoFocus
+                                                      />
+                                                    </td>
+                                                  ) : isStagedThisRow ? (
+                                                    <td className="dash-pricing-num">
+                                                      {locationDraft.sellingPrice === null
+                                                        ? 'Base price'
+                                                        : formatCurrency(locationDraft.sellingPrice)}
+                                                    </td>
+                                                  ) : (
+                                                    <td className="dash-pricing-num">
+                                                      {/* Deliberately NO visual distinction between
+                                                          an override and a fallback-to-base value
+                                                          (rule 111's F3 task) — same number, same
+                                                          styling, either way. */}
+                                                      {effectivePrice != null ? (
+                                                        formatCurrency(effectivePrice)
+                                                      ) : (
+                                                        <span className="badge badge-warning">Pending</span>
+                                                      )}
+                                                    </td>
+                                                  )}
+                                                  {(() => {
+                                                    if (isEditingThisRow && !isStagedThisRow) {
+                                                      // Not yet validated/staged — same "—" convention
+                                                      // the article-level cost/selling inputs above use
+                                                      // while their own step 1 is still open.
+                                                      return (
+                                                        <>
+                                                          <td className="dash-pricing-num muted">—</td>
+                                                          <td className="dash-pricing-num muted">—</td>
+                                                        </>
+                                                      );
+                                                    }
+                                                    const marginSelling = isStagedThisRow
+                                                      ? locationDraft.sellingPrice ?? product.sellingPrice
+                                                      : effectivePrice;
+                                                    const margin = computeMargin(product.costPrice, marginSelling, formatCurrency);
+                                                    return (
+                                                      <>
+                                                        <td className="dash-pricing-num">{margin.rupees}</td>
+                                                        <td className="dash-pricing-num">{margin.percent}</td>
+                                                      </>
+                                                    );
+                                                  })()}
+                                                  <td className="dash-pricing-action">
+                                                    <div className="dash-table-action-row">
+                                                      {isEditingThisRow ? (
+                                                        isStagedThisRow ? null : (
+                                                          <>
+                                                            <button
+                                                              type="button"
+                                                              className="link-button"
+                                                              onClick={handleContinueLocationEdit}
+                                                            >
+                                                              Continue
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              className="link-button"
+                                                              onClick={handleUseBaseLocationPrice}
+                                                            >
+                                                              Use base price
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              className="link-button"
+                                                              onClick={handleCancelLocationEdit}
+                                                            >
+                                                              Cancel
+                                                            </button>
+                                                          </>
+                                                        )
+                                                      ) : (
+                                                        <button
+                                                          type="button"
+                                                          className="link-button"
+                                                          onClick={() =>
+                                                            handleStartLocationEdit(product, location.id, effectivePrice)
+                                                          }
+                                                          disabled={!user.hasPinSet || rowBusy}
+                                                        >
+                                                          Edit
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  </td>
+                                                </tr>
+                                                {isEditingThisRow && !isStagedThisRow && locationFormError && (
+                                                  <tr className="dash-pricing-error-row">
+                                                    <td colSpan={6}>
+                                                      <p className="error-banner" role="alert">
+                                                        {locationFormError}
+                                                      </p>
+                                                    </td>
+                                                  </tr>
+                                                )}
+                                                {isStagedThisRow && (
+                                                  <tr className="dash-pricing-pin-row">
+                                                    <td colSpan={6}>
+                                                      <p className="muted">
+                                                        {locationDraft.sellingPrice === null
+                                                          ? `Clearing ${location.name}'s override for ${product.articleNo} — it will bill at the base price again.`
+                                                          : `Setting ${location.name}'s price to ${formatCurrency(
+                                                              locationDraft.sellingPrice
+                                                            )} for ${product.articleNo} — ${product.name}.`}{' '}
+                                                        Enter your PIN to confirm.
+                                                      </p>
+                                                      <PinPrompt
+                                                        submitLabel="Save price"
+                                                        submittingLabel="Saving…"
+                                                        autoFocus
+                                                        onSubmit={handleConfirmLocationEdit}
+                                                      />
+                                                      <button
+                                                        type="button"
+                                                        className="link-button"
+                                                        onClick={() => setLocationDraft(null)}
+                                                      >
+                                                        Change details
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        className="link-button"
+                                                        onClick={handleCancelLocationEdit}
+                                                      >
+                                                        Cancel
+                                                      </button>
+                                                    </td>
+                                                  </tr>
+                                                )}
+                                              </Fragment>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    )}
                                   </td>
                                 </tr>
                               )}
