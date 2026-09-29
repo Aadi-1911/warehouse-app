@@ -589,6 +589,20 @@ async function main() {
   });
   check('E20 a rejected 0 wrote NOTHING — the row still holds 250', Number(afterZero.sellingPrice) === 250, `got ${afterZero?.sellingPrice}`);
 
+  // The 2-decimal cap, reused from rule 113's validatePriceValue (billPriceOverrides.js) rather than
+  // a rule this endpoint redefines — see the same E19/E20 pattern above: a rejected write must not
+  // move the row at all.
+  let tooManyDecimals = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 12.345, pin: OWNER_PIN });
+  check('E21 12.345 (3 decimal places) rejected 400', tooManyDecimals.status === 400, `got ${tooManyDecimals.status} ${JSON.stringify(tooManyDecimals.body)}`);
+  const afterTooManyDecimals = await (await db()).locationPrice.findFirst({
+    where: { productId: e.productId, locationId: created.delhiId },
+    select: { sellingPrice: true },
+  });
+  check('E22 the rejected 12.345 wrote NOTHING — the row still holds 250', Number(afterTooManyDecimals.sellingPrice) === 250, `got ${afterTooManyDecimals?.sellingPrice}`);
+
+  let twoDecimals = await setLocationPrice(ownerToken, e.productId, created.delhiId, { sellingPrice: 12.34, pin: OWNER_PIN });
+  check('E23 12.34 (exactly 2 decimal places) is accepted and stored as 12.34', twoDecimals.status === 200 && Number(twoDecimals.body.sellingPrice) === 12.34, `got ${twoDecimals.status} ${JSON.stringify(twoDecimals.body?.sellingPrice)}`);
+
   // =====================================================================================
   console.log('\n=== F. STAFF never receives a cost field, through any surface ===');
   const fOwner = await api(`/api/products/${c.productId}`, { token: ownerToken });

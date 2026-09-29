@@ -96,10 +96,9 @@ function isPending(product) {
 // greater than 0, with AT MOST 2 decimal places. Checked on the raw STRING before Number() ever
 // runs — Number("12.345") is a perfectly finite, valid number, so checking decimal count on the
 // parsed value can't catch it; the regex has to see the original text. This mirrors, but does not
-// call, the server's own `sellingPrice > 0` check in setLocationPrice (productController.js) —
-// that check has no decimal-count rule of its own (Postgres' Decimal column just stores whatever
-// arrives), so the 2-decimal cap here is a client-side money-formatting convention, not a rule
-// this duplicates from the server and could drift out of sync with.
+// call, the server's own check in setLocationPrice (productController.js) — which now ALSO
+// enforces this same 2-decimal cap server-side (by reusing rule 113's validatePriceValue), so this
+// client-side check is a UX convenience that rejects early, not the only enforcement of the rule.
 function parseLocationSellingPrice(raw) {
   const trimmed = (raw ?? '').trim();
   if (!trimmed) {

@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { sendError } = require('../utils/errors');
+const { validatePriceValue } = require('../utils/billPriceOverrides');
 
 const prisma = new PrismaClient();
 
@@ -433,6 +434,17 @@ async function setLocationPrice(req, res) {
       'VALIDATION_ERROR',
       'sellingPrice must be a number greater than 0, or null to clear the override. 0 is not a valid price — send null to bill this location at the order\'s own price instead.'
     );
+  }
+  // Decimal-place cap, REUSED from rule 113's bill price overrides rather than redefined here —
+  // the same validatePriceValue that already guards priceOverrides/seenPrices in
+  // billPriceOverrides.js. Skipped for null, which is the "clear this override" signal, not a price
+  // to validate. Its own > 0 / finiteness checks are redundant with the pair above (both reject the
+  // same inputs) but harmless — the decimal-count check is the only reason this call exists.
+  if (value !== null) {
+    const decimalError = validatePriceValue(value, 'sellingPrice');
+    if (decimalError) {
+      return sendError(res, 400, 'VALIDATION_ERROR', decimalError);
+    }
   }
 
   // Both parents verified before the upsert, so a bad id produces a clear 404 rather than a raw
