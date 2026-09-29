@@ -10,6 +10,8 @@ const {
   deactivateProduct,
   reactivateProduct,
   getValidColors,
+  setLocationPrice,
+  setLocationPricingEnabled,
 } = require('../controllers/productController');
 
 const router = express.Router();
@@ -52,5 +54,27 @@ router.patch('/:id', requireAuth, requireRole('OWNER'), requirePinForPriceEdits,
 // (deactivate is never a price action, so it's never OWNER+PIN-gated the way field edits are).
 router.patch('/:id/deactivate', requireAuth, deactivateProduct);
 router.patch('/:id/reactivate', requireAuth, reactivateProduct);
+
+// Rule 111 (2026-09-23) — per-article, per-location pricing.
+//
+// NOTE the gate on the PUT below is requirePin DIRECTLY, not requirePinForPriceEdits. That is the
+// whole point and it must not be "simplified" into the shared conditional guard later:
+// requirePinForPriceEdits only asks the PIN when it spots 'costPrice'/'sellingPrice' at the TOP
+// LEVEL of the body. It was written for PATCH /:id's flat body and is correct there. Routing a
+// price write through any conditional check invites a future body shape that the check doesn't
+// recognise — at which point a real price edit sails through with no PIN and nothing looks wrong.
+// A price-writing route gets an unconditional PIN, full stop. See setLocationPrice's own comment
+// in productController.js for the concrete bypass this avoids.
+router.put(
+  '/:id/location-prices/:locationId',
+  requireAuth,
+  requireRole('OWNER'),
+  requirePin,
+  setLocationPrice
+);
+
+// The toggle itself is OWNER-only but NOT PIN-gated — it writes no price, it only selects which
+// already-PIN-gated price is read. Same treatment name/categoryId/isKids get on PATCH /:id.
+router.patch('/:id/location-pricing', requireAuth, requireRole('OWNER'), setLocationPricingEnabled);
 
 module.exports = router;

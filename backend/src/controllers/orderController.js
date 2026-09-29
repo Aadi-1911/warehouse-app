@@ -5,6 +5,15 @@ const { orderValueOf } = require('../utils/orderValue');
 const { normalizeBillNo } = require('../utils/billNo');
 const { checkLocationAvailability, deductibleLinesOf } = require('../utils/orderFulfillment');
 const { computeBillingAmounts } = require('../utils/orderBillingAmounts');
+const { billingPriceProductSelect, computeBilledLines } = require('../utils/locationPricing');
+const { parsePriceOverrides, parseSeenPrices, priceEquals } = require('../utils/billPriceOverrides');
+// The SAME verification + lockout the requirePin middleware wraps — imported, never reimplemented.
+// billOrder can't use the middleware itself, because whether a PIN is required is a question about
+// prices the server hasn't resolved yet when middleware runs (see the gate-order comment in
+// billOrder). Calling the exported core directly is the pattern userController's updateOwnPin
+// already established for exactly this situation: same secret, same counters, different decision
+// about when to ask.
+const { verifyPin } = require('../middleware/requirePin');
 
 const prisma = new PrismaClient();
 
@@ -18,6 +27,11 @@ const LINE_ITEM_SELECT = {
   qtySetsPacked: true,
   isCancelled: true,
   priceAtOrder: true,
+  // What this line was actually billed at (rule 111, 2026-09-25). Deliberately NOT role-gated,
+  // exactly like priceAtOrder beside it: this is a selling figure, the party-facing side, and
+  // carries no cost or margin information. Null on an unbilled line and on any order billed
+  // before 2026-09-25 — consumers must read that as "no billed price recorded", never as zero.
+  billedUnitPrice: true,
   productNameSnapshot: true,
   bundle: {
     select: {
@@ -97,6 +111,9 @@ function lineItemToResponse(li) {
     qtySetsPacked: li.qtySetsPacked,
     isCancelled: li.isCancelled,
     priceAtOrder: li.priceAtOrder,
+    // `?? null` rather than passed straight through, matching Order.roundingAdjustment's own
+    // treatment: an explicit null is a clearer contract for the client than an absent key.
+    billedUnitPrice: li.billedUnitPrice ?? null,
   };
 }
 
@@ -173,26 +190,46 @@ async function createOrder(req, res) {
   // One batch fetch for every bundle referenced, rather than one query per line item — same
   // "resolve everything, then validate" shape as the rest of this check, and avoids N+1 queries
   // for a multi-line order.
+  //
+  // No location is consulted here, deliberately (rule 111 as revised 2026-09-25). An OrderLineItem
+  // has no location at this point and structurally cannot: the fulfillment location is the owner's
+  // explicit choice at BILLING time, one or two status transitions after this snapshot is taken.
+  // So placement snapshots the plain base price, and billOrder resolves the location-aware price
+  // later into OrderLineItem.billedUnitPrice. Between 2026-09-23 and 2026-09-25 this resolved
+  // against a fixed named location (Gurgaon) instead — that pinning is gone, because it meant a
+  // location's override could never actually reach a bill.
   const bundleIds = [...new Set(lineItems.map((li) => li.bundleId))];
   const bundles = await prisma.bundle.findMany({
     where: { id: { in: bundleIds } },
-    select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+    select: {
+      id: true,
+      product: { select: { sellingPrice: true, name: true } },
+    },
   });
   const bundleById = new Map(bundles.map((b) => [b.id, b]));
 
-  // priceAtOrder is computed HERE, server-side, from Product.sellingPrice at this exact
+  // priceAtOrder is computed HERE, server-side, from the selling price in effect at this exact
   // moment — never trusted from the request body, same principle as Transaction.
   // costPriceSnapshot. Resolved fully before any DB write, so a bad bundleId or an unpriced
   // product anywhere in the array rejects the whole request with zero rows created.
   // productNameSnapshot (2026-08-28) is captured from the same read, at the same instant, for
   // exactly the same reason — a later rename must not rewrite what this order said it was for.
+  //
+  // "The selling price in effect" is the article's own base sellingPrice, full stop — no location
+  // is involved (see the read above). This is the price quoted to the party at the counter, and it
+  // stays frozen on this line forever (rule 23); what the order is eventually BILLED at is
+  // recorded separately in billedUnitPrice at billing time.
+  //
+  // A null base price is genuinely unsellable and is rejected here rather than writing a null
+  // priceAtOrder into a NOT NULL column and failing as a raw Prisma error several lines later.
   const resolvedLineItems = [];
   for (const li of lineItems) {
     const bundle = bundleById.get(li.bundleId);
     if (!bundle) {
       return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${li.bundleId}`);
     }
-    if (bundle.product.sellingPrice == null) {
+    const priceAtOrder = bundle.product.sellingPrice ?? null;
+    if (priceAtOrder == null) {
       return sendError(
         res,
         400,
@@ -203,7 +240,7 @@ async function createOrder(req, res) {
     resolvedLineItems.push({
       bundleId: li.bundleId,
       qtySetsRequested: li.qtySetsRequested,
-      priceAtOrder: bundle.product.sellingPrice,
+      priceAtOrder,
       productNameSnapshot: bundle.product.name,
     });
   }
@@ -594,8 +631,57 @@ async function packOrder(req, res) {
 // invoice entity (a printable doc is still separate later work) — this remains a pure
 // status-transition-plus-deduction endpoint structurally, just one that also snapshots the
 // billed amount now that discount/GST are real, owner-entered facts at billing time.
+// Every key this endpoint reads, and the ONLY keys it accepts (rule 113, 2026-09-25). Anything
+// else in the body is a 400 naming the offending key.
+//
+// WHY A STRICT ALLOWLIST, when no other endpoint here has one. This endpoint's PIN requirement is
+// conditional — no price changed, no PIN (rule 113) — and a conditional gate is only as good as
+// the server's certainty about what it was asked to do. A body with an unrecognised key is a
+// request whose intent the server does not fully understand, and "bill an order" is irreversible
+// (rule 23). Rejecting it costs a well-behaved client nothing and removes an entire class of
+// "the client thought it was saying X" failure.
+//
+// It also converts the most likely shape of a future bypass attempt into a loud 400. The delta
+// comparison already makes an unrecognised override incapable of changing a price (see
+// utils/billPriceOverrides.js's header); this makes it incapable of being silently ignored either.
+//
+// Verified against the live callers before being introduced, not assumed compatible: the seven
+// pre-existing keys are exactly what billOrder read on 2026-09-25 (the six destructured below plus
+// billNo), and both frontend call sites — BillOrderDetail.jsx's handleConfirmBill and
+// dashboard/Orders.jsx's handleConfirmBill — send only a subset of them. `pin`, `priceOverrides`
+// and `seenPrices` are the three this rule adds.
+const BILL_BODY_KEYS = new Set([
+  'discountApplicable',
+  'discountPercent',
+  'gstApplicable',
+  'gstPercent',
+  'locationId',
+  'locationConfirmed',
+  'billNo',
+  'pin',
+  'priceOverrides',
+  'seenPrices',
+]);
+
 async function billOrder(req, res) {
   const { id } = req.params;
+
+  const body = req.body || {};
+
+  // Strict body check FIRST, before any field is read — an unknown key makes the whole request
+  // suspect, so nothing should act on the keys that were recognised. Sorted so the message is
+  // deterministic regardless of key insertion order, and every offending key is named at once
+  // rather than one per retry (same "show the caller the full scope" reasoning the multi-line
+  // INSUFFICIENT_STOCK response below uses).
+  const unknownKeys = Object.keys(body).filter((k) => !BILL_BODY_KEYS.has(k)).sort();
+  if (unknownKeys.length > 0) {
+    return sendError(
+      res,
+      400,
+      'VALIDATION_ERROR',
+      `Unknown field${unknownKeys.length === 1 ? '' : 's'} in request body: ${unknownKeys.join(', ')}. Billing rejects unrecognised fields outright — it is irreversible, and a body the server doesn't fully understand must not be acted on.`
+    );
+  }
 
   const {
     discountApplicable = false,
@@ -604,7 +690,7 @@ async function billOrder(req, res) {
     gstPercent = null,
     locationId = null,
     locationConfirmed = false,
-  } = req.body || {};
+  } = body;
 
   if (typeof discountApplicable !== 'boolean' || typeof gstApplicable !== 'boolean') {
     return sendError(res, 400, 'VALIDATION_ERROR', 'discountApplicable and gstApplicable must be booleans');
@@ -635,10 +721,27 @@ async function billOrder(req, res) {
   // fields above but deliberately NOT part of any of the rule 101 arithmetic below — it is never
   // read by preTaxAmount/finalAmount/actualPayable, and billing succeeds identically whether it
   // is provided or left blank.
-  const billNo = normalizeBillNo(req.body?.billNo);
+  const billNo = normalizeBillNo(body.billNo);
   if (!billNo.ok) {
     return sendError(res, 400, 'VALIDATION_ERROR', billNo.message);
   }
+
+  // Rule 113 — SHAPE-only validation at this point (is this a well-formed list of positive,
+  // at-most-two-decimal prices?). Whether each article is genuinely on THIS order, and whether any
+  // price actually differs from the baseline the server resolves, are questions about the order
+  // and are answered below once it has been fetched. Splitting it this way keeps the pure
+  // request-shape rules in a dependency-free util and the order-dependent rules here.
+  const parsedOverrides = parsePriceOverrides(body.priceOverrides);
+  if (!parsedOverrides.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', parsedOverrides.message);
+  }
+  const overridesByProductId = parsedOverrides.overrides;
+
+  const parsedSeen = parseSeenPrices(body.seenPrices);
+  if (!parsedSeen.ok) {
+    return sendError(res, 400, 'VALIDATION_ERROR', parsedSeen.message);
+  }
+  const seenPriceByLineId = parsedSeen.seen;
 
   // Resolved before the order is even fetched — an unusable location makes the whole request
   // invalid regardless of what the order looks like. A 400 (not 404) for both "no such location"
@@ -676,8 +779,30 @@ async function billOrder(req, res) {
           // same fields listOrders' own totalValue reads, just qtySetsPacked-based instead of
           // qtySetsRequested-based (rule 101 — billing commits against what was actually packed,
           // the same basis BillOrderDetail.jsx's frontend total has always used for this screen).
+          //
+          // billingPriceProductSelect adds the two fields the location-aware price needs, narrowed
+          // to THIS bill's location in Postgres (rule 111). `location` is already validated above,
+          // so there is a real id to filter by — no by-name lookup, no null case.
           priceAtOrder: true,
-          bundle: { select: { product: { select: { isKids: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+          // Needed only to name the article in an OrderPriceOverride row and in the stale-price
+          // 409 (rule 113). productNameSnapshot first, live name as the pre-2026-08-28 fallback —
+          // the same precedence lineItemToResponse and the preview already use, so an article
+          // renamed after this order was placed reads consistently everywhere.
+          productNameSnapshot: true,
+          bundle: {
+            select: {
+              color: { select: { name: true } },
+              product: {
+                select: {
+                  articleNo: true,
+                  name: true,
+                  isKids: true,
+                  sizes: { select: { sizeLabel: true, qty: true } },
+                  ...billingPriceProductSelect(location.id),
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -694,13 +819,158 @@ async function billOrder(req, res) {
     return sendError(res, 409, 'ORDER_CANCELLED', 'This order has been cancelled and can no longer be billed');
   }
 
-  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × priceAtOrder, summed
+  // preTaxAmount snapshot (rule 101) — qtySetsPacked × piecesPerSet × billedUnitPrice, summed
   // across non-cancelled lines only. Computed from THIS SAME already-fetched order.lineItems,
   // not a second query — a cancelled line's qtySetsPacked is irrelevant either way since it's
   // filtered out here, same as it's excluded from linesToDeduct below.
-  const preTaxAmount = order.lineItems
-    .filter((li) => !li.isCancelled)
-    .reduce((sum, li) => sum + li.qtySetsPacked * piecesPerSetFor(li.bundle.product) * Number(li.priceAtOrder), 0);
+  //
+  // The unit price is now billedUnitPrice, not priceAtOrder (rule 111 as revised 2026-09-25): for
+  // an opted-in article this order bills from a location with an override, the party is charged
+  // that location's price, and for everything else it resolves straight back to priceAtOrder.
+  // Rule 101's basis is otherwise untouched — same packed-quantity multiplication, same
+  // cancelled-line exclusion, and the discount/GST arithmetic below still receives a plain number.
+  //
+  // computeBilledLines is THE shared resolution, also called by previewOrderFulfillment — so the
+  // preview an owner sees before pressing the irreversible button and the figure actually written
+  // here cannot disagree.
+  //
+  // THE BASELINE (rule 113): what this order bills at with NO at-billing override applied — i.e.
+  // exactly what the preview showed. Deliberately computed before and separately from the final
+  // prices below, because it is the thing the owner approved and the thing every override is
+  // measured against. Passing no overrides here is what makes it the baseline.
+  const liveLines = order.lineItems.filter((li) => !li.isCancelled);
+  const { lines: baselineLines } = computeBilledLines({
+    lineItems: liveLines,
+    locationId: location.id,
+  });
+  const baselinePriceByLineId = new Map(baselineLines.map((l) => [l.lineItemId, l.billedUnitPrice]));
+  const lineById = new Map(liveLines.map((li) => [li.id, li]));
+
+  // --- STALE-PRICE GUARD (rule 113) ------------------------------------------------------------
+  // The owner reviewed prices in the fulfillment preview, then pressed confirm. If a LocationPrice
+  // row or the hasLocationPricing toggle changed in between, the baseline has MOVED and the bill
+  // would charge something nobody saw. Worse on an overridden article: the owner approved
+  // "₹500 → ₹480", a ₹20 cut; if the baseline silently became ₹550 the same ₹480 is a ₹70 cut
+  // against a figure they never reviewed, and the PIN would have authorised a delta whose other
+  // half changed underneath it.
+  //
+  // seenPrices is the echo of what the preview returned. Every line the PREVIEW would have shown
+  // must be present and must still match.
+  //
+  // Scoped to deductibleLinesOf, NOT to every live line, and the difference is load-bearing: the
+  // preview's `lines` array comes from checkLocationAvailability over linesToDeduct, which is
+  // non-cancelled AND qtySetsPacked > 0. A live line packed at zero therefore never appears in the
+  // preview at all, so a correct client CANNOT echo a price for it, and demanding one would reject
+  // every honest request. Such a line contributes exactly 0 to preTaxAmount regardless of its unit
+  // price (qtySetsPacked is a factor), so nothing about the money the party pays escapes this
+  // check by being out of its scope.
+  const previewScopeLines = deductibleLinesOf(order);
+  const staleLines = [];
+  for (const li of previewScopeLines) {
+    const baseline = baselinePriceByLineId.get(li.id);
+    const seen = seenPriceByLineId.get(li.id);
+    // `undefined` seen is a real staleness signal, not a shape error: it means the set of billable
+    // lines itself changed since the preview (a line was added, or un-cancelled, or newly packed
+    // above zero). The owner needs to look again for the same reason a moved price requires it.
+    if (seen === undefined || !priceEquals(baseline, seen)) {
+      staleLines.push({
+        lineItemId: li.id,
+        articleNo: li.bundle.product.articleNo,
+        productName: li.productNameSnapshot ?? li.bundle.product.name,
+        colorName: li.bundle.color.name,
+        shown: seen === undefined ? null : seen,
+        current: Number(baseline),
+      });
+    }
+  }
+  // An id that is not a live line on this order is a client mistake, not staleness — a 400 rather
+  // than a 409, because re-previewing would not fix it.
+  for (const lineItemId of seenPriceByLineId.keys()) {
+    if (!lineById.has(lineItemId)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', `seenPrices references ${lineItemId}, which is not a live line item on order ${id}`);
+    }
+  }
+  if (staleLines.length > 0) {
+    return sendError(
+      res,
+      409,
+      'PRICES_CHANGED',
+      staleLines.length === 1
+        ? `The price for ${staleLines[0].articleNo} changed while you were reviewing — review the prices again before billing`
+        : `${staleLines.length} prices changed while you were reviewing — review the prices again before billing`,
+      // Sibling field alongside `error`, the same shape insufficientLines uses below, so a client
+      // never has to handle two different response layouts for the same kind of problem.
+      { changedLines: staleLines }
+    );
+  }
+
+  // --- AT-BILLING OVERRIDES: which articles are real, and what actually changed (rule 113) ------
+  // Shape was validated at parse time; THIS is where the order gets a say. An override naming an
+  // article with no live line on this bill is rejected rather than ignored — ignoring it would
+  // silently drop a price the owner typed, and would also make the endpoint a probe for whether an
+  // arbitrary productId is on someone's order.
+  const liveProductIds = new Set(liveLines.map((li) => li.bundle.product.id));
+  for (const productId of overridesByProductId.keys()) {
+    if (!liveProductIds.has(productId)) {
+      return sendError(res, 400, 'ARTICLE_NOT_ON_ORDER', `priceOverrides names productId ${productId}, which has no live line item on order ${id}`);
+    }
+  }
+
+  // THE array. Everything from here on — the PIN decision, preTaxAmount, the billedUnitPrice
+  // writes, and the OrderPriceOverride audit rows — reads `finalLines` and nothing else. There is
+  // deliberately no second path by which a price could reach the database, which is what makes it
+  // impossible to authorise one set of numbers and write another.
+  const { lines: finalLines, preTaxAmount } = computeBilledLines({
+    lineItems: liveLines,
+    locationId: location.id,
+    overridesByProductId,
+  });
+
+  // "Changed" is evaluated PER LINE against that line's OWN baseline (owner decision,
+  // 2026-09-25), not per article against a single figure. One article's colours can carry
+  // different baselines — priceAtOrder is snapshotted per line and PATCH /:id/lines re-snapshots
+  // it — so a per-article comparison would have to pick one of them and would call a genuine
+  // change a no-op whenever it picked the colour that happened to match.
+  //
+  // Both sides of this comparison are values the SERVER computed, from the same function, over the
+  // same lines. Nothing here inspects the request body. That is the property that makes the gate
+  // un-bypassable by body shape: an override this server could not parse never entered
+  // overridesByProductId, so it never entered finalLines, so it changed no price and there is
+  // nothing for it to have slipped past.
+  const changedLines = finalLines.filter(
+    (l) => !priceEquals(l.billedUnitPrice, baselinePriceByLineId.get(l.lineItemId))
+  );
+
+  // Audit rows, one per ARTICLE actually changed — grouped from the per-line comparison above, so
+  // an override submitted at exactly the baseline produces no group, no PIN and no row. That
+  // no-op treatment is a deliberate owner decision (2026-09-25) and differs from rule 108's
+  // RECONFIRMED_NO_CHANGE, which records its no-ops: billing has no "reconfirmation" concept, and
+  // a row saying ₹500 → ₹500 would be an audit entry for an event that did not occur.
+  const overrideRowsByProductId = new Map();
+  for (const l of changedLines) {
+    const li = lineById.get(l.lineItemId);
+    const baseline = Number(baselinePriceByLineId.get(l.lineItemId));
+    const existing = overrideRowsByProductId.get(l.productId);
+    if (existing) {
+      // The min/max range exists precisely for the mixed-baseline case — see
+      // OrderPriceOverride's schema comment. Equal in the normal case.
+      existing.baselineMinUnitPrice = Math.min(existing.baselineMinUnitPrice, baseline);
+      existing.baselineMaxUnitPrice = Math.max(existing.baselineMaxUnitPrice, baseline);
+      continue;
+    }
+    overrideRowsByProductId.set(l.productId, {
+      orderId: id,
+      productId: l.productId,
+      articleNoSnapshot: li.bundle.product.articleNo,
+      productNameSnapshot: li.productNameSnapshot ?? li.bundle.product.name,
+      baselineMinUnitPrice: baseline,
+      baselineMaxUnitPrice: baseline,
+      overriddenUnitPrice: Number(l.billedUnitPrice),
+      setById: req.user.id,
+    });
+  }
+  const overrideRows = [...overrideRowsByProductId.values()];
+  const anyPriceChanged = changedLines.length > 0;
 
   // Rule 101's exact three-step order: discount first, then GST on the POST-discount amount —
   // never the original preTaxAmount. Never trusts a client-computed final number; these are the
@@ -767,6 +1037,42 @@ async function billOrder(req, res) {
       // ApiError surfaces as `.extra` — same shape requirePin already uses for attemptsRemaining.
       { insufficientLines }
     );
+  }
+
+  // --- PIN GATE (rule 113) ---------------------------------------------------------------------
+  // Required if and only if a price actually changed. No change, no PIN — billing keeps working
+  // exactly as it did before rule 113 for every ordinary bill.
+  //
+  // WHY THIS IS NOT MIDDLEWARE, and specifically not a conditional wrapper like
+  // routes/products.js's requirePinForPriceEdits. That helper decides by looking for known keys in
+  // the body, which its own route file (routes/products.js:60-67) records as unsafe for a
+  // price-WRITING route: an unrecognised body shape means no PIN is asked while the handler still
+  // writes the price. Middleware here would face a harder version of the same problem — whether a
+  // price changed is not visible in the body at all; it is the result of resolving the baseline
+  // against LocationPrice, hasLocationPricing and each line's priceAtOrder, which needs the order,
+  // the location and two passes of computeBilledLines. Any middleware-level approximation of that
+  // is a guess, and a guess is exactly the bypass to avoid. So the decision is made here, from
+  // server-computed values (see `changedLines` above), and the verification itself is delegated to
+  // the SAME verifyPin the middleware wraps — imported, never reimplemented, so MAX_ATTEMPTS, the
+  // 15-minute lockout and the failed-attempt counters are one implementation shared by every PIN
+  // gate in the app.
+  //
+  // WHY IT RUNS LAST AMONG THE GATES (validate → stale → stock → PIN). A wrong PIN increments a
+  // real lockout counter, so a request that was going to be refused anyway should never cost the
+  // owner an attempt. Ordering it after the stale and stock checks means the only requests that
+  // can burn an attempt are ones that would otherwise have billed.
+  //
+  // WHY IT RUNS OUTSIDE prisma.$transaction, and this is not a style preference: verifyPin does a
+  // bcrypt.compare plus a User update, and the transaction below carries { timeout: 20000 } after
+  // a documented incident where a real 17-line order landed at 99-101% of its budget (2026-09-16).
+  // Putting a deliberately-slow hash inside that window would reintroduce the exact failure the
+  // batching down there exists to fix. Nothing is written before this point, so a 403 here leaves
+  // the order untouched at PACKED.
+  if (anyPriceChanged) {
+    const pinResult = await verifyPin(req.user.id, body.pin);
+    if (!pinResult.ok) {
+      return sendError(res, pinResult.status, pinResult.code, pinResult.message, pinResult.extra || {});
+    }
   }
 
   let updated;
@@ -878,6 +1184,65 @@ async function billOrder(req, res) {
         })),
       });
 
+      // billedUnitPrice, one write per NON-CANCELLED line (rule 111, 2026-09-25) — keyed on
+      // finalLines, not linesToDeduct. The two differ for a line packed at zero: it deducts no
+      // stock, so it has no STOCK_OUT row above, but it IS part of the bill and contributes its
+      // (zero) amount to preTaxAmount, so it must record what it was billed at like every other
+      // line. Recording it only for deducted lines would leave a billed line with a null price
+      // after this date, which this column's schema comment says can never happen.
+      //
+      // Inside the same transaction as the Order's own billing columns deliberately: preTaxAmount
+      // is summed FROM these figures, so an order whose stored total didn't match its stored line
+      // prices would be a contradiction the database briefly published. updateMany per distinct
+      // price rather than one update per line, the same round-trip-reduction shape the STOCK_OUT
+      // batching above uses and for the same cross-region-latency reason (rule 101's P2028
+      // incident, 2026-09-16) — a normal order resolves to exactly one distinct price, so this is
+      // one statement, not one per line.
+      // finalLines — THE array the PIN decision above was made from. Same object, not a
+      // recomputation: whatever `changedLines` compared, and therefore whatever the PIN authorised,
+      // is exactly what lands in billedUnitPrice here (rule 113).
+      const lineIdsByPrice = new Map();
+      for (const l of finalLines) {
+        const key = String(l.billedUnitPrice);
+        if (!lineIdsByPrice.has(key)) lineIdsByPrice.set(key, { price: l.billedUnitPrice, ids: [] });
+        lineIdsByPrice.get(key).ids.push(l.lineItemId);
+      }
+      for (const { price, ids } of lineIdsByPrice.values()) {
+        // Sorted for a deterministic lock order, same reasoning as the stock updateMany above.
+        ids.sort();
+        const written = await tx.orderLineItem.updateMany({
+          where: { id: { in: ids } },
+          data: { billedUnitPrice: price },
+        });
+        if (written.count !== ids.length) {
+          throw new Error(
+            `billedUnitPrice write matched ${written.count} of ${ids.length} lines on order ${id} — aborting rather than billing with an incomplete price record`
+          );
+        }
+      }
+
+      // At-billing price overrides, one row per ARTICLE changed (rule 113). Empty for almost every
+      // bill, in which case createMany is a no-op and costs one round-trip at most.
+      //
+      // Inside this transaction on the same reasoning as billedUnitPrice directly above, and it
+      // matters more here rather than less: these rows are the ONLY record that the price the party
+      // was charged is not the price the article resolves to. If the line prices committed and
+      // these did not, the bill would be permanently unexplainable — the figures would be right and
+      // nothing would say why they were right. Rule 9's audit trail and the money it describes are
+      // one fact, so they commit together or not at all.
+      //
+      // Derived from `overrideRows`, which was built from `changedLines`, which was built from
+      // `finalLines` — the same array the PIN authorised and the same array written above. No
+      // independent re-derivation anywhere in this path.
+      if (overrideRows.length > 0) {
+        const auditWritten = await tx.orderPriceOverride.createMany({ data: overrideRows });
+        if (auditWritten.count !== overrideRows.length) {
+          throw new Error(
+            `OrderPriceOverride write recorded ${auditWritten.count} of ${overrideRows.length} changed articles on order ${id} — aborting rather than billing changed prices with an incomplete audit trail`
+          );
+        }
+      }
+
       await tx.order.update({
         where: { id },
         data: {
@@ -985,7 +1350,24 @@ async function previewOrderFulfillment(req, res) {
           qtySetsPacked: true,
           isCancelled: true,
           productNameSnapshot: true,
-          bundle: { select: { color: { select: { name: true } }, product: { select: { articleNo: true, name: true } } } },
+          // priceAtOrder + the piecesPerSetFor shape + billingPriceProductSelect are what
+          // computeBilledLines needs — identical to billOrder's own read, because this endpoint's
+          // whole purpose is to say what billOrder WOULD do.
+          priceAtOrder: true,
+          bundle: {
+            select: {
+              color: { select: { name: true } },
+              product: {
+                select: {
+                  articleNo: true,
+                  name: true,
+                  isKids: true,
+                  sizes: { select: { sizeLabel: true, qty: true } },
+                  ...billingPriceProductSelect(location.id),
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -1005,6 +1387,27 @@ async function previewOrderFulfillment(req, res) {
   const linesToDeduct = deductibleLinesOf(order);
   const { lines } = await checkLocationAvailability(prisma, { lineItems: linesToDeduct, locationId: location.id });
 
+  // The prices this order WOULD be billed at from this location (rule 111, 2026-09-25), via the
+  // SAME computeBilledLines call billOrder makes — not a second implementation of the same rule.
+  // That sharing is the whole point: this endpoint exists so a wrong-location choice is visible
+  // BEFORE the irreversible button, and a preview computing prices its own way could show a
+  // number the bill then contradicts, which is worse than showing no number at all.
+  //
+  // Note the basis difference from billOrder, which is deliberate and matches what this endpoint
+  // already does for stock: billOrder sums every non-cancelled line, while this sums
+  // linesToDeduct (non-cancelled AND qtySetsPacked > 0). A line packed at zero contributes
+  // exactly 0 to either sum — qtySetsPacked is a factor in the multiplication — so the two
+  // preTaxAmounts agree to the rupee regardless.
+  //
+  // NO COST FIELD IS RETURNED HERE, and none is even read: this is an OWNER-only route today, but
+  // the preview is about what a PARTY will be charged, and cost has no business in that answer.
+  // Nothing below derives from Product.costPrice.
+  const { lines: billedLines, preTaxAmount } = computeBilledLines({
+    lineItems: linesToDeduct,
+    locationId: location.id,
+  });
+  const billedPriceByLineId = new Map(billedLines.map((l) => [l.lineItemId, l.billedUnitPrice]));
+
   // Line identity (article/colour) is joined on here purely for display — the check function
   // itself deals only in ids, and the frontend needs something a person can actually read when a
   // line is flagged short.
@@ -1014,13 +1417,25 @@ async function previewOrderFulfillment(req, res) {
     locationId: location.id,
     locationName: location.name,
     canFulfill: lines.every((l) => l.sufficient),
+    // The figure billOrder would store as Order.preTaxAmount for this location. Pre-discount and
+    // pre-GST, exactly like the stored column — the client applies its own live discount/GST
+    // preview on top (utils/orderBilling.js), and billOrder independently recomputes all of it.
+    preTaxAmount,
     lines: lines.map((l) => {
       const li = byId.get(l.lineItemId);
       return {
         ...l,
+        // productId, so a client can group these lines by ARTICLE — which is the grain rule 113's
+        // price override works at. Without it the UI would have to match on articleNo, which is
+        // unique only per Factory (CLAUDE.md's non-negotiable rule) and would silently merge two
+        // factories' identically-numbered articles into one price row.
+        productId: li?.bundle?.product?.id ?? null,
         articleNo: li?.bundle?.product?.articleNo ?? null,
         productName: li?.productNameSnapshot ?? li?.bundle?.product?.name ?? null,
         colorName: li?.bundle?.color?.name ?? null,
+        // What this line would be billed at, per piece, from this location. Equal to the line's
+        // priceAtOrder unless the article is opted in AND this location overrides it.
+        billedUnitPrice: billedPriceByLineId.get(l.lineItemId) ?? null,
       };
     }),
   });
@@ -1180,17 +1595,25 @@ async function updateOrderLines(req, res) {
     }
   }
 
-  // priceAtOrder for a new line is resolved HERE, from Product.sellingPrice at this exact moment
-  // — never trusted from the request body, same principle createOrder already applies.
+  // priceAtOrder for a new line is resolved HERE, from the selling price in effect at this exact
+  // moment — never trusted from the request body, same principle createOrder already applies.
   // productNameSnapshot (2026-08-28) rides along on the identical read, same as createOrder:
   // a line added to an existing order is still a NEW line, so it snapshots the name as of now,
   // not as of whenever the order it's joining was originally placed.
+  //
+  // Rule 111 applies identically to createOrder's copy, deliberately: an added line snapshots the
+  // base price with no location consulted, exactly as the lines it joins did. It picks up its
+  // billedUnitPrice from the same billing-location resolution as every other line on the order, so
+  // one order can never end up with two pricing bases on it.
   const resolvedNewLines = [];
   if (hasNewLines) {
     const bundleIds = [...new Set(newLines.map((nl) => nl.bundleId))];
     const bundles = await prisma.bundle.findMany({
       where: { id: { in: bundleIds } },
-      select: { id: true, product: { select: { sellingPrice: true, name: true } } },
+      select: {
+        id: true,
+        product: { select: { sellingPrice: true, name: true } },
+      },
     });
     const bundleById = new Map(bundles.map((b) => [b.id, b]));
     for (const nl of newLines) {
@@ -1198,7 +1621,8 @@ async function updateOrderLines(req, res) {
       if (!bundle) {
         return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${nl.bundleId}`);
       }
-      if (bundle.product.sellingPrice == null) {
+      const priceAtOrder = bundle.product.sellingPrice ?? null;
+      if (priceAtOrder == null) {
         return sendError(
           res,
           400,
@@ -1209,7 +1633,7 @@ async function updateOrderLines(req, res) {
       resolvedNewLines.push({
         bundleId: nl.bundleId,
         qtySetsRequested: nl.qtySetsRequested,
-        priceAtOrder: bundle.product.sellingPrice,
+        priceAtOrder,
         productNameSnapshot: bundle.product.name,
       });
     }

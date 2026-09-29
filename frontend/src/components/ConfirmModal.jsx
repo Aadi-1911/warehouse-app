@@ -18,6 +18,15 @@
 // nothing, same as omitting it today. `confirmDisabled` (also new, default false) exists for the
 // same reason: a destructive confirm shouldn't be pressable while `children`'s own input is
 // incomplete or invalid, same spirit as this screen's own "blocked lines disable Bill" guard.
+//
+// `hideConfirm` (added 2026-09-27 for rule 113's PIN step, default false) removes this modal's own
+// confirm button entirely, leaving Cancel. It exists because `children` can contain a PinPrompt
+// (components/PinPrompt.jsx), which owns its own <form> and its own submit button — and when it
+// does, THAT button is the action. The established pattern everywhere PinPrompt is already used
+// (dashboard/History.jsx, dashboard/Parties.jsx, ReceiveStock.jsx) is that PinPrompt REPLACES the
+// plain confirm button rather than sitting beside it; a disabled "Bill and lock order" left visible
+// above an active "Confirm at new prices" would be two primary buttons for one action, with the
+// dead one on top. Cancel deliberately stays: backing out must always be available.
 export default function ConfirmModal({
   open,
   title,
@@ -29,6 +38,7 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
   confirmDisabled = false,
+  hideConfirm = false,
 }) {
   if (!open) return null;
 
@@ -44,14 +54,16 @@ export default function ConfirmModal({
           <button type="button" className="btn-modal-cancel" onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button
-            type="button"
-            className={`btn-modal-confirm btn-modal-confirm-${tone}`}
-            onClick={onConfirm}
-            disabled={confirmDisabled}
-          >
-            {confirmLabel}
-          </button>
+          {!hideConfirm && (
+            <button
+              type="button"
+              className={`btn-modal-confirm btn-modal-confirm-${tone}`}
+              onClick={onConfirm}
+              disabled={confirmDisabled}
+            >
+              {confirmLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>

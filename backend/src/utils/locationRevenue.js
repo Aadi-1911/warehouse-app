@@ -61,13 +61,26 @@ const SALE_TRANSACTION_SELECT = {
     select: {
       locationId: true,
       bundle: {
-        select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } },
+        select: {
+          product: {
+            select: {
+              isKids: true,
+              costPrice: true,
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
+          },
+        },
       },
     },
   },
   orderLineItem: {
     select: {
+      // Both, deliberately: billedUnitPrice is what was actually charged (rule 111 as revised
+      // 2026-09-25) and priceAtOrder is the fallback for lines billed before that column existed.
+      // See the `unitRevenue` line in computeSalesByLocation for why the fallback is required and
+      // not merely defensive.
       priceAtOrder: true,
+      billedUnitPrice: true,
       order: { select: { billedAt: true, createdAt: true } },
     },
   },
@@ -93,13 +106,27 @@ async function computeStockValueByLocation(prisma) {
     select: {
       locationId: true,
       qtySets: true,
-      bundle: { select: { product: { select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } } } } },
+      bundle: {
+        select: {
+          product: {
+            select: {
+              isKids: true,
+              costPrice: true,
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
+          },
+        },
+      },
     },
   });
 
   const byLocation = new Map();
   for (const row of stockRows) {
     const product = row.bundle.product;
+    // One cost per article regardless of where the stock sits: cost is GLOBAL (rule 111 as
+    // revised 2026-09-25). This briefly resolved per Stock row against that row's own location
+    // between 2026-09-23 and 2026-09-25. Still summed PER ROW, because the quantity at each
+    // location genuinely differs even though the unit cost does not.
     const unitCost = product.costPrice != null ? Number(product.costPrice) : 0;
     const value = row.qtySets * piecesPerSetFor(product) * unitCost;
     byLocation.set(row.locationId, (byLocation.get(row.locationId) ?? 0) + value);
@@ -126,15 +153,43 @@ async function computeSalesByLocation(prisma, { from = null, to = null } = {}) {
 
     const product = tx.stock.bundle.product;
     const pieces = tx.qtySets * piecesPerSetFor(product);
-    const revenue = pieces * Number(tx.orderLineItem.priceAtOrder);
+    // billedUnitPrice first, priceAtOrder as the fallback — the same "prefer the real stored
+    // value" shape utils/orderValue.js applies to actualPayable, and for the same reason. Under
+    // the revised rule 111 (2026-09-25) a line billed from a location with a selling override was
+    // charged that override, not the price quoted at placement, so attributing revenue from
+    // priceAtOrder would credit this location with money nobody paid. Null billedUnitPrice means
+    // the line was billed before 2026-09-25, where priceAtOrder IS what was charged.
+    //
+    // AS OF RULE 113 (2026-09-25) billedUnitPrice is no longer a pure function of (article,
+    // location, priceAtOrder): an OWNER can change any article's price at billing, for that one
+    // bill, behind a PIN. Such a price lands here and therefore in this location's revenue and
+    // profit. That is INTENDED, not a leak to be filtered out — this figure answers "what did this
+    // location actually take", and an ad-hoc discount given at the billing desk is money the party
+    // genuinely did not pay. Reverting to the configured price would report revenue the business
+    // never received.
+    //
+    // The consequence worth stating: two locations' profit figures are no longer comparable purely
+    // as a function of their configured prices and profitSharePercent, because either can carry
+    // one-off bill-level decisions. OrderPriceOverride is the record of every such decision, so a
+    // surprising location figure is explainable — but only by reading that table, not from this
+    // module's output alone.
+    const unitRevenue = tx.orderLineItem.billedUnitPrice ?? tx.orderLineItem.priceAtOrder;
+    const revenue = pieces * Number(unitRevenue);
+
+    const locationId = tx.stock.locationId;
+
     // Same known limitation revenue.js already documents for piecesPerSet, extended here to
     // costPrice: neither is snapshotted at transaction time (no such field exists for STOCK_OUT —
     // Transaction.costPriceSnapshot is populated only for STOCK_IN), so this reads the product's
     // CURRENT cost price. Editing an article's cost price retroactively shifts historical profit,
     // same pre-existing tradeoff as the factory payable and revenue.js's own piecesPerSet caveat.
-    const cost = pieces * (product.costPrice != null ? Number(product.costPrice) : 0);
-
-    const locationId = tx.stock.locationId;
+    //
+    // ONE cost per article, not one per location: cost is global (rule 111 as revised 2026-09-25).
+    // The location-dependent half of this function is the REVENUE side above, which now reads
+    // billedUnitPrice — that is where a location's own pricing actually shows up in the profit
+    // split. Cost is the same number wherever the goods sat.
+    const unitCost = product.costPrice;
+    const cost = pieces * (unitCost != null ? Number(unitCost) : 0);
     const entry = byLocation.get(locationId) ?? { revenue: 0, cost: 0 };
     entry.revenue += revenue;
     entry.cost += cost;
@@ -144,9 +199,20 @@ async function computeSalesByLocation(prisma, { from = null, to = null } = {}) {
 }
 
 // The actual export: per location, stock value (live) + revenue/cost/profit (period-scoped).
-// Profit is (revenue − cost) × profitSharePercent/100 — cost price itself never changes by
-// location (rule stated on the Location.profitSharePercent schema field), only the business's
-// share of the resulting profit does.
+// Profit is (revenue − cost) × profitSharePercent/100.
+//
+// This comment used to justify that formula by asserting "cost price itself never changes by
+// location, only the business's share of the resulting profit does." That premise is FALSE as of
+// 2026-09-23 (rule 111): cost genuinely differs by location — different factory deals, different
+// transport — and computeSalesByLocation above now resolves it per location accordingly.
+//
+// The FORMULA is deliberately unchanged, and the correction above is why it didn't need to
+// change: profitSharePercent was always answering a different question from where cost comes
+// from. It asks "of the profit earned at this location, what share belongs to the business?" —
+// a splitting rule about an already-computed figure. Cost being location-dependent changes what
+// `cost` is, and therefore what `grossProfit` is, but not what that share means or what it should
+// multiply. The old comment tied the two together as if the invariance of cost were the reason
+// the share multiplies profit rather than cost; it never was.
 //
 // Includes every Location row, active or not — an archived location can still hold real Stock
 // and real historical Transaction rows, and silently dropping those would understate the

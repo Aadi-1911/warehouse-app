@@ -36,14 +36,29 @@ async function getOverview(req, res) {
 
   // Every Stock row with the product data both the value and the piece conversion need. One read
   // serves three KPIs (stock value, sets, pieces) rather than three passes over the same table.
+  //
+  // locationId was NOT selected here before 2026-09-23 — this KPI is a single global total, so it
+  // had no reason to care which location a row sat at. Rule 111 changed that: cost price is now
+  // location-dependent, so the per-row location is needed to resolve each row's cost even though
+  // the output is still one blended figure.
+  //
+  // Verified before wiring rather than assumed: this loop was ALREADY iterating Stock rows, not
+  // Products, so the granularity was already correct and only the location field was missing. Had
+  // it been grouping by product first, resolving once per article would have quietly used one
+  // location's cost for stock sitting at another.
   const stockRows = await prisma.stock.findMany({
     select: {
       bundleId: true,
+      locationId: true,
       qtySets: true,
       bundle: {
         select: {
           product: {
-            select: { isKids: true, costPrice: true, sizes: { select: { sizeLabel: true, qty: true } } },
+            select: {
+              isKids: true,
+              costPrice: true,
+              sizes: { select: { sizeLabel: true, qty: true } },
+            },
           },
         },
       },
@@ -64,6 +79,11 @@ async function getOverview(req, res) {
     // costPrice is PER PIECE (confirmed 2026-08-19) — the same basis rule 81 uses for the factory
     // payable, so the two owner-facing money figures agree about what a unit of stock is worth.
     // A null costPrice (article still pending-price) contributes 0 rather than being guessed at.
+    //
+    // One cost per article, read straight off the Product: cost is GLOBAL (rule 111 as revised
+    // 2026-09-25). This resolved per Stock row against each row's own location between 2026-09-23
+    // and 2026-09-25; the per-row loop stays regardless, because qtySets genuinely varies per row
+    // even though the unit cost no longer does.
     const unitCost = product.costPrice != null ? Number(product.costPrice) : 0;
 
     setsInStock += row.qtySets;

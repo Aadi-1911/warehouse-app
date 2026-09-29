@@ -1742,6 +1742,124 @@ body {
   border-top: 1px solid var(--divider);
 }
 
+/* Rule 113's PIN step inside the bill-confirm modal. Separated by its own rule because it replaces
+   the modal's confirm button rather than adding to the form above it — PinPrompt's own field and
+   button are full-width, which is already right inside a 300px card, so nothing is capped here (see
+   .dash-pricing-pin-row for the desktop-row case where it isn't). */
+.bill-pricing-pin {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+/* --- At-billing price review (components/BillPriceReview.jsx, rule 113, 2026-09-27). Sits between
+   the fulfilment picker and the discount/GST questions: the location decides the baseline price, so
+   this must read as a consequence of that choice, and the discount/GST percentages then apply on top
+   of whatever this settles on. Styled once here for both billing entry points, same as the picker
+   below. */
+.bill-price-review {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+.bill-price-review-heading {
+  margin: 0 0 6px;
+}
+
+/* A short note, not a banner — this fires on an ordinary, correct action (switching location), so it
+   must not look like an error. Uses the accent tint rather than --danger-text for that reason. */
+.bill-price-review-reset {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-text);
+  margin: 0 0 var(--space-3);
+}
+
+.bill-price-review-row {
+  margin-bottom: var(--space-3);
+}
+
+.bill-price-review-article {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+/* The one flex row in this block, and deliberately the SAFE shape for it: both children are short,
+   fixed-ish widths (a formatted rupee figure and a capped-width input), so neither can squeeze the
+   other the way a long colour name did in the picker's own rows before 40997e8. flex-wrap is set
+   anyway so the pair drops to two lines rather than overflowing if a figure ever runs long. */
+.bill-price-review-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bill-price-review-baseline {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Capped narrow for the same reason .bill-pricing-percent-field is: a rupee figure needs 4-5 digits,
+   not the full width of an already-narrow 300px modal card. */
+.bill-price-review-input {
+  max-width: 110px;
+}
+
+.bill-price-review-error {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--danger-text);
+  margin: 4px 0 0;
+}
+
+.bill-price-review-changed {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 4px 0 0;
+}
+
+/* Amber, not red: below cost is explicitly allowed (rule 113 warns and never blocks), so it must
+   not wear the same colour as .bill-price-review-error above, which marks input the server WILL
+   reject. Same amber/red severity split BillOrderDetail.jsx's own header comment describes between
+   Pack Order's shortfall tint and its own blocked-line tint. */
+.bill-price-review-belowcost {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--warning-text);
+  margin: 4px 0 0;
+}
+
+.bill-price-review-summary {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--divider);
+}
+
+.bill-price-review-summary-heading {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+.bill-price-review-summary-line {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin: 0 0 2px;
+}
+
+.bill-price-review-summary-note,
+.bill-price-review-cost-pending {
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
 /* --- Fulfilment location picker inside the bill-confirm modal (components/BillFulfillmentPicker
    .jsx, 2026-09-07). Shared by BOTH billing entry points, so this styling is deliberately written
    once here rather than per-screen. Sits above the discount/GST questions and is separated from
@@ -1853,6 +1971,15 @@ body {
 
 .bill-fulfillment-line {
   display: flex;
+  /* wrap ADDED (rule 113's per-line price made the qty text long enough that it and the colour
+     name no longer both fit on one line at the modal's ~240px usable width — see
+     .bill-fulfillment-line-qty's own comment below for the other half of this fix). Once the two
+     don't fit together, this drops qty onto its own line under the name rather than the flex
+     default of squeezing whichever item has room to shrink (the name, via its min-width: 0 below)
+     down to nothing. A SHORT row (short name + short qty) is unaffected: if both fit on one line
+     at their natural widths, wrap has nothing to do and space-between still puts them at opposite
+     ends of that one line exactly as before. */
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-3);
   font-size: 12px;
@@ -1867,13 +1994,30 @@ body {
   font-weight: 700;
 }
 
+/* min-width: 0 lets this shrink below its own content width when the row can't fit both children
+   on one line, which is what makes flex-wrap above actually move qty to a new line instead of both
+   items getting stuck fighting over one line's space. overflow-wrap: anywhere is a safety net for
+   the genuinely pathological case a real colour name could still hit — one word wider than the
+   whole row (e.g. a single very long compound name) — not the normal path: once qty wraps onto its
+   own line (the usual case for anything longer than a couple of words), the name gets the FULL row
+   width to itself and never needs to shrink at all, so it renders as one normal, unbroken line. */
 .bill-fulfillment-line-name {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+/* white-space CHANGED from nowrap to normal. This is the fix's other necessary half — flex-wrap
+   above only decides whether qty gets pushed onto its OWN line; it says nothing about what happens
+   once qty is alone there and its full text is still wider than the line. With nowrap, that text
+   could not break at all and would overflow the modal horizontally (a real failure mode with a
+   long qty string like "need 12 · InStock 150 — short · ₹1,250 (per piece)" — this is not
+   hypothetical, it is the worst case this rule has to hold for). With normal, once qty is alone on
+   its own flex line, its automatic minimum width is only as wide as its longest single unbreakable
+   token (e.g. "InStock" or "₹1,250") — comfortably under the ~240px usable width — so flex-shrink
+   (the default, already in effect) can narrow the box down and the text wraps at its natural word
+   boundaries into two or three short lines, never past the container's edge. */
 .bill-fulfillment-line-qty {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* accent-color overrides .checkbox-field's danger-red default: this box is a required

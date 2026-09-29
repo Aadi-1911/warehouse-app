@@ -222,6 +222,7 @@ model User {
   transferCorrections TransferCorrection[] // Transfer corrections this OWNER made
   partyDebits         PartyDebit[]       // party debits this OWNER recorded (rule 106) — a real relation, unlike FactoryDebit/FactoryPayment/PartyPayment's bare createdById, because rule 104's actorScope() needs one to gate this entry type in History (see PartyDebit's own comment)
   orderBillingCorrections OrderBillingCorrection[] // post-billing discount/GST revisions this OWNER made (rule 108)
+  orderPriceOverrides OrderPriceOverride[] // at-billing per-article price changes this OWNER made (rule 113) — a real relation for the same reason partyDebits above is one: rule 104's actorScope() needs a named relation to gate this entry type in History
 }
 
 model Factory {
@@ -252,8 +253,31 @@ model Product {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  sizes         ProductSize[]
-  bundles       Bundle[]
+  // Per-article opt-in for location-differentiated pricing (rule 111, added 2026-09-23).
+  // FALSE for every existing article and every new one, deliberately: this flag alone decides
+  // whether any LocationPrice row is consulted at all, so an untouched article resolves through
+  // exactly the same costPrice/sellingPrice path it always did — a LocationPrice row that
+  // happens to exist cannot change its behaviour while this is false.
+  //
+  // A separate explicit flag rather than inferring the toggle from "does a LocationPrice row
+  // exist": turning the feature OFF must not require deleting the per-location prices someone
+  // already entered — the same archive-not-delete convention isActive (here, on Party, on
+  // Location) and isCancelled (on Order/OrderLineItem) already follow everywhere else in this
+  // schema. With a flag, off means dormant: the rows sit untouched and come straight back if
+  // it's flipped on again.
+  //
+  // NOT PIN-gated, unlike the two price fields above (rule 71) — see routes/products.js.
+  // Flipping this writes no price of its own; it only decides which already-PIN-gated value
+  // gets read.
+  hasLocationPricing Boolean @default(false)
+
+  sizes          ProductSize[]
+  bundles        Bundle[]
+  locationPrices LocationPrice[]
+  // At-billing price changes recorded against this article (rule 113). Back-relation only —
+  // nothing on the Product side reads it; it exists because OrderPriceOverride.product is a real
+  // FK and Prisma requires the other end to be declared.
+  priceOverrides OrderPriceOverride[]
 
   @@unique([articleNo, factoryId]) // article number unique per factory, not globally
 }
@@ -343,8 +367,13 @@ model Location {
   // name; setting a real location to something other than 100 is a real admin action taken
   // through PATCH /api/locations/:id/profit-share, not a decision baked into the schema.
   // Cost price is identical regardless of location; only the business's SHARE of the resulting
-  // profit differs, which is why this multiplies profit, not revenue or cost, in
-  // utils/locationRevenue.js.
+  // profit differs, which is why this multiplies profit, not revenue or cost.
+  //
+  // That sentence was briefly marked FALSE here between 2026-09-23 and 2026-09-25, while rule 111
+  // carried a per-location cost. The owner clarified on 2026-09-25 that cost is global, so the
+  // original statement stands unqualified and LocationPrice below records SELLING price only.
+  // Noted rather than silently restored, because the intervening commit is in this branch's
+  // history and a reader following it here needs to know it was reverted deliberately.
   profitSharePercent Int @default(100)
 
   stock             Stock[]
@@ -352,6 +381,49 @@ model Location {
   partyStockReturns PartyStockReturn[]
   transfersFrom     Transfer[] @relation("TransferFrom")
   transfersTo       Transfer[] @relation("TransferTo")
+  locationPrices    LocationPrice[]
+}
+
+// Per-article, per-location SELLING price override (rule 111). Consulted ONLY when the article's
+// own Product.hasLocationPricing is true — see utils/locationPricing.js, which is the single
+// place that branching lives.
+//
+// SELLING ONLY. There is no per-location cost: the owner clarified on 2026-09-25 that an article
+// costs what it costs regardless of where it sits, so every cost site reads Product.costPrice
+// directly. The 2026-09-23 version of this model carried a costPrice column and the 2026-09-25
+// revision removed it — Location.profitSharePercent's own comment above ("cost price is identical
+// regardless of location") is therefore correct as originally written, and the correction this
+// model briefly made to it has itself been reverted.
+//
+// What an override is FOR: it changes what a PARTY IS CHARGED when an order bills from this
+// location. billOrder resolves it (orderController.js), which is the only moment a line has a
+// location at all. Nothing else in the app charges money, so nothing else consults it.
+//
+// A separate table rather than extra columns on Stock: a price is a fact about an ARTICLE at a
+// LOCATION, not about a quantity of stock. A Stock row only exists once that bundle has actually
+// been at that location, so pricing an article for a location it hasn't received stock at yet
+// would be impossible if the price lived there. Keyed on productId (not bundleId) for the same
+// reason costPrice/sellingPrice live on Product at all: price is per ARTICLE, never per colour.
+model LocationPrice {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+
+  // Nullable. Null here does NOT mean "pending price" the way a null Product.sellingPrice does
+  // (rule 8). It means "this location has no override," and resolveBilledUnitPrice falls straight
+  // back to the line's own priceAtOrder. That fallback is deliberately SILENT — no badge, no
+  // indicator, and no distinction at any call site between "fell back" and "never had an
+  // override". A location billing at the quoted price is the normal case, not a gap to flag.
+  sellingPrice Decimal?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One override row per article per location — a second row for the same pair would make
+  // "which price applies here" ambiguous with no rule to break the tie.
+  @@unique([productId, locationId])
 }
 
 model Party {
@@ -683,6 +755,85 @@ model OrderBillingCorrection {
   @@index([orderId]) // every read of these is "all corrections for this order, oldest first"
 }
 
+model OrderPriceOverride {
+  // Rule 113 (2026-09-25) — the OWNER changed an article's unit price AT BILLING, for this one
+  // bill. One row per ARTICLE actually changed on one order; a bill with no changes writes none.
+  //
+  // WHY A TABLE AND NOT A COLUMN ON OrderLineItem. A `baselineUnitPrice Decimal?` beside
+  // billedUnitPrice would be cheaper and need no join, and it was the first design considered. It
+  // fails on three counts, each independently decisive:
+  //   1. GRAIN. Rule 113 makes the change per ARTICLE — one decision covering every colour of that
+  //      article on the bill. A per-line column records the same decision N times, and History
+  //      would have to deduplicate N rows back into the one sentence a person actually wants.
+  //   2. NO ACTOR. Rule 104 gates History BY ACTOR RELATION — historyController's actorScope()
+  //      takes a relation name and asks "is this actor STAFF?". A bare column on OrderLineItem has
+  //      no actor to relate to, so a price-override entry could not be gated the way every other
+  //      owner-performed entry is. setBy below is what makes that possible.
+  //   3. NO TIMESTAMP of its own.
+  //
+  // WHY BOTH NUMBERS ARE STORED rather than one of them re-derived at read time. Exactly the
+  // argument OrderBillingCorrection's own header makes for its old*/new* columns: the baseline is
+  // resolved from Product.hasLocationPricing + LocationPrice.sellingPrice + the line's
+  // priceAtOrder, and the first two are freely editable AFTER this bill. Re-deriving the baseline
+  // later would answer "what would this article resolve to today", not "what was it before the
+  // owner changed it" — so a later PUT /location-prices would silently rewrite history. Storing it
+  // is what makes rule 113's audit trail survive a later saved-price edit.
+  //
+  // This model is PURE AUDIT: nothing reads it to compute money. What the party is charged lives
+  // in OrderLineItem.billedUnitPrice and Order.preTaxAmount, both written in the same transaction
+  // as these rows. A row here can never disagree with the bill, because neither is derived from
+  // the other — both come from the one `finalLines` array billOrder computes once.
+  id                   String   @id @default(cuid())
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id])
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id])
+
+  // Snapshotted for the same reason OrderLineItem.productNameSnapshot exists: History must read
+  // correctly after an article is renamed. articleNo is snapshotted alongside the name even though
+  // productController rejects any attempt to patch it — an immutable field is cheap to copy, and
+  // copying both means History never needs the Product row at all to render the entry.
+  articleNoSnapshot    String
+  productNameSnapshot  String
+
+  // The price this article's live lines resolved to BEFORE the override — i.e. what
+  // utils/locationPricing.js's resolveBilledUnitPrice returned for them.
+  //
+  // A RANGE, not one number, because one article's colours on one order genuinely CAN carry
+  // different baselines (owner decision, 2026-09-25): priceAtOrder is snapshotted PER LINE and
+  // PATCH /api/orders/:id/lines re-snapshots it, so two colours added at different times can
+  // differ. In the normal case min == max and History renders "₹500 → ₹480"; when they differ it
+  // renders "₹500–₹520 → ₹480", which is the honest description of what the owner actually did.
+  //
+  // Collapsing these into a single column would have forced a choice between three bad options:
+  // storing only one colour's baseline (a false record for the others), rejecting mixed-baseline
+  // articles outright (blocking a legitimate order shape), or silently averaging (inventing a
+  // number no line ever had).
+  baselineMinUnitPrice Decimal
+  baselineMaxUnitPrice Decimal
+  // What every live line of this article was billed at instead. One number by construction: the
+  // override applies uniformly to the whole article, which is the entire point of rule 113's
+  // per-article grain.
+  overriddenUnitPrice  Decimal
+
+  // NOT NULL, unlike OrderBillingCorrection's nullable money columns. Those are nullable to
+  // accommodate orders billed before rule 101 existed; this model has no such history — it is
+  // created by rule 113 and every row it will ever hold is written by the code that introduced it.
+  // A row can only exist because an override actually happened, so every column always has a real
+  // value and nullability would be modelling a state that cannot occur.
+  setById              String
+  setBy                User     @relation(fields: [setById], references: [id])
+  createdAt            DateTime @default(now())
+
+  // Every read is "all overrides for this order" (History renders them per order, and the order
+  // detail may later show them). No unique constraint on (orderId, productId): one bill can only
+  // override an article once — billOrder rejects duplicate productIds with a 400 rather than
+  // last-wins — but that is an application rule about ONE request, and enforcing it in the
+  // database would wrongly also forbid a future feature that re-bills a cancelled-and-reinstated
+  // order. The 400 is the real guard; see billOrder's parsePriceOverrides.
+  @@index([orderId])
+}
+
 model PartyStockReturn {
   // A simple event log, NOT a pending/settled workflow — whole sets returned by a Party
   // (damage, sizing, other reason), logged after the fact. No lifecycle, no line-by-line
@@ -827,6 +978,9 @@ model Order {
   // Post-billing discount/GST revisions (rule 108). A list, not an optional one-to-one, for the
   // reason OrderBillingCorrection.orderId's own comment gives: corrections genuinely can stack.
   billingCorrections OrderBillingCorrection[]
+  // Per-article price changes made at billing (rule 113). A list: one bill can change several
+  // articles, each getting its own row. Empty for the overwhelming majority of orders.
+  priceOverrides OrderPriceOverride[]
 }
 // Confirmed lifecycle: Placed → Packed → Billed → Shipped (rule 59). "Adjusted" is never a
 // status value (rule 23) — see OrderAdjustment below.
@@ -838,7 +992,24 @@ model OrderLineItem {
   id               String            @id @default(cuid())
   orderId          String
   order            Order             @relation(fields: [orderId], references: [id])
-  bundleId         String            // article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills this is decided later, at BILLING (rule 64's FIFO-across-locations), not at order time. (Was decided at packing until 2026-08-17, when deduction moved to Bill.)
+  // Article+color only (Bundle), deliberately not a specific Stock row — WHICH Location fulfills
+  // this is decided later, at BILLING, not at order time. (Was decided at packing until
+  // 2026-08-17, when deduction moved to Bill.)
+  //
+  // The mechanism named here used to be "rule 64's FIFO-across-locations", which the 2026-09-07
+  // single-location billing change superseded — corrected 2026-09-23. It is now the OWNER's
+  // EXPLICIT choice at billing time: billOrder requires a real locationId plus locationConfirmed
+  // === true, with deliberately no "pick one for me" default, and every line must be coverable by
+  // that one location alone or the whole request is rejected. So the claim below is not just still
+  // true, it is stronger than when it was written: the location isn't merely unknown at order
+  // time, it is a decision nobody has made yet.
+  //
+  // This is the load-bearing fact behind rule 111's two-price split: because a line genuinely has
+  // no location here, a location-aware selling price cannot be resolved at this point at all. So
+  // priceAtOrder below snapshots the plain base price, and billedUnitPrice — resolved at billing,
+  // when the location finally exists — records what was actually charged. See
+  // utils/locationPricing.js.
+  bundleId         String
   bundle           Bundle            @relation(fields: [bundleId], references: [id])
   qtySetsRequested Int               // the LIVE, current requested quantity — mutable at any point up until Billed (rule 22). Full change history lives in OrderAdjustment, not here.
   qtySetsPacked    Int               @default(0) // running total actually packed so far, per line. Clamped 0..qtySetsRequested at the application layer (rule 64) — never exceeds what was requested. Drives the packing stepper's clamp, the short-pack messaging when packed < requested, AND (since 2026-08-17) the quantity billing actually deducts from stock — billing commits against what was really counted, not what was originally asked for. PATCH /api/orders/:id/lines (added 2026-08-21) resets this to 0 on the specific line it edits or creates — never on every OTHER live line on the order — since a correction against the OLD quantity is meaningless once that quantity has changed, but an untouched line's real packed count is genuine historical data with nowhere else it's recorded. Safe to leave untouched lines exactly as they are: nothing in the frontend reads this field for a PLACED order (Pack Order's own checklist never rehydrates from it — see LEARNING_LOG.md — and the Owner Dashboard explicitly shows "Not yet packed" instead of this value whenever status is PLACED), and the next real PATCH /:id/pack call fully overwrites every live line's value regardless, touched or not.
@@ -846,7 +1017,22 @@ model OrderLineItem {
   // historical record of what was asked for and what was counted. Only this flag changes, which
   // is what keeps a cancelled line legible in History and on screen rather than silently zeroed.
   isCancelled      Boolean           @default(false)
-  priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side.
+  priceAtOrder     Decimal           // snapshots Product.sellingPrice (not costPrice) at order time, so a later Article Pricing change never retroactively alters what this Party was actually charged — same snapshot principle as Transaction.costPriceSnapshot (rule 82), applied to the party-facing side instead of the factory-facing side. Always the BASE price: no location is known here (see bundleId's comment), and none is consulted.
+  // What this line was ACTUALLY BILLED at, per unit (rule 111 revision, 2026-09-25). Resolved
+  // inside billOrder against the location the order bills FROM: the article's LocationPrice
+  // override there if it has one and hasLocationPricing is on, otherwise priceAtOrder above,
+  // unchanged. preTaxAmount is summed from THIS column, never from priceAtOrder.
+  //
+  // Distinct from priceAtOrder rather than overwriting it because the two are different facts:
+  // priceAtOrder is what the party was quoted at the counter, this is what they were charged, and
+  // under the revised rule 111 those can legitimately differ. Keeping both is what makes the
+  // difference explainable afterwards instead of invisible.
+  //
+  // NULLABLE and forward-only, same treatment Order.roundingAdjustment got for rule 109: null
+  // means either "not billed yet" or "billed before 2026-09-25", and nothing backfills it —
+  // writing priceAtOrder into it for old rows would fabricate a billing-time record that was
+  // never made. Every line billed from 2026-09-25 on always carries a real value.
+  billedUnitPrice  Decimal?
   // Snapshots Product.name at order time (added 2026-08-28, alongside the article-rename feature).
   // Exactly the same principle priceAtOrder above already applies to price, extended to the name:
   // renaming an article must never retroactively change how an order placed BEFORE the rename

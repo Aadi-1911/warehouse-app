@@ -525,6 +525,98 @@ model PartyPayment {
 // stored aggregate, recomputed from live rows on every request.
 ```
 
+### 1.2 Location-differentiated selling price (rule 111) — built, migration applied to TEST only
+
+Two schema additions plus one new table, all purely additive. Every existing article is created switched OFF, so nothing about existing data changes.
+
+```prisma
+model Product {
+  // ... existing fields ...
+  // Per-article opt-in. FALSE for every existing and new article. While false, NO LocationPrice row
+  // is consulted at any call site. A real column rather than "does a LocationPrice row exist",
+  // so turning the feature off never requires deleting the prices someone entered — off means
+  // dormant, the same archive-not-delete convention isActive/isCancelled already follow.
+  hasLocationPricing Boolean @default(false)
+  locationPrices     LocationPrice[]
+}
+
+// Per-article, per-location SELLING price override. SELLING ONLY — cost is global (one
+// Product.costPrice per article, regardless of where the stock sits), clarified by the owner on
+// 2026-09-25. A costPrice column existed here between 2026-09-23 and 2026-09-25 and was removed.
+model LocationPrice {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+  // Null means "no override here" — NOT rule 8's "pending price". Falls back to the line's own
+  // priceAtOrder at billing.
+  sellingPrice Decimal?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([productId, locationId])
+}
+
+model OrderLineItem {
+  // ... existing fields ...
+  priceAtOrder    Decimal   // the BASE price quoted at placement — no location is consulted, a line has none yet
+  // What this line was ACTUALLY billed at, per piece. Resolved inside billOrder against the
+  // location the order bills FROM. preTaxAmount is summed from THIS column, never priceAtOrder.
+  //
+  // Nullable and FORWARD-ONLY, no backfill: null means "not billed yet" OR "billed before
+  // 2026-09-25", and the two are not distinguishable from the column alone. Backfilling
+  // priceAtOrder would fabricate a billing-time record that was never made. Same treatment
+  // Order.roundingAdjustment got for rule 109.
+  billedUnitPrice Decimal?
+}
+```
+
+**Why `billedUnitPrice` is a new column rather than an overwrite of `priceAtOrder`.** Under rule 111 the two can legitimately differ — a party quoted at the counter, then billed from a location with its own price. Both are real facts and both get asked about later. Overwriting `priceAtOrder` would destroy the quote to store the bill in its slot, which is precisely the silent rewrite this schema's other snapshot columns (`Transaction.costPriceSnapshot`, `productNameSnapshot`, `partyNameSnapshot`, `OrderBillingCorrection`'s six `old*`/`new*` columns) exist to prevent.
+
+**Migration status.** `20260923090000_add_location_price` (amended in place 2026-09-25 to drop `costPrice`) and `20260925090000_add_billed_unit_price`. Both applied to the **TEST** database only — **NOT** applied to Preview or Production. The first was amended rather than superseded because at the time of the edit it existed on TEST alone and on no remote branch, so no `_prisma_migrations` checksum anywhere else could be invalidated; a second migration would instead have written a `DROP COLUMN "costPrice"` into Preview's and Production's permanent history for a column neither database ever had. That is a narrow, verified-in-advance exception — everywhere else an applied migration's file stays immutable.
+
+---
+
+### 1.3 At-billing price override (rule 113) — built, migration not yet applied anywhere
+
+```prisma
+model OrderPriceOverride {
+  id                   String   @id @default(cuid())
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id])
+  productId            String
+  product              Product  @relation(fields: [productId], references: [id])
+  articleNoSnapshot    String
+  productNameSnapshot  String
+  baselineMinUnitPrice Decimal
+  baselineMaxUnitPrice Decimal
+  overriddenUnitPrice  Decimal
+  setById              String
+  setBy                User     @relation(fields: [setById], references: [id])
+  createdAt            DateTime @default(now())
+
+  @@index([orderId])
+}
+```
+
+One row per **article** whose unit price the OWNER changed while billing (rule 113). A bill with no price change writes none, which is almost every bill.
+
+**Why a table rather than a `baselineUnitPrice` column on `OrderLineItem`.** The column was the first design considered and is cheaper — no join. It fails on three independent counts. *Grain*: the change is per article, one decision covering every colour, and a per-line column records that decision N times for History to deduplicate back into the one sentence a person wants. *No actor*: rule 104 gates History by actor **relation** — `actorScope()` takes a relation name and asks whether that actor is STAFF — and a bare column has no actor to relate to, so a price-override entry could not be gated the way every other owner-performed entry is. *No timestamp of its own.*
+
+**Why both money figures are stored rather than one re-derived.** Exactly the argument `OrderBillingCorrection`'s `old*`/`new*` columns already make. The baseline is resolved from `Product.hasLocationPricing` + `LocationPrice.sellingPrice` + the line's `priceAtOrder`, and the first two are freely editable *after* this bill. Re-deriving later would answer "what would this article resolve to today", not "what was it before the owner changed it" — so a later `PUT /location-prices` would silently rewrite the audit trail. Storing it is what makes the record survive.
+
+**Why the baseline is a range.** One article's colours on one order genuinely can carry different baselines: `priceAtOrder` is snapshotted per line and `PATCH /api/orders/:id/lines` re-snapshots it. `min` and `max` are equal in the normal case and History renders `₹500 → ₹480`; when they differ it renders `₹500–₹520 → ₹480`. Collapsing to one column would have forced a choice between recording one colour's baseline (false for the others), rejecting mixed-baseline articles (blocking a legitimate order shape), or averaging (a number no line ever had).
+
+**All three money columns are `NOT NULL`**, deliberately unlike `OrderBillingCorrection`'s nullable ones. Those are nullable to accommodate orders billed before rule 101 existed; this model has no prehistory — a row can only exist because an override actually happened, so nullability would model a state that cannot occur.
+
+**No unique constraint on `(orderId, productId)`.** One bill can only override an article once, but that is an application rule about a single request (`billOrder` rejects a duplicate `productId` with a 400 rather than last-wins), and a database constraint would also forbid a future re-bill of a reinstated order — a different question nobody has decided.
+
+**Pure audit.** Nothing reads this table to compute money; what the party is charged lives in `OrderLineItem.billedUnitPrice` and `Order.preTaxAmount`. It is written in the **same transaction** as both, because a bill whose figures committed without the record of why would be permanently unexplainable.
+
+**Migration status.** `20260925120000_add_order_price_override` — written, **not applied to any database yet**, including TEST. Purely additive: one new table, no existing column altered, no backfill.
+
+---
+
 ### 1.1 Hard Rules to Enforce in Application Code (not expressible in schema alone)
 
 - `Stock.qtySets` must only ever change as a side effect of creating a `Transaction` row, inside the same database transaction (atomic). Never expose a direct "edit stock quantity" endpoint.
@@ -533,6 +625,7 @@ model PartyPayment {
 - When creating a `Bundle` reference (e.g. during a Transaction), only `Color` values that already have a `Bundle` row for that `Product` are valid — reject arbitrary Product+Color combinations at the API layer.
 - `PartyStockReturn.note` is required when `reason` is `OTHER`, optional for every other reason value — a conditional requirement Prisma can't express, so the write endpoint must enforce it (2026-08-18). Same class of app-layer rule as `OrderAdjustment.reason`'s own conditional requirement.
 - `PartyStockReturn.priceAtReturn` is computed server-side from `Product.sellingPrice` at the moment of the return — **never trusted from the request body**, and never sourced from `costPrice`. Same principle as `OrderLineItem.priceAtOrder` and `Transaction.costPriceSnapshot`.
+- `OrderLineItem.billedUnitPrice` must be written for every non-cancelled line of any order billed from 2026-09-25 on, in the same transaction as the Order's own billing columns — `Order.preTaxAmount` is summed from it, so an order whose stored total didn't match its stored line prices would be a contradiction the database briefly published. `priceAtOrder` must never be overwritten by billing (rule 111).
 - `productNameSnapshot` (added 2026-08-28, on `OrderLineItem`, `Transfer` and `PartyStockReturn`) is captured server-side from `Product.name` at the instant the record is created, and **never recomputed afterwards** — the exact same write-once discipline `priceAtOrder`/`costPriceSnapshot`/`priceAtReturn` already follow, extended from price to the article's name so that renaming an article (`PATCH /api/products/:id` with `name`) can only ever affect go-forward display. Read paths must resolve it as `productNameSnapshot ?? bundle.product.name`: the fallback exists **only** for rows created before this field did, which have no recorded name and no way to recover one, so they continue to follow the live current name. That is a disclosed, deliberately un-backfilled limitation — inventing a "correct" historical name for those rows would be fabricating data, not fixing it.
   - Deliberately **not** applied to `Transaction` itself: no API response or screen ever renders a product *name* off a Transaction (History builds its entries from `articleNo` + colour only, verified across every `entries.push` in `historyController.js`), so there is nothing there for a rename to corrupt.
   - Deliberately **not** applied to `Stock`: Live Stock / Low Stock are current-state views, not historical records — they *should* follow a rename immediately, and do.

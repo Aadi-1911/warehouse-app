@@ -83,6 +83,16 @@ async function login(username, password) {
   return body.token;
 }
 
+// Rule 113 (2026-09-25) — builds the seenPrices echo every bill now requires, from the same
+// fulfillment preview the owner's screen reads. Shared by every bill call in this file.
+async function seenPricesFor(token, orderId, locationId) {
+  const r = await api(`/api/orders/${orderId}/fulfillment-preview?locationId=${locationId}`, { token });
+  if (!Array.isArray(r.body?.lines)) {
+    throw new Error(`fulfillment-preview failed for order ${orderId}: ${JSON.stringify(r.body)}`);
+  }
+  return r.body.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
 const created = {
   orderIds: [],
   locationId: null,
@@ -92,6 +102,7 @@ const created = {
   colorId: null,
   productId: null,
   bundleId: null,
+  staffUserId: null,
 };
 
 async function cleanup() {
@@ -132,6 +143,17 @@ async function cleanup() {
     if (created.categoryId) await prisma.category.delete({ where: { id: created.categoryId } }).catch(() => {});
     if (created.colorId) await prisma.color.delete({ where: { id: created.colorId } }).catch(() => {});
     console.log('  deleted product/party/location/factory/category/colour');
+    // LAST, deliberately, and only after every row that could reference a userId is already gone
+    // above: Transaction.userId and OrderAdjustment.changedById both point AT User, so deleting
+    // the account before those rows would fail the FK, not cascade.
+    //
+    // A HARD delete of a User is normally forbidden (rule 75 — accounts are deactivated, never
+    // deleted, so historical Transaction rows stay resolvable forever). The one narrow exception
+    // is an account whose username starts with "probe": those are test artifacts that never
+    // existed for a real person, which is exactly why this file's staff account is named
+    // `probe_bc_staff_${stamp}` and not something friendlier. Renaming it would quietly move it
+    // outside that exception and make this line a rule violation.
+    if (created.staffUserId) await prisma.user.delete({ where: { id: created.staffUserId } }).catch(() => {});
   } finally {
     await prisma.$disconnect();
   }
@@ -139,16 +161,42 @@ async function cleanup() {
 
 async function main() {
   const ownerToken = await login('owner', 'owner1234');
-  // Fails LOUDLY now (item 4) — no try/catch swallowing this into `null`, no `if (staffToken)`
-  // guard skipping the assertions below. If this account doesn't exist or the password is wrong,
-  // the whole run aborts with a clear error instead of quietly reporting all-pass with zero STAFF
-  // coverage.
-  const staffToken = await login('probe_billno_staff', 'ProbeStaff!2026');
 
   console.log('\n=== SETUP: seed a real billable order on the TEST branch ===');
   const stamp = Date.now();
 
-  let r = await api('/api/locations', { method: 'POST', token: ownerToken, body: { name: `BCTest-${stamp}` } });
+  // This file used to log straight in as a hand-made account, `probe_billno_staff`, that nothing
+  // in the repo ever created — it happened to exist on the long-lived dev/TEST database because
+  // someone made it interactively months ago. A `prisma migrate reset` destroys it (the seed
+  // creates only "owner"), and this file then died at its very first line with
+  // `FATAL: Login failed for "probe_billno_staff"` before a single assertion ran. Creating the
+  // account here instead makes the file self-sufficient on a freshly reset database, which is the
+  // only state a test file may assume.
+  //
+  // Pattern copied from test-location-pricing.mjs (its staff-user block), including the
+  // `${stamp}` suffix: a crashed run leaves its user behind, and a fixed username would then
+  // collide with User.username's unique constraint on the very next run — turning one failure
+  // into a permanently wedged test.
+  //
+  // The "probe" prefix is required, not cosmetic: it is what puts this account inside rule 75's
+  // one exception and makes cleanup()'s hard delete legitimate.
+  //
+  // login() still fails LOUDLY — no try/catch swallowing this into `null`, no `if (staffToken)`
+  // guard skipping the assertions below. If the account can't be created or can't log in, the
+  // whole run aborts with a clear error instead of quietly reporting all-pass with zero STAFF
+  // coverage.
+  const staffUsername = `probe_bc_staff_${stamp}`;
+  const staffPassword = 'ProbeStaff!2026';
+  let r = await api('/api/users', {
+    method: 'POST',
+    token: ownerToken,
+    body: { username: staffUsername, password: staffPassword, name: 'BC Probe Staff', role: 'STAFF' },
+  });
+  if (!r.body?.id) throw new Error(`Staff user creation failed: ${JSON.stringify(r.body)}`);
+  created.staffUserId = r.body.id;
+  const staffToken = await login(staffUsername, staffPassword);
+
+  r = await api('/api/locations', { method: 'POST', token: ownerToken, body: { name: `BCTest-${stamp}` } });
   created.locationId = r.body.id;
   console.log('  location:', created.locationId, r.status);
 
@@ -218,10 +266,15 @@ async function main() {
   });
   console.log('  packed:', r.status);
 
+  // Rule 113 (2026-09-25) — a bill must echo back the per-line prices the fulfillment preview
+  // showed, so the server can refuse to bill at a price the owner never saw. Not optional:
+  // billOrder 400s without seenPrices. Nothing in this file changes a price between the preview
+  // and the bill, so the staleness guard never fires here.
+  const seenPrices = await seenPricesFor(ownerToken, orderId, created.locationId);
   r = await api(`/api/orders/${orderId}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices },
   });
   console.log('  billed:', r.status, 'preTax=', r.body.preTaxAmount, 'actualPayable=', r.body.actualPayable);
   const billedPreTax = Number(r.body.preTaxAmount);

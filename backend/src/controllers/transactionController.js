@@ -58,9 +58,17 @@ async function createTransaction(req, res) {
   // through POST /api/bundles, which already validated both sides existed at that time.
   // product.costPrice rides along so a STOCK_IN can snapshot it below — this is an internal
   // read for that purpose only, never forwarded to the response (see TRANSACTION_RESPONSE_SELECT).
+  //
+  // No locationPrices read here, deliberately. Between 2026-09-23 and 2026-09-25 rule 111 resolved
+  // cost against this receipt's own location; the owner clarified on 2026-09-25 that cost is
+  // global, so there is nothing location-dependent left on the cost side and LocationPrice records
+  // selling price only.
   const bundle = await prisma.bundle.findUnique({
     where: { id: bundleId },
-    select: { id: true, product: { select: { costPrice: true } } },
+    select: {
+      id: true,
+      product: { select: { costPrice: true } },
+    },
   });
   if (!bundle) {
     return sendError(res, 404, 'BUNDLE_NOT_FOUND', `No bundle with id ${bundleId}`);
@@ -81,11 +89,18 @@ async function createTransaction(req, res) {
       // values, not a value computed in JS from a possibly-stale earlier read.
       const updatedStock = await tx.stock.findUnique({ where: { id: stock.id } });
 
-      // Populated only for STOCK_IN, and only from the Product's costPrice AT THIS EXACT
+      // Populated only for STOCK_IN, and only from the cost price in effect AT THIS EXACT
       // MOMENT — a later price change must never retroactively alter what this specific
       // receipt owed the factory (verified directly in the payable calculation's own test).
       // Null costPrice (still pending) snapshots as null, not 0 — genuinely "unknown at the
       // time," which the payable sum treats as contributing nothing, correctly.
+      //
+      // Reads product.costPrice directly: cost is GLOBAL (rule 111 as revised 2026-09-25 — one
+      // costPrice per article, regardless of which location the goods land at). This briefly went
+      // through a location-aware resolver against the receipt's own location between 2026-09-23
+      // and 2026-09-25 (that resolver no longer exists);
+      // the resolved and base values were identical for every article that ever existed in a real
+      // database, since nothing was opted in before the revision landed.
       const costPriceSnapshot = type === 'STOCK_IN' ? bundle.product.costPrice : null;
 
       const transaction = await tx.transaction.create({

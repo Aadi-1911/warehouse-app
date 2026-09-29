@@ -95,6 +95,16 @@ async function db() {
   return prisma;
 }
 
+// Rule 113 (2026-09-25) — builds the seenPrices echo every bill now requires, read from the same
+// fulfillment preview the owner's billing screen uses. billOrder rejects a bill without it.
+async function seenPricesFor(token, orderId, locationId) {
+  const r = await api(`/api/orders/${orderId}/fulfillment-preview?locationId=${locationId}`, { token });
+  if (!Array.isArray(r.body?.lines)) {
+    throw new Error(`fulfillment-preview failed for order ${orderId}: ${JSON.stringify(r.body)}`);
+  }
+  return r.body.lines.map((l) => ({ lineItemId: l.lineItemId, unitPrice: Number(l.billedUnitPrice) }));
+}
+
 const created = {
   locationId: null,
   partyId: null,
@@ -252,10 +262,11 @@ async function main() {
 
   const { orderId: orderA, lineItems: lineItemsA } = await createAndPackOrder(ownerToken, pairsA);
 
+  const seenA = await seenPricesFor(ownerToken, orderA, created.locationId);
   const billA = await api(`/api/orders/${orderA}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices: seenA },
   });
   check('scenario A: bill returns 200', billA.status === 200, JSON.stringify(billA.body));
   check('scenario A: response status is BILLED', billA.body?.status === 'BILLED', JSON.stringify(billA.body?.status));
@@ -300,10 +311,11 @@ async function main() {
   ]);
   check('scenario B: order has 2 line items, both on the same bundle', lineItemsB.length === 2 && lineItemsB[0].bundleId === dupBundle && lineItemsB[1].bundleId === dupBundle);
 
+  const seenB = await seenPricesFor(ownerToken, orderB, created.locationId);
   const billB = await api(`/api/orders/${orderB}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices: seenB },
   });
   check('scenario B: bill returns 200', billB.status === 200, JSON.stringify(billB.body));
 
@@ -334,10 +346,11 @@ async function main() {
 
   const { orderId: orderC, lineItems: lineItemsC } = await createAndPackOrder(ownerToken, [[shortBundle, 5]]); // pack 5, only 2 in stock
 
+  const seenC = await seenPricesFor(ownerToken, orderC, created.locationId);
   const billC = await api(`/api/orders/${orderC}/bill`, {
     method: 'PATCH',
     token: ownerToken,
-    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false },
+    body: { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false, seenPrices: seenC },
   });
   check('scenario C: bill returns 409', billC.status === 409, JSON.stringify(billC.body));
   check('scenario C: error code is INSUFFICIENT_STOCK', billC.body?.error?.code === 'INSUFFICIENT_STOCK', JSON.stringify(billC.body));
@@ -401,12 +414,20 @@ async function main() {
   // If the loser's elapsed time isn't meaningfully close to the winner's, this scenario proves
   // nothing beyond what scenario C already covers, and that's reported plainly below rather than
   // silently treated as success.
-  const raceBillBody = { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false };
+  //
+  // seenPrices (rule 113) is fetched for EACH order separately and BEFORE the Promise.all below.
+  // Two separate bodies, where there used to be one shared `raceBillBody`: the echo is per-line,
+  // so two different orders cannot share one. Fetching both previews up front also keeps the race
+  // itself honest — the two bills still start as close together as the event loop allows, instead
+  // of one of them being delayed by a preview round-trip the other already made.
+  const seenD1 = await seenPricesFor(ownerToken, orderD1, created.locationId);
+  const seenD2 = await seenPricesFor(ownerToken, orderD2, created.locationId);
+  const raceBillBase = { locationId: created.locationId, locationConfirmed: true, discountApplicable: false, gstApplicable: false };
   const d1Start = Date.now();
   const d2Start = Date.now();
   const [respD1, respD2] = await Promise.all([
-    api(`/api/orders/${orderD1}/bill`, { method: 'PATCH', token: ownerToken, body: raceBillBody }).then((r) => ({ ...r, elapsedMs: Date.now() - d1Start })),
-    api(`/api/orders/${orderD2}/bill`, { method: 'PATCH', token: ownerToken, body: raceBillBody }).then((r) => ({ ...r, elapsedMs: Date.now() - d2Start })),
+    api(`/api/orders/${orderD1}/bill`, { method: 'PATCH', token: ownerToken, body: { ...raceBillBase, seenPrices: seenD1 } }).then((r) => ({ ...r, elapsedMs: Date.now() - d1Start })),
+    api(`/api/orders/${orderD2}/bill`, { method: 'PATCH', token: ownerToken, body: { ...raceBillBase, seenPrices: seenD2 } }).then((r) => ({ ...r, elapsedMs: Date.now() - d2Start })),
   ]);
   console.log(`  timing: D1=${respD1.elapsedMs}ms (status ${respD1.status})   D2=${respD2.elapsedMs}ms (status ${respD2.status})`);
 
