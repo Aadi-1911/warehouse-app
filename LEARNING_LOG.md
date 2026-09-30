@@ -1497,6 +1497,43 @@ It summed `qtySetsPacked × piecesPerSet × priceAtOrder` per line to give the B
 
 **Not verified in a browser, and not visible anywhere yet.** No screen renders `size="wide"` until T5/T6, so there's nothing to look at. The layout was checked by reading the CSS, not by rendering it. `npm --prefix frontend run build` passes.
 
+### T5 — `BillReviewPanel`: the Bill dialog's body in two columns, display only (docs/REVAMP_PLAN.md, branch `add-location-pricing-ui-f3`, 2026-09-30)
+
+**What it is.** A new component, `components/BillReviewPanel.jsx`, that lays out everything currently inside both Bill confirm dialogs (mobile `BillOrderDetail.jsx`, desktop `dashboard/Orders.jsx`) as two columns: LEFT is what leaves the building (the location picker with its per-article stock groups and the location tick), RIGHT is what they pay (Order total, price review, the 409 note, discount, GST, Rounding, Total to bill, Bill No.). From 900px they sit side by side; below 900px they stack, left first. Nothing uses it yet — T6a/T6b move the two screens onto it inside `ConfirmModal size="wide"`. No existing JSX file was edited; `git diff --stat cbc5ba7..HEAD` over backend, pages, utils, hooks, and the three components it touches is empty.
+
+**Display only: it computes nothing and imports no billing util or hook.** Every number (order total, discount/GST/rounding, total to bill) and every flag (preview ready, PIN required) is still worked out by the calling screen with `computeBillingAmounts` and `deriveBillPricing`, exactly as today, and passed in. Every input's value stays in the caller's state and every change goes back through a caller's handler. Its only imports are `formatMoney` (utils/money.js), `BILL_NO_MAX_LENGTH` (utils/billNo.js), and the two existing child components. Why so strict: the two screens share their maths through `utils/orderBilling.js` and `utils/billPriceOverrides.js` precisely so they can't disagree. A layout component that re-derived any of it would be a third place for the same numbers to drift.
+- *Why `BILL_NO_MAX_LENGTH` is imported rather than passed in:* it's a fixed input cap that must match the server's (utils/billNo.js says so), not billing logic. Making each caller pass it would just be two more places to forget it.
+- *The percent inputs send the raw string to the caller* (`onDiscountPercentChange(e.target.value)`), and the caller applies `clampPercent` exactly as today: `(v) => setDiscountPercent(clampPercent(v, 100))`. `clampPercent` lives in `orderBilling.js`, which the panel must not import, and clamping is input policy, not layout.
+
+**The props API.**
+- `pickerProps` and `priceReviewProps` — plain objects spread straight into `BillFulfillmentPicker` and `BillPriceReview`. Passing them through as objects, rather than re-listing all 15 of their props on the panel, means those two components' APIs can change later without this file changing too, and the panel can't accidentally alter one of their props on the way through. `BillPriceReview` renders only when `previewReady`, as today.
+- `hasLocation`, `previewReady`, `previewError`, `preTaxAmount`, `pinRequired` — the four Order total states (no location / failed / loading / ready) and the two "(estimate…)" labels.
+- `staleNote` — the 409 PRICES_CHANGED message.
+- `discountApplicable` / `onDiscountApplicableChange`, `discountPercent` / `onDiscountPercentChange`, and the same four for GST.
+- `amounts` — `computeBillingAmounts`' result object, unchanged. Desktop already keeps it whole as `billAmounts`. Mobile destructures it today, so T6a will keep the object instead.
+- `billNo` / `onBillNoChange` / `billNoDisabled` — Bill No. renders only when `onBillNoChange` is passed. Mobile passes it today; desktop will once T6b adds it (Owner decision Q7).
+
+**Not in the panel, on purpose: PinPrompt, the PIN hint, and the action buttons.** They go in `ConfirmModal`'s pinned `footer` in T6, so the action is always on screen and the PIN field replaces the Bill button in the same place. The hint "Enter your PIN to bill at the new prices." moves with them: in T6 it sits in the footer directly above PinPrompt, with "Change prices · Cancel" below it.
+
+**Placement choices.**
+- *BillPriceReview on the RIGHT, not the left.* The plan's layout sketch shows each article's new-price input on the left beside its stock row, but that is T7's merged list. Until T7, the price review is still its own component, and it answers "what do they pay", so it goes on the right with the other money. The plan's own T5 row says the picker and price review "stay as they are, just stacked in the new layout".
+- *The 409 note directly under the price review*, as today, because it's about those prices.
+- *Order total moves.* Today it's the first line of the dialog, above the picker. In the panel it's the first line of the RIGHT column, so on a phone (one column, left first) it now comes after the picker instead of before it. That's the plan's column order applied as specified — a real change in order on phones, worth knowing when T6a is reviewed.
+
+**Wording and classNames are copied, not rewritten.** Every string, prefix ("Order total: ", "−", "+", "Total to bill: ", " (estimate at your new prices)", " (estimate)"), money format (`'paise'` for Order total/discount/GST, default for Total to bill), className, and the Rounding line's exact expression (`{sign}₹{Math.abs(x).toFixed(2)}`, deliberately not `formatMoney`) match what both screens render today. The panel keeps `.bill-pricing-questions` on its outer element so the existing top divider and spacing apply unchanged. Moving a screen onto the panel should change layout only.
+
+**Where the two screens differ today, and what the panel does.**
+- *Bill No.:* mobile only. The panel shows it only when `onBillNoChange` is passed.
+- *The "busy" flag:* mobile calls it `submitting`, desktop `billing`. The panel doesn't care; each caller passes its own as `billNoDisabled` and inside `priceReviewProps.disabled`.
+- *`preTaxAmount` before the preview is ready:* mobile holds `null`, desktop `0`. The panel only displays it when `previewReady`, so both show the same thing.
+- Everything else inside the two dialogs is identical text; only the comments differ.
+
+**CSS.** New classes only: `.bill-review-panel`, `.bill-review-panel-left`, `.bill-review-panel-right`. Below 900px the columns are ordinary blocks, with a divider above the right one. From 900px a two-column grid with a divider between them. `grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)` rather than `1fr 1fr`: a plain `1fr` column won't shrink below its widest content (a long article name), which can squeeze the other column; `minmax(0, 1fr)` keeps them equal. Existing tokens only (`--divider`, `--space-3/4/6`); only the 900px breakpoint.
+
+**A build that passes doesn't prove a new, unused file is valid.** `npm --prefix frontend run build` still reported 709 modules, the same count as before this file existed. Vite only compiles files reachable from the app's entry point, and nothing imports `BillReviewPanel.jsx` yet, so the build never read it. A syntax error in it would still "pass". It was checked separately by bundling it on its own with the esbuild binary Vite already ships (`node_modules/.bin/esbuild … --bundle`, output to a scratch folder outside the project), which parsed the JSX and resolved every import with no errors or warnings. T6 is when the normal build starts covering it.
+
+**Not verified in a browser, and nothing renders it yet.** No screen uses the panel until T6a/T6b.
+
 ## Mistakes & Fixes
 
 Every entry here follows the same five-part structure, backend or frontend, no exceptions: **(1) Original approach** — what was tried first and why it seemed right at the time. **(2) What went wrong** — the actual symptom, and how it was noticed. **(3) Diagnosis** — how the real cause was tracked down, not just guessed at. **(4) The fix** — what was actually changed. **(5) Why this fix is correct** — the reasoning for why it addresses the real cause, not just a workaround that happened to make the symptom disappear.
