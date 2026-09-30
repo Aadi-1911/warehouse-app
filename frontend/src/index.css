@@ -932,6 +932,27 @@ body {
   flex-shrink: 0;
 }
 
+/* T2 (2026-09-30, docs/REVAMP_PLAN.md B2) — the disabled look .link-button never had (§1: "no
+   disabled styling for these links anywhere in the CSS"). 0.5 is the brief's own disabled value
+   (07_UI_DESIGN_BRIEF.md:148 "Disabled buttons: opacity 0.5."), not a value invented here. Every
+   enabled .link-button above is untouched — this only adds the :disabled state that was missing
+   entirely. */
+.link-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* T2 — a flex row that wraps, spaced by the existing --space-4 token (3331). For adjacent
+   link-button groups that today sit directly side by side with no gap between them — e.g. the
+   "Change detailsCancel" pair docs/REVAMP_PLAN.md §1 cites in dashboard/ArticlePricing.jsx. This
+   only wraps the existing buttons in a spacing container; it doesn't rename, reorder, restyle or
+   touch a single handler. */
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
 /* --- Error banner: background, border AND text all share the danger role --- */
 .error-banner {
   background: var(--danger-bg);
@@ -1566,6 +1587,19 @@ body {
 
 .pricing-location-table tr:last-child td {
   border-bottom: none;
+}
+
+/* T2 (2026-09-30, docs/REVAMP_PLAN.md B2/§1) — compound selector (beats .pricing-table th's /
+   .pricing-location-table th's own text-align:left outright, regardless of source order): a bare
+   .pricing-table-num class alone loses that specificity fight for header cells while still winning
+   it for data cells (which have no competing text-align rule), so headers rendered left while their
+   own column's values rendered right. Same specificity fight .dash-pricing-table
+   th.dash-pricing-num/td.dash-pricing-num already documents (index.css ~4660) — mobile's own values
+   are right-aligned (not desktop's centered choice), so headers are fixed to match THAT value, not
+   to copy desktop's. */
+.pricing-table th.pricing-table-num,
+.pricing-location-table th.pricing-table-num {
+  text-align: right;
 }
 
 /* --- Manage Users: account list rows --- */

@@ -830,12 +830,14 @@ export default function DashboardArticlePricing() {
                                       autoFocus
                                       onSubmit={handleConfirmEdit}
                                     />
-                                    <button type="button" className="link-button" onClick={() => setPriceDraft(null)}>
-                                      Change details
-                                    </button>
-                                    <button type="button" className="link-button" onClick={handleCancelEdit}>
-                                      Cancel
-                                    </button>
+                                    <div className="action-row">
+                                      <button type="button" className="link-button" onClick={() => setPriceDraft(null)}>
+                                        Change details
+                                      </button>
+                                      <button type="button" className="link-button" onClick={handleCancelEdit}>
+                                        Cancel
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               )}
@@ -964,7 +966,7 @@ export default function DashboardArticlePricing() {
                                                     <div className="dash-table-action-row">
                                                       {isEditingThisRow ? (
                                                         isStagedThisRow ? null : (
-                                                          <>
+                                                          <div className="action-row">
                                                             <button
                                                               type="button"
                                                               className="link-button"
@@ -986,7 +988,7 @@ export default function DashboardArticlePricing() {
                                                             >
                                                               Cancel
                                                             </button>
-                                                          </>
+                                                          </div>
                                                         )
                                                       ) : (
                                                         <button
@@ -1029,20 +1031,22 @@ export default function DashboardArticlePricing() {
                                                         autoFocus
                                                         onSubmit={handleConfirmLocationEdit}
                                                       />
-                                                      <button
-                                                        type="button"
-                                                        className="link-button"
-                                                        onClick={() => setLocationDraft(null)}
-                                                      >
-                                                        Change details
-                                                      </button>
-                                                      <button
-                                                        type="button"
-                                                        className="link-button"
-                                                        onClick={handleCancelLocationEdit}
-                                                      >
-                                                        Cancel
-                                                      </button>
+                                                      <div className="action-row">
+                                                        <button
+                                                          type="button"
+                                                          className="link-button"
+                                                          onClick={() => setLocationDraft(null)}
+                                                        >
+                                                          Change details
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          className="link-button"
+                                                          onClick={handleCancelLocationEdit}
+                                                        >
+                                                          Cancel
+                                                        </button>
+                                                      </div>
                                                     </td>
                                                   </tr>
                                                 )}
