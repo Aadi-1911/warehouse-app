@@ -24,6 +24,7 @@ export default function BillPriceReview({
   onOverrideChange,
   formatCurrency,
   costStatus,
+  costError,
   resetNote,
   disabled = false,
 }) {
@@ -88,12 +89,29 @@ export default function BillPriceReview({
             </p>
           )}
 
-          {article.changed && !article.error && (
-            <p className="bill-price-review-changed">
-              This bill: {formatCurrency(article.typedValue)} per piece
-              {article.hasBaselineRange ? ' (replaces both prices above)' : ''}
-            </p>
-          )}
+          {article.changed &&
+            !article.error &&
+            (() => {
+              // T3 (2026-09-30) — this used to say "both" even when the article's colours carried
+              // 3+ distinct baseline prices, not just 2. `article.lines` is the same per-line data
+              // baselineMin/baselineMax were already derived from (utils/billPriceOverrides.js) —
+              // deduped here, in the component, rather than adding a field to that shared
+              // derivation for one caller's wording. hasBaselineRange guarantees at least 2 when
+              // true, so there's no 1-distinct-value case to worry about on this branch.
+              const distinctBaselineCount = article.hasBaselineRange
+                ? new Set(article.lines.map((l) => Number(l.billedUnitPrice))).size
+                : 1;
+              return (
+                <p className="bill-price-review-changed">
+                  This bill: {formatCurrency(article.typedValue)} per piece
+                  {article.hasBaselineRange
+                    ? distinctBaselineCount === 2
+                      ? ' (replaces both prices above)'
+                      : ` (replaces all ${distinctBaselineCount} prices above)`
+                    : ''}
+                </p>
+              );
+            })()}
 
           {/* Warns, never blocks (rule 113). Computed from the OWNER's own cost figure — see
               hooks/useOwnerCostPrices.js on why no cost field comes from the order or preview APIs,
@@ -140,6 +158,17 @@ export default function BillPriceReview({
           exactly the ambiguity useOwnerCostPrices' explicit status exists to resolve. */}
       {costStatus === 'loading' && pricing.articles.length > 0 && (
         <p className="muted bill-price-review-cost-pending">Checking cost prices…</p>
+      )}
+
+      {/* T3 (2026-09-30) — useOwnerCostPrices has always returned `error` on a failed lookup, but
+          neither screen passed it through before this: a failure left costPriceByProductId null
+          and silently looked identical to "nothing is below cost" for every article. Advisory
+          only, same as the loading note above — a failed lookup never blocks billing (rule 113),
+          it just means no below-cost warning can fire this time. */}
+      {costError && pricing.articles.length > 0 && (
+        <p className="muted bill-price-review-cost-error">
+          Couldn't check cost prices — below-cost warnings are off for this bill.
+        </p>
       )}
     </div>
   );

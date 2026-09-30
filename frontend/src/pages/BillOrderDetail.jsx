@@ -134,7 +134,7 @@ export default function BillOrderDetail() {
   // (App.jsx's requireRole="OWNER" on /bill-orders/:id), so this is always an owner fetch — the flag
   // is belt-and-braces over GET /api/products' own role gate, which is what actually keeps cost away
   // from STAFF. A failure here never blocks billing; it just means no warning.
-  const { status: costStatus, costPriceByProductId } = useOwnerCostPrices(user.role === 'OWNER');
+  const { status: costStatus, costPriceByProductId, error: costError } = useOwnerCostPrices(user.role === 'OWNER');
 
   // THE one derivation — utils/billPriceOverrides.js, shared with dashboard/Orders.jsx so the two
   // billing screens cannot show the same order two different prices, two different "is a PIN
@@ -761,6 +761,7 @@ export default function BillOrderDetail() {
               onOverrideChange={handleOverrideChange}
               formatCurrency={formatMoney}
               costStatus={costStatus}
+              costError={costError}
               resetNote={priceResetNote}
               disabled={submitting || pinStaged}
             />
@@ -781,11 +782,11 @@ export default function BillOrderDetail() {
               merged into a bigger one. */}
           {pinStaged && (
             <div className="bill-pricing-pin">
-              <p className="muted hint-text">
-                {pricing.changedArticles.length} price
-                {pricing.changedArticles.length === 1 ? '' : 's'} changed — enter your PIN to bill at
-                the new prices.
-              </p>
+              {/* T3 (2026-09-30) — this used to repeat "N prices changed", which BillPriceReview's
+                  own summary heading above already states (plus the actual old→new list, which
+                  this line never had). Now says only the one thing that line uniquely adds: the
+                  instruction to enter the PIN. */}
+              <p className="muted hint-text">Enter your PIN to bill at the new prices.</p>
               <PinPrompt
                 submitLabel="Bill and lock order"
                 submittingLabel="Billing…"
@@ -868,7 +869,13 @@ export default function BillOrderDetail() {
             </p>
           )}
 
-          <p className="bill-pricing-final">Total to bill: {formatMoney(actualPayable)}</p>
+          <p className="bill-pricing-final">
+            Total to bill: {formatMoney(actualPayable)}
+            {/* T3 (2026-09-30) — same condition as Order total's "(estimate at your new prices)"
+                above: only once a typed price is actually in play. Without a changed price this
+                figure already matches what the server will bill, so it stays unlabelled. */}
+            {pricing.pinRequired ? ' (estimate)' : ''}
+          </p>
 
           {/* Below the total on purpose: everything above it changes the amount, this doesn't.
               Placing it among the discount/GST controls would imply it participates in the

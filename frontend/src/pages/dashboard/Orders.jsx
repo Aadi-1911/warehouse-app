@@ -221,7 +221,7 @@ export default function Orders() {
   // this is always an owner fetch — the flag is belt-and-braces over GET /api/products' own role
   // gate (productController.js's productSelect(role)), which is what actually keeps cost from STAFF.
   const { user } = useAuth();
-  const { status: costStatus, costPriceByProductId } = useOwnerCostPrices(user.role === 'OWNER');
+  const { status: costStatus, costPriceByProductId, error: costError } = useOwnerCostPrices(user.role === 'OWNER');
 
   // THE one derivation, shared with BillOrderDetail.jsx (utils/billPriceOverrides.js) so the two
   // billing screens cannot disagree about the same order. The line items come from this page's own
@@ -877,6 +877,7 @@ export default function Orders() {
               onOverrideChange={handleOverrideChange}
               formatCurrency={formatMoney}
               costStatus={costStatus}
+              costError={costError}
               resetNote={priceResetNote}
               disabled={billing || pinStaged}
             />
@@ -895,11 +896,11 @@ export default function Orders() {
               History and Parties screens already use. */}
           {pinStaged && (
             <div className="bill-pricing-pin">
-              <p className="muted hint-text">
-                {pricing.changedArticles.length} price
-                {pricing.changedArticles.length === 1 ? '' : 's'} changed — enter your PIN to bill at
-                the new prices.
-              </p>
+              {/* T3 (2026-09-30) — this used to repeat "N prices changed", which BillPriceReview's
+                  own summary heading above already states (plus the actual old→new list, which
+                  this line never had). Now says only the one thing that line uniquely adds: the
+                  instruction to enter the PIN. */}
+              <p className="muted hint-text">Enter your PIN to bill at the new prices.</p>
               <PinPrompt
                 submitLabel="Bill and lock order"
                 submittingLabel="Billing…"
@@ -981,7 +982,13 @@ export default function Orders() {
             </p>
           )}
 
-          <p className="bill-pricing-final">Total to bill: {formatMoney(billAmounts.actualPayable)}</p>
+          <p className="bill-pricing-final">
+            Total to bill: {formatMoney(billAmounts.actualPayable)}
+            {/* T3 (2026-09-30) — same condition as Order total's "(estimate at your new prices)"
+                above: only once a typed price is actually in play. Without a changed price this
+                figure already matches what the server will bill, so it stays unlabelled. */}
+            {pricing.pinRequired ? ' (estimate)' : ''}
+          </p>
         </div>
       </ConfirmModal>
     </>
