@@ -34,7 +34,16 @@ Full specs are the numbered `.md` files in this same folder. Read `06_ROADMAP.md
 - Short, direct, imperative summary line (e.g. "Add Prisma schema for Phase 1 entities", not "This commit implements..." or a bullet list of every file touched).
 - Only add a body beyond the summary line if there's a genuinely non-obvious reason behind the change worth recording — not a recap of what the diff already shows.
 - Commit after each reviewed task, not just once at the start of the project.
-- Push after every commit (`git push`) — don't leave commits sitting ahead of `origin` between sessions.
+- Claude Code never pushes; the owner pushes from his own terminal. (Pushing main deploys Production.)
+
+## Working rules
+- Paste tool output verbatim in the FINAL message; never reconstruct or summarise it; never write "pasted above".
+- One command per Bash call; no && or ; chaining.
+- Before running backend tests: check port 3002 is free (lsof -i :3002), start a fresh `npm run start:test`, confirm it's Running. A server started before a backend change runs old code.
+- The seed script (backend/scripts/seed-handson.mjs) calls the API: the test server must be running first.
+- backend/.env holds TEST_DATABASE_URL (TEST, ep-round-wind); test files load it via dotenv.
+- In the VS Code terminal, never redirect a `{ ...; } > file` group (hidden ]633 markers get written into the file); use `bash -c "..." > file`.
+- Neon URLs contain `&`: read them with `read -rs VAR`, never paste them inline unquoted.
 
 ## Running the backend against the TEST database
 - `backend/src/server.js` checks `NODE_ENV`, not any flag: when it's `test`, the server requires `TEST_DATABASE_URL` to be set and overwrites `process.env.DATABASE_URL` with it before any controller is `require`d — every controller builds its own `PrismaClient` at require-time reading `DATABASE_URL`, so this is what actually redirects all of them. If `NODE_ENV=test` is set but `TEST_DATABASE_URL` is not, the server throws immediately rather than silently falling back to `DATABASE_URL` (the real dev database).
