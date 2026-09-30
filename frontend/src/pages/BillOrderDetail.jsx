@@ -15,6 +15,7 @@ import { useFulfillmentPreview } from '../hooks/useFulfillmentPreview';
 import { useOwnerCostPrices } from '../hooks/useOwnerCostPrices';
 import { deriveBillPricing, PIN_ERROR_CODES } from '../utils/billPriceOverrides';
 import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
+import { formatMoney } from '../utils/money';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
 // sticky action bar, confirm before the mutation) but is entirely READ-ONLY above the button:
@@ -43,8 +44,15 @@ function pluralSets(n) {
   return `${n} set${n === 1 ? '' : 's'}`;
 }
 
-function formatCurrency(amount) {
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
+// T1 (2026-09-30): was a local formatCurrency() here, byte-identical to the one
+// dashboard/Orders.jsx had of its own — now utils/money.js's shared formatMoney(), imported and
+// used directly wherever this screen used it for a PRICE (the article-header totals, the price
+// review inputs via BillPriceReview's own `formatCurrency` prop, Total to bill). This screen also
+// needs the OTHER mode — formatPaise below — for the live discount/GST/Order-total lines, which
+// must always show exactly 2 decimals; see money.js's own header comment for why the two modes
+// exist and which figures belong in which.
+function formatPaise(amount) {
+  return formatMoney(amount, { mode: 'paise' });
 }
 
 // utils/piecesPerSet.js's piecesPerSetFor expects a product-shaped { isKids, sizes } object;
@@ -327,7 +335,7 @@ export default function BillOrderDetail() {
       // confirm again" half — the PIN authorises a specific delta, and that delta has changed.
       if (err.code === 'PRICES_CHANGED' && Array.isArray(err.extra?.changedLines)) {
         setStaleNote(
-          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review and bill again.`
+          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatMoney).join('; ')}. Review and bill again.`
         );
         setPinStaged(false);
         refetchPreview();
@@ -540,7 +548,7 @@ export default function BillOrderDetail() {
                     <span className="muted"> — {group.productName}</span>
                     {/* One total per article, not per colour line — the sum across this
                         article's non-cancelled lines, at the header level only. */}
-                    <span className="muted"> · {formatCurrency(group.total)}</span>
+                    <span className="muted"> · {formatMoney(group.total)}</span>
                   </div>
                   {/* Surfaced on the COLLAPSED header specifically, so a blocked line doesn't
                       require expanding every article one by one to find. */}
@@ -720,7 +728,7 @@ export default function BillOrderDetail() {
             <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
           ) : (
             <p className="muted bill-pricing-pretax">
-              Order total: {formatCurrency(preTaxAmount)}
+              Order total: {formatPaise(preTaxAmount)}
               {/* Named an estimate only once a typed price is actually in play. Unchanged prices
                   make this the server's own preview figure, which is not an estimate at all. */}
               {pricing.pinRequired ? ' (estimate at your new prices)' : ''}
@@ -751,7 +759,7 @@ export default function BillOrderDetail() {
             <BillPriceReview
               pricing={pricing}
               onOverrideChange={handleOverrideChange}
-              formatCurrency={formatCurrency}
+              formatCurrency={formatMoney}
               costStatus={costStatus}
               resetNote={priceResetNote}
               disabled={submitting || pinStaged}
@@ -816,7 +824,7 @@ export default function BillOrderDetail() {
           )}
           {hasDiscount && (
             <p className="bill-pricing-line">
-              −{formatCurrency(discountAmount)} discount → {formatCurrency(finalAmount)}
+              −{formatPaise(discountAmount)} discount → {formatPaise(finalAmount)}
             </p>
           )}
 
@@ -839,20 +847,28 @@ export default function BillOrderDetail() {
               />
             </div>
           )}
-          {hasGst && <p className="bill-pricing-line">+{formatCurrency(gstAmount)} GST</p>}
+          {hasGst && <p className="bill-pricing-line">+{formatPaise(gstAmount)} GST</p>}
 
           {/* Rule 109's rounding, shown only when it actually did something — the same "omit at exactly 0"
               and explicit-sign convention as the post-billing footer in dashboard/Orders.jsx. This
               is what explains why "Total to bill" is a whole rupee while the lines above it carry
-              paise. toFixed(2) rather than formatCurrency, whose toLocaleString('en-IN') defaults to
-              3 fraction digits and would render a 0.1653 adjustment as "₹0.165". */}
+              paise.
+              T1 (2026-09-30): kept on its own hand-built toFixed(2) rather than switched onto
+              formatMoney's new 'paise' mode (utils/money.js), which fixes the exact 3-decimal bug
+              this comment used to cite against the old local formatCurrency() — that reason is
+              gone now. Left alone anyway: toFixed(2) and toLocaleString's fraction-digit rounding
+              aren't guaranteed to round a boundary value (e.g. exactly half a paisa) the same way
+              in every JS engine, and this line is the one place in the app a difference of ±₹0.01
+              would be visible against the real rounding the server applies. Per T1's own
+              instruction to leave this line untouched when unsure whether the output would stay
+              byte-identical — it stays untouched. */}
           {roundingAdjustment !== 0 && (
             <p className="bill-pricing-line">
               Rounding {roundingAdjustment > 0 ? '+' : '−'}₹{Math.abs(roundingAdjustment).toFixed(2)}
             </p>
           )}
 
-          <p className="bill-pricing-final">Total to bill: {formatCurrency(actualPayable)}</p>
+          <p className="bill-pricing-final">Total to bill: {formatMoney(actualPayable)}</p>
 
           {/* Below the total on purpose: everything above it changes the amount, this doesn't.
               Placing it among the discount/GST controls would imply it participates in the

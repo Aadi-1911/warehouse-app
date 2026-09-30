@@ -12,6 +12,7 @@ import { useOwnerCostPrices } from '../../hooks/useOwnerCostPrices';
 import { useAuth } from '../../hooks/useAuth';
 import { deriveBillPricing, PIN_ERROR_CODES } from '../../utils/billPriceOverrides';
 import { ORDER_STATUS_LABEL, ORDER_STATUS_BADGE, isOpenOrder } from '../../utils/orderStatus';
+import { formatMoney } from '../../utils/money';
 
 // Owner Dashboard — Orders (07_UI_DESIGN_BRIEF.md §8's "Orders page" section).
 //
@@ -86,8 +87,15 @@ function bucketDateOf(order) {
   return order.billedAt; // BILLED — the only other status section 2 ever contains
 }
 
-function formatCurrency(amount) {
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
+// T1 (2026-09-30): was a local formatCurrency() here, byte-identical to the one
+// BillOrderDetail.jsx had of its own — now utils/money.js's shared formatMoney(), imported and
+// used directly wherever this screen used it for a PRICE (list-row/line/article-group totals, the
+// price review inputs via BillPriceReview's own `formatCurrency` prop, Total to bill/Amount
+// billed). This screen also needs the OTHER mode — formatPaise below — for the live discount/GST/
+// Order-total lines AND the post-billing Pre-tax total/Discount/GST breakdown, both of which must
+// always show exactly 2 decimals; see money.js's own header comment for why the two modes exist.
+function formatPaise(amount) {
+  return formatMoney(amount, { mode: 'paise' });
 }
 
 function formatDate(iso) {
@@ -397,7 +405,7 @@ export default function Orders() {
       // the "confirm again" half — the PIN authorises a specific delta, and that delta has changed.
       if (err.code === 'PRICES_CHANGED' && Array.isArray(err.extra?.changedLines)) {
         setStaleNote(
-          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatCurrency).join('; ')}. Review and mark billed again.`
+          `Prices changed while you were reviewing: ${describeChangedLines(err.extra.changedLines, formatMoney).join('; ')}. Review and mark billed again.`
         );
         setPinStaged(false);
         refetchPreview();
@@ -462,7 +470,7 @@ export default function Orders() {
                 )}
               </div>
               <div className="accordion-subtitle">
-                {order.lineItemCount} line{order.lineItemCount === 1 ? '' : 's'} · {formatCurrency(order.totalValue)} ·{' '}
+                {order.lineItemCount} line{order.lineItemCount === 1 ? '' : 's'} · {formatMoney(order.totalValue)} ·{' '}
                 {formatDate(dateIso)}
               </div>
             </div>
@@ -541,7 +549,7 @@ export default function Orders() {
                         <span className="muted dash-order-line-meta">
                           Ordered: {pluralSets(li.qtySetsRequested)} · Packed:{' '}
                           {detail.order.status === 'PLACED' ? 'Not yet packed' : pluralSets(li.qtySetsPacked)} ·{' '}
-                          {formatCurrency(lineValue(li, detail.order.status))}
+                          {formatMoney(lineValue(li, detail.order.status))}
                         </span>
                       )}
                     </div>
@@ -573,7 +581,7 @@ export default function Orders() {
                         <div className="accordion-header-text">
                           <div className="accordion-title-sm">
                             {group.articleNo}
-                            <span className="muted"> — {group.productName} · {formatCurrency(group.total)}</span>
+                            <span className="muted"> — {group.productName} · {formatMoney(group.total)}</span>
                           </div>
                         </div>
                         <ChevronIcon className={articleOpen ? 'chevron chevron-open' : 'chevron'} />
@@ -604,13 +612,13 @@ export default function Orders() {
               <div className="dash-order-billing">
                 <div className="bill-pricing-line">
                   <span>Pre-tax total</span>
-                  <span>{formatCurrency(Number(detail.order.preTaxAmount))}</span>
+                  <span>{formatPaise(Number(detail.order.preTaxAmount))}</span>
                 </div>
                 {detail.order.discountApplicable && (
                   <div className="bill-pricing-line">
                     <span>Discount ({Number(detail.order.discountPercent)}%)</span>
                     <span>
-                      −{formatCurrency(Number(detail.order.preTaxAmount) - Number(detail.order.finalAmount))}
+                      −{formatPaise(Number(detail.order.preTaxAmount) - Number(detail.order.finalAmount))}
                     </span>
                   </div>
                 )}
@@ -626,7 +634,7 @@ export default function Orders() {
                         `?? 0` covers orders billed before rule 109, whose adjustment is null and
                         whose actualPayable was never rounded — for those this is unchanged. */}
                     <span>
-                      +{formatCurrency(
+                      +{formatPaise(
                         Number(detail.order.actualPayable) -
                           Number(detail.order.roundingAdjustment ?? 0) -
                           Number(detail.order.finalAmount)
@@ -642,13 +650,16 @@ export default function Orders() {
                 {Number(detail.order.roundingAdjustment ?? 0) !== 0 && (
                   <div className="bill-pricing-line">
                     <span>Rounding</span>
-                    {/* toFixed(2) rather than the shared formatCurrency, which is the only place on
-                        this screen that deviates from it. formatCurrency's toLocaleString('en-IN')
-                        defaults to 3 fraction digits, so a real adjustment of 0.1653 would render
-                        "₹0.165" — three decimals on a figure whose whole meaning is paise. This is
-                        always a sub-rupee value, so it gets the 2-decimal money precision a person
-                        actually reads it in; no thousands separator is needed for a value that
-                        cannot exceed ₹0.50. */}
+                    {/* T1 (2026-09-30): kept on its own hand-built toFixed(2) rather than switched
+                        onto formatMoney's new 'paise' mode (utils/money.js), which fixes the exact
+                        3-decimal bug this comment used to cite against the old local
+                        formatCurrency() — that reason is gone now. Left alone anyway: toFixed(2)
+                        and toLocaleString's fraction-digit rounding aren't guaranteed to round a
+                        boundary value (e.g. exactly half a paisa) the same way in every JS engine,
+                        and this line is the one place on this screen a difference of ±₹0.01 would
+                        be visible against the real rounding the server applied. Per T1's own
+                        instruction to leave this line untouched when unsure whether the output
+                        would stay byte-identical — it stays untouched. */}
                     <span>
                       {Number(detail.order.roundingAdjustment) > 0 ? '+' : '−'}₹
                       {Math.abs(Number(detail.order.roundingAdjustment)).toFixed(2)}
@@ -657,7 +668,7 @@ export default function Orders() {
                 )}
                 <div className="bill-pricing-final">
                   <span>Amount billed</span>
-                  <span>{formatCurrency(Number(detail.order.actualPayable))}</span>
+                  <span>{formatMoney(Number(detail.order.actualPayable))}</span>
                 </div>
               </div>
             )}
@@ -834,7 +845,7 @@ export default function Orders() {
             <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
           ) : (
             <p className="muted bill-pricing-pretax">
-              Order total: {formatCurrency(billPreTaxAmount)}
+              Order total: {formatPaise(billPreTaxAmount)}
               {/* Called an estimate only once a typed price is in play — with nothing typed this is
                   the server's own preview figure, which is not an estimate. */}
               {pricing.pinRequired ? ' (estimate at your new prices)' : ''}
@@ -864,7 +875,7 @@ export default function Orders() {
             <BillPriceReview
               pricing={pricing}
               onOverrideChange={handleOverrideChange}
-              formatCurrency={formatCurrency}
+              formatCurrency={formatMoney}
               costStatus={costStatus}
               resetNote={priceResetNote}
               disabled={billing || pinStaged}
@@ -926,7 +937,7 @@ export default function Orders() {
           )}
           {billAmounts.hasDiscount && (
             <p className="bill-pricing-line">
-              −{formatCurrency(billAmounts.discountAmount)} discount → {formatCurrency(billAmounts.finalAmount)}
+              −{formatPaise(billAmounts.discountAmount)} discount → {formatPaise(billAmounts.finalAmount)}
             </p>
           )}
 
@@ -949,20 +960,28 @@ export default function Orders() {
               />
             </div>
           )}
-          {billAmounts.hasGst && <p className="bill-pricing-line">+{formatCurrency(billAmounts.gstAmount)} GST</p>}
+          {billAmounts.hasGst && <p className="bill-pricing-line">+{formatPaise(billAmounts.gstAmount)} GST</p>}
 
           {/* Rule 109's rounding, shown only when it actually did something — the same "omit at exactly 0"
               and explicit-sign convention as the post-billing footer in dashboard/Orders.jsx. This
               is what explains why "Total to bill" is a whole rupee while the lines above it carry
-              paise. toFixed(2) rather than formatCurrency, whose toLocaleString('en-IN') defaults to
-              3 fraction digits and would render a 0.1653 adjustment as "₹0.165". */}
+              paise.
+              T1 (2026-09-30): kept on its own hand-built toFixed(2) rather than switched onto
+              formatMoney's new 'paise' mode (utils/money.js), which fixes the exact 3-decimal bug
+              this comment used to cite against the old local formatCurrency() — that reason is
+              gone now. Left alone anyway: toFixed(2) and toLocaleString's fraction-digit rounding
+              aren't guaranteed to round a boundary value (e.g. exactly half a paisa) the same way
+              in every JS engine, and this line is the one place on this screen a difference of
+              ±₹0.01 would be visible against the real rounding the server applied. Per T1's own
+              instruction to leave this line untouched when unsure whether the output would stay
+              byte-identical — it stays untouched. */}
           {billAmounts.roundingAdjustment !== 0 && (
             <p className="bill-pricing-line">
               Rounding {billAmounts.roundingAdjustment > 0 ? '+' : '−'}₹{Math.abs(billAmounts.roundingAdjustment).toFixed(2)}
             </p>
           )}
 
-          <p className="bill-pricing-final">Total to bill: {formatCurrency(billAmounts.actualPayable)}</p>
+          <p className="bill-pricing-final">Total to bill: {formatMoney(billAmounts.actualPayable)}</p>
         </div>
       </ConfirmModal>
     </>

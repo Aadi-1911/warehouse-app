@@ -9,10 +9,13 @@ import { listLocations } from '../api/locations';
 import { listProducts, updateProduct, deactivateProduct, reactivateProduct } from '../api/products';
 import { listStock } from '../api/stock';
 import { computeMargin } from '../utils/margin';
-
-function formatCurrency(amount) {
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
-}
+// T1 (2026-09-30): was a local formatCurrency(), byte-identical to the one
+// dashboard/ArticlePricing.jsx had of its own — now utils/money.js's shared formatMoney(), used
+// directly at every call site below (cost/selling price, and as computeMargin's own formatter
+// argument). Every figure on this screen is a price (cost/selling/margin), never one of
+// BillOrderDetail's discount/GST/Order-total lines, so this always uses formatMoney's default
+// 'price' mode — see money.js's own header comment for what that mode means.
+import { formatMoney } from '../utils/money';
 
 // isPending is the same "no price set yet" state 05_BUSINESS_RULES.md rule 8/71 already
 // describes (nullable costPrice/sellingPrice) — not a new concept, just the first screen that
@@ -548,8 +551,8 @@ export default function ArticlePricing() {
                           </>
                         ) : (
                           <>
-                            <td className="pricing-table-num">{formatCurrency(product.costPrice)}</td>
-                            <td className="pricing-table-num">{formatCurrency(product.sellingPrice)}</td>
+                            <td className="pricing-table-num">{formatMoney(product.costPrice)}</td>
+                            <td className="pricing-table-num">{formatMoney(product.sellingPrice)}</td>
                             {/* computeMargin (utils/margin.js) — the ONE shared margin
                                 calculation, same one dashboard/ArticlePricing.jsx uses, so the
                                 two screens can never disagree about what "margin" means. Now
@@ -557,7 +560,7 @@ export default function ArticlePricing() {
                                 cell showed only the rupee figure; it Number()s the raw Prisma
                                 Decimal strings ("250.5") itself before subtracting. */}
                             {(() => {
-                              const margin = computeMargin(product.costPrice, product.sellingPrice, formatCurrency);
+                              const margin = computeMargin(product.costPrice, product.sellingPrice, formatMoney);
                               return (
                                 <td className="pricing-table-num">
                                   {margin.rupees} · {margin.percent}
@@ -648,14 +651,14 @@ export default function ArticlePricing() {
                                     const effectivePrice = override?.sellingPrice ?? product.sellingPrice;
                                     const margin =
                                       user.role === 'OWNER'
-                                        ? computeMargin(product.costPrice, effectivePrice, formatCurrency)
+                                        ? computeMargin(product.costPrice, effectivePrice, formatMoney)
                                         : null;
                                     return (
                                       <tr key={location.id}>
                                         <td>{location.name}</td>
                                         <td className="pricing-table-num">
                                           {effectivePrice != null ? (
-                                            formatCurrency(effectivePrice)
+                                            formatMoney(effectivePrice)
                                           ) : (
                                             <span className="badge badge-warning">Pending</span>
                                           )}
@@ -664,7 +667,7 @@ export default function ArticlePricing() {
                                           <>
                                             <td className="pricing-table-num">
                                               {product.costPrice != null ? (
-                                                formatCurrency(product.costPrice)
+                                                formatMoney(product.costPrice)
                                               ) : (
                                                 <span className="badge badge-warning">Pending</span>
                                               )}

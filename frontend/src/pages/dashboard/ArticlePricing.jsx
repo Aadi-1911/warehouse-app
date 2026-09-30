@@ -7,6 +7,13 @@ import { listLocations } from '../../api/locations';
 import { listProducts, updateProduct, setLocationPricingEnabled, setLocationPrice } from '../../api/products';
 import PinPrompt from '../../components/PinPrompt';
 import { computeMargin } from '../../utils/margin';
+// T1 (2026-09-30): was a local formatCurrency(), byte-identical to the one pages/ArticlePricing.jsx
+// had of its own — now utils/money.js's shared formatMoney(), used directly at every call site
+// below (cost/selling price, and as computeMargin's own formatter argument). Every figure on this
+// screen is a price (cost/selling/margin), never one of BillOrderDetail's discount/GST/Order-total
+// lines, so this always uses formatMoney's default 'price' mode — see money.js's own header
+// comment for what that mode means.
+import { formatMoney } from '../../utils/money';
 
 // Owner Dashboard — Article Pricing (added 2026-08-21, beyond 07_UI_DESIGN_BRIEF.md §8's
 // original 5-item nav — same "append sensibly, don't renumber the existing list" precedent
@@ -83,10 +90,6 @@ import { computeMargin } from '../../utils/margin';
 // mid-edit at once" for price edits, so rename gets its own equally-exclusive per-row state
 // (renamingId) rather than a second, independent form that could be open at the same time as a
 // price edit on a different row.
-
-function formatCurrency(amount) {
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
-}
 
 function isPending(product) {
   return product.costPrice == null || product.sellingPrice == null;
@@ -649,15 +652,15 @@ export default function DashboardArticlePricing() {
                                   </>
                                 ) : isStaged ? (
                                   <>
-                                    <td className="dash-pricing-num">{formatCurrency(priceDraft.costPrice)}</td>
-                                    <td className="dash-pricing-num">{formatCurrency(priceDraft.sellingPrice)}</td>
+                                    <td className="dash-pricing-num">{formatMoney(priceDraft.costPrice)}</td>
+                                    <td className="dash-pricing-num">{formatMoney(priceDraft.sellingPrice)}</td>
                                     {/* computeMargin (utils/margin.js) — the ONE shared margin
                                         calculation, used here instead of the plain subtraction
                                         this cell used before rule 111's F3 task, so the base row
                                         and every per-location row below can never disagree about
                                         what "margin" means. */}
                                     {(() => {
-                                      const margin = computeMargin(priceDraft.costPrice, priceDraft.sellingPrice, formatCurrency);
+                                      const margin = computeMargin(priceDraft.costPrice, priceDraft.sellingPrice, formatMoney);
                                       return (
                                         <td className="dash-pricing-num">
                                           {margin.rupees} · {margin.percent}
@@ -679,15 +682,15 @@ export default function DashboardArticlePricing() {
                                   </>
                                 ) : (
                                   <>
-                                    <td className="dash-pricing-num">{formatCurrency(product.costPrice)}</td>
-                                    <td className="dash-pricing-num">{formatCurrency(product.sellingPrice)}</td>
+                                    <td className="dash-pricing-num">{formatMoney(product.costPrice)}</td>
+                                    <td className="dash-pricing-num">{formatMoney(product.sellingPrice)}</td>
                                     {/* computeMargin (utils/margin.js) itself Number()s both raw
                                         Prisma Decimal strings ("250.5") before subtracting — see
                                         that file's own comment. Now shows margin % alongside ₹
                                         (rule 111's F3 task), where before this cell showed only
                                         the rupee figure. */}
                                     {(() => {
-                                      const margin = computeMargin(product.costPrice, product.sellingPrice, formatCurrency);
+                                      const margin = computeMargin(product.costPrice, product.sellingPrice, formatMoney);
                                       return (
                                         <td className="dash-pricing-num">
                                           {margin.rupees} · {margin.percent}
@@ -817,8 +820,8 @@ export default function DashboardArticlePricing() {
                                 <tr className="dash-pricing-pin-row">
                                   <td colSpan={TABLE_COLUMN_COUNT}>
                                     <p className="muted">
-                                      Setting cost {formatCurrency(priceDraft.costPrice)} and selling{' '}
-                                      {formatCurrency(priceDraft.sellingPrice)} for {product.articleNo} — {product.name}.
+                                      Setting cost {formatMoney(priceDraft.costPrice)} and selling{' '}
+                                      {formatMoney(priceDraft.sellingPrice)} for {product.articleNo} — {product.name}.
                                       Enter your PIN to confirm.
                                     </p>
                                     <PinPrompt
@@ -896,7 +899,7 @@ export default function DashboardArticlePricing() {
                                                       "cost is global and never varies by Location." */}
                                                   <td className="dash-pricing-num">
                                                     {product.costPrice != null ? (
-                                                      formatCurrency(product.costPrice)
+                                                      formatMoney(product.costPrice)
                                                     ) : (
                                                       <span className="badge badge-warning">Pending</span>
                                                     )}
@@ -919,7 +922,7 @@ export default function DashboardArticlePricing() {
                                                     <td className="dash-pricing-num">
                                                       {locationDraft.sellingPrice === null
                                                         ? 'Base price'
-                                                        : formatCurrency(locationDraft.sellingPrice)}
+                                                        : formatMoney(locationDraft.sellingPrice)}
                                                     </td>
                                                   ) : (
                                                     <td className="dash-pricing-num">
@@ -928,7 +931,7 @@ export default function DashboardArticlePricing() {
                                                           (rule 111's F3 task) — same number, same
                                                           styling, either way. */}
                                                       {effectivePrice != null ? (
-                                                        formatCurrency(effectivePrice)
+                                                        formatMoney(effectivePrice)
                                                       ) : (
                                                         <span className="badge badge-warning">Pending</span>
                                                       )}
@@ -949,7 +952,7 @@ export default function DashboardArticlePricing() {
                                                     const marginSelling = isStagedThisRow
                                                       ? locationDraft.sellingPrice ?? product.sellingPrice
                                                       : effectivePrice;
-                                                    const margin = computeMargin(product.costPrice, marginSelling, formatCurrency);
+                                                    const margin = computeMargin(product.costPrice, marginSelling, formatMoney);
                                                     return (
                                                       <>
                                                         <td className="dash-pricing-num">{margin.rupees}</td>
@@ -1015,7 +1018,7 @@ export default function DashboardArticlePricing() {
                                                       <p className="muted">
                                                         {locationDraft.sellingPrice === null
                                                           ? `Clearing ${location.name}'s override for ${product.articleNo} — it will bill at the base price again.`
-                                                          : `Setting ${location.name}'s price to ${formatCurrency(
+                                                          : `Setting ${location.name}'s price to ${formatMoney(
                                                               locationDraft.sellingPrice
                                                             )} for ${product.articleNo} — ${product.name}.`}{' '}
                                                         Enter your PIN to confirm.

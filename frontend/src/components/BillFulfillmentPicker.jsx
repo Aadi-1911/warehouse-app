@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { listLocations } from '../api/locations';
+import { formatMoney } from '../utils/money';
 
 // The "which location is this order actually shipping out of?" block, shared by BOTH real billing
 // entry points — BillOrderDetail.jsx (mobile) and dashboard/Orders.jsx's "Mark billed" modal —
@@ -33,14 +34,6 @@ import { listLocations } from '../api/locations';
 // location appearing later renders correctly with no code change (it just won't be abbreviated).
 const SHORT_LABELS = { Gurgaon: 'GGN' };
 const DEFAULT_LOCATION_NAME = 'Gurgaon';
-
-// Same formatting convention BillOrderDetail.jsx and dashboard/Orders.jsx each already have
-// locally — kept local here too rather than imported, since this is the one place in the app that
-// needed it before either screen did (07_UI_DESIGN_BRIEF has no shared currency-formatting module
-// to reach for instead).
-function formatCurrency(amount) {
-  return `₹${Number(amount).toLocaleString('en-IN')}`;
-}
 
 // `orderId` is no longer a prop here — it was only ever used to key the preview fetch this
 // component used to make itself, which now lives in the parent's useFulfillmentPreview call (see
@@ -244,7 +237,14 @@ export default function BillFulfillmentPicker({
                                     cost price (per piece)" field label — reused here rather than
                                     inventing a second phrasing ("/set" was wrong: it implied this
                                     price was already multiplied by piecesPerSet, which it isn't). */}
-                                {l.billedUnitPrice != null && <> · {formatCurrency(l.billedUnitPrice)} (per piece)</>}
+                                {/* T1 (2026-09-30): utils/money.js's formatMoney(), default 'price'
+                                    mode — a per-piece rate is a price, not one of the discount/GST/
+                                    Order-total "paise" lines (that distinction lives one level up,
+                                    in BillOrderDetail.jsx/dashboard/Orders.jsx, the only callers
+                                    that also render those lines). Was a byte-identical local
+                                    formatCurrency() defined in this file; see money.js's own header
+                                    comment for the decimal/negative-sign bugs that fixed. */}
+                                {l.billedUnitPrice != null && <> · {formatMoney(l.billedUnitPrice)} (per piece)</>}
                               </span>
                             </li>
                           ))}

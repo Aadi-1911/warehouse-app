@@ -36,12 +36,18 @@ export function computeMargin(costPrice, sellingPrice, formatCurrency) {
 
   const marginRupees = selling - cost;
   const marginPercent = (marginRupees / selling) * 100;
+  const roundedPercent = Math.round(marginPercent);
 
   return {
     // Rounded to the nearest whole percent — this app shows no other figure to fractional
     // precision the Owner asked for by name, and the task's own worked example (350, 500 -> 30%)
     // is a whole number, so there's no existing convention here to match more finely than that.
     rupees: formatCurrency(marginRupees),
-    percent: `${Math.round(marginPercent)}%`,
+    // T1 (2026-09-30): a negative margin used to render "-17%" — JavaScript's own ASCII
+    // hyphen-minus, same bug utils/money.js's own header comment describes for rupee figures.
+    // Built by hand here (not via formatMoney, which formats ₹ amounts, not bare percentages)
+    // using the same U+2212 "minus sign" glyph, so a negative margin's ₹ and % read consistently:
+    // "−₹50 · −17%", never a ₹ with a real minus next to a % with a typo-looking one.
+    percent: `${roundedPercent < 0 ? '−' : ''}${Math.abs(roundedPercent)}%`,
   };
 }
