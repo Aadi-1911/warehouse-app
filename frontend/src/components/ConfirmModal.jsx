@@ -40,10 +40,13 @@
 //     step so the PIN field appears where the button was. PinPrompt owns its own <form>; nothing in
 //     this component renders a <form>, so there's never a form nested inside another.
 // It's a separate branch rather than extra classes on the default markup, so every existing caller
-// (none passes `size`) renders exactly the same elements and classNames as before. Closing works the
-// same in both sizes: Cancel and a scrim click call `onCancel`. There's no Escape handling in either,
-// because the default size never had one. Below 900px the sheet covers the whole screen, so there's
-// no scrim left to tap there — Cancel (or the caller's own footer Cancel) is the way out.
+// (none passes `size`) renders exactly the same elements and classNames as before.
+// Closing differs by size, deliberately (owner decision, 2026-09-30). The default size closes on
+// Cancel or a scrim click, as it always has. The wide size closes ONLY on Cancel — the default
+// footer's Cancel, or the Cancel a caller puts in its own `footer`. A click or tap outside the wide
+// dialog does nothing, because the wide dialog holds typed prices, discount/GST and a location tick,
+// and one stray click on the backdrop would throw all of that away. Neither size handles Escape;
+// the default size never did.
 export default function ConfirmModal({
   open,
   title,
@@ -63,8 +66,10 @@ export default function ConfirmModal({
 
   if (size === 'wide') {
     return (
-      <div className="modal-scrim modal-scrim-wide" onClick={onCancel}>
-        <div className="modal-card-wide" onClick={(e) => e.stopPropagation()}>
+      // No onClick on the scrim: outside clicks must not discard what's been typed (see the header
+      // comment). With nothing on the scrim to trigger, the card needs no stopPropagation either.
+      <div className="modal-scrim modal-scrim-wide">
+        <div className="modal-card-wide">
           <div className="modal-wide-header">
             <h2 className="modal-title">{title}</h2>
           </div>
