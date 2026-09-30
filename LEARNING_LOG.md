@@ -1442,6 +1442,61 @@ It summed `qtySetsPacked × piecesPerSet × priceAtOrder` per line to give the B
 
 **Not verified in a browser.** No page was rendered, no order was billed, no cost lookup was actually made to fail, no article with 3 distinct baseline prices was actually billed through the UI — all four fixes were confirmed by reading the component/screen code and the data each already carries, not by looking at a rendered screen. That's the owner's own next step, same as T1 and T2.
 
+### T4 — `ConfirmModal size="wide"`: a full-screen sheet on phones, a 1040px dialog on desktop, with a pinned footer (docs/REVAMP_PLAN.md, branch `add-location-pricing-ui-f3`, 2026-09-30)
+
+**What it's for.** Both Bill confirm flows (mobile `BillOrderDetail.jsx`, desktop `dashboard/Orders.jsx`) put a whole screen's worth of input — location picker, price review, discount/GST, totals, PIN — inside `ConfirmModal`'s 300px card. On a desktop that's a phone-sized box in the middle of a big screen, and on any screen the confirm button scrolls away under the content. T4 adds a second layout for that kind of confirm. Nothing uses it yet: T5 builds the Bill panel inside it and T6a/T6b switch the two screens over. Only `components/ConfirmModal.jsx` and `index.css` changed; `git diff --stat 8e6d7fa..HEAD -- backend frontend/src/pages frontend/src/utils frontend/src/hooks` is empty.
+
+**The API: two new props, `size` and `footer`, and nothing else.**
+- `size="wide"` picks the new layout. Omitted (or `"default"`), the component returns exactly the JSX it always did.
+- The wide layout has three regions stacked in a column: a header (the `title`, never scrolls), a body (`body` text if given, then `children` — this is the only part that scrolls), and a footer pinned to the bottom.
+- With no `footer` prop, the pinned footer holds the same Cancel/Confirm buttons as the default size, driven by the same props (`confirmLabel`, `cancelLabel`, `tone`, `confirmDisabled`, `hideConfirm`, `onConfirm`, `onCancel`).
+- `footer` (any React node) *replaces* those buttons. This is how the PIN step works: the caller passes PinPrompt (plus its "Change prices" / "Cancel" links) as `footer` while `pinStaged` is true, so the PIN field appears in the exact spot the button was. `undefined` gives the default buttons back.
+
+**Why this shape and not others.**
+- *Why a `footer` node rather than a `pinStep` prop or a `renderFooter` function:* the component shouldn't know what a PIN is. It only needs to know "here's something to show in the footer instead of the buttons". A plain node is the smallest thing that does that, and it's the same shape `children` already uses for the body.
+- *Why the footer replaces the buttons rather than sitting beside them:* `hideConfirm` exists because two primary buttons for one action (a dead "Bill and lock order" next to PinPrompt's live one) is confusing. Replacing the whole footer keeps that rule, and it lets the caller decide whether Cancel is a big button or a link in the PIN step, which the plan's footer sketch shows as links ("Change prices · Cancel").
+- *Why PinPrompt can go in the footer at all:* PinPrompt renders its own `<form>`, and a form inside another form is invalid HTML (the browser silently drops the inner one). `ConfirmModal` renders no `<form>` in either size, so whatever is in `footer` is never nested inside one.
+- *Why a separate `if (size === 'wide')` branch instead of adding classes to the existing markup:* the task required every existing caller's output to stay identical. A separate branch guarantees that by construction — the default `return` wasn't edited at all. The cost is that the two Cancel/Confirm button blocks are copies of each other; a comment on the wide copy says to change both together.
+
+**How T6a/T6b will call it** (sketch, not in code yet):
+```jsx
+<ConfirmModal
+  size="wide"
+  open={confirmOpen}
+  title="Bill this order? This cannot be undone."
+  body={...same consequence text as today...}
+  confirmLabel={pricing.pinRequired ? 'Review changes & enter PIN' : 'Bill and lock order'}
+  tone="danger"
+  confirmDisabled={submitting || billingInputIncomplete}
+  onConfirm={pricing.pinRequired ? () => setPinStaged(true) : () => handleConfirmBill()}
+  onCancel={handleCancelBillConfirm}
+  footer={pinStaged ? (
+    <>
+      <PinPrompt submitLabel="Bill and lock order" submittingLabel="Billing…" autoFocus onSubmit={handleConfirmBill} />
+      <div className="action-row">
+        <button type="button" className="link-button" onClick={() => setPinStaged(false)}>Change prices</button>
+        <button type="button" className="link-button" onClick={handleCancelBillConfirm}>Cancel</button>
+      </div>
+    </>
+  ) : undefined}
+>
+  <BillReviewPanel ... />
+</ConfirmModal>
+```
+`hideConfirm` isn't needed in the wide size, because passing `footer` already removes the confirm button.
+
+**CSS.** New classes only (`.modal-scrim-wide`, `.modal-card-wide`, `.modal-wide-header`, `.modal-wide-body`, `.modal-wide-footer`), so `.modal-card` and every existing 300px confirm are unchanged. Written phone-first: the base rules are the full-screen sheet (`height: 100dvh`, `--card-bg`, no rounded corners), and one `@media (min-width: 900px)` block turns it into a centred dialog (`max-width: 1040px`, `max-height: 90dvh`, 16px corners, the same scrim with its usual padding). Only existing tokens are used (`--card-bg`, `--divider`, `--space-4/5/6`). The footer's default buttons are `flex: 1` (full width) in the 300px card; inside the wide footer on desktop they're right-aligned and sized to their text instead, because two 500px-wide buttons would look broken.
+
+**The one CSS detail worth remembering: `min-height: 0` on the scrolling body.** In a flex column, a child's minimum height defaults to the height of its content (`min-height: auto`). So a body with lots of content won't shrink to fit the space left between header and footer; it pushes the footer down and off the screen, and `overflow-y: auto` never kicks in. Setting `min-height: 0` lets the body shrink, and then it scrolls. Header and footer get `flex-shrink: 0` so they never shrink instead.
+
+**Breakpoints are written once as a comment, not as variables.** The plan fixes two breakpoints, 640px and 900px. The obvious way to "define them once" would be `--bp-phone: 640px`, but custom properties can't be used inside a media query's condition — `var()` only works in property values. `@custom-media` would give them a name, but no browser supports it yet without a PostCSS plugin this project doesn't have. So they're documented in one comment block right after the main `:root` tokens in `index.css`, and every media query uses the literal number. T4 uses only 900px.
+
+**Closing works the same as before, and there's one gap to know about.** Today `ConfirmModal` closes on Cancel and on a scrim click; there is no Escape handler, so the wide size doesn't add one either — both sizes behave the same. On desktop (900px and up) the scrim is visible around the dialog and clicking it cancels, as before. Below 900px the sheet covers the whole screen, so there's no scrim to tap; Cancel (or the caller's own Cancel in `footer`) is the way out. The plan's T4 test list says "Cancel and tapping the backdrop both close it" for phones. That can't be true of a full-screen sheet, which the same plan also specifies, so that test line needs changing to "Cancel closes it".
+
+**Callers checked, not assumed.** `git grep -n "ConfirmModal" -- frontend/src` lists 12 `<ConfirmModal` uses across 9 page files. None passes `size` or `footer`, so all of them take the unchanged default branch.
+
+**Not verified in a browser, and not visible anywhere yet.** No screen renders `size="wide"` until T5/T6, so there's nothing to look at. The layout was checked by reading the CSS, not by rendering it. `npm --prefix frontend run build` passes.
+
 ## Mistakes & Fixes
 
 Every entry here follows the same five-part structure, backend or frontend, no exceptions: **(1) Original approach** — what was tried first and why it seemed right at the time. **(2) What went wrong** — the actual symptom, and how it was noticed. **(3) Diagnosis** — how the real cause was tracked down, not just guessed at. **(4) The fix** — what was actually changed. **(5) Why this fix is correct** — the reasoning for why it addresses the real cause, not just a workaround that happened to make the symptom disappear.
@@ -2356,6 +2411,18 @@ This connects to a concept already in this log — [[async / await]] and the gen
 Purity is what made a genuinely useful shortcut possible during testing: no real `GOOD_RETURN`/`RECEIPT_CORRECTION`/`TRANSFER_CORRECTION` entries existed in the dev database, so a real-browser test could not exercise the branch of `articleGroupFor` that handles them (the "not order-level, no article field" fallback). Because the function is pure, it doesn't need a rendered page, a logged-in user, or a database at all to test — copying its exact body into a plain Node script and calling it with a hand-written object shaped like `{ type: 'GOOD_RETURN' }` tests the REAL function, not a simulation of it, since a pure function has no hidden dependency on its surroundings that a standalone copy could fail to reproduce. This is a general pattern worth reusing: when a piece of display logic is annoying or slow to reach through the full UI (a rare entry type, an edge case buried behind several form steps), check whether the logic it depends on is pure — if it is, testing it directly is not a lesser substitute for a browser test, it's a more precise one, because it isolates exactly the one thing being verified from everything else that has to go right for a browser test to even reach that code.
 
 The general shape worth remembering: **prefer pure functions for anything that's "just compute a value from what I already have."** They're trivial to test in isolation, safe to call as many times as convenient (React re-running a component function on every render is exactly why this matters — an impure "helper" called during render could double-fire a side effect), and their correctness doesn't depend on timing, network state, or what ran before them.
+
+**A pinned footer with a scrolling middle — flex columns, `min-height: 0`, and why media queries can't use CSS variables (T4, 2026-09-30).** Prerequisites: flexbox basics — `display: flex` lays a box's children out in a line; `flex-direction: column` makes that line vertical; each child's `flex` value says whether it grows into spare space or shrinks when space runs out. This app already uses flex rows everywhere (`.modal-actions`, `.action-row`, `.dash-table-action-row`).
+
+The goal in `ConfirmModal size="wide"` is a common layout: a header at the top, a footer at the bottom that never moves, and everything in between scrolls. The recipe is a flex column with a fixed total height (`100dvh` on a phone, at most `90dvh` on desktop) and three children:
+- header and footer: `flex-shrink: 0` — "never get smaller than your content";
+- body: `flex: 1 1 auto` — "take whatever height is left" — plus `overflow-y: auto` so it scrolls when its content is taller than that.
+
+That looks complete, and it doesn't work without one more line: `min-height: 0` on the body. A flex child's minimum size defaults to `auto`, which in practice means "the size of my content". So when the Bill panel's content is 1,400px tall and the space between header and footer is only 600px, the body refuses to shrink below 1,400px. It pushes the footer off the bottom of the screen, and because the body is never actually shorter than its content, its `overflow-y: auto` never has anything to scroll. `min-height: 0` removes that floor: the body shrinks to the 600px it's given, and the scrollbar appears inside it. This is a standard flexbox gotcha, and the symptom to recognise is "I set overflow: auto but it won't scroll, and my footer disappeared".
+
+`dvh` ("dynamic viewport height") is used instead of `vh` for the same reason `.modal-card` already uses it: on a phone, `100vh` is the height of the screen with the browser's address bar hidden, so a `100vh` sheet is taller than what's actually visible and its bottom (the footer) sits under the toolbar. `100dvh` follows the visible height as the toolbar appears and disappears.
+
+Why the two breakpoints (640px, 900px) are a comment, not variables: a CSS custom property such as `--bp-phone: 640px` can be read with `var()` only inside a property's *value* (`width: var(--x)`). A media query's condition (`@media (min-width: 900px)`) isn't a property value, so `@media (min-width: var(--bp-desktop))` is simply ignored by the browser. The "define it once" discipline is kept by writing both numbers in one comment block near the top of `index.css` and using exactly those literals in every media query.
 
 Ledger/statement export: investigated the gap between current Factory/Party Payables data and a real exportable ledger. Confirmed: all underlying financial data (payments, debits, billed orders, returns, stock-in receipts) already exists with real dates/amounts, but two payable API endpoints currently discard order/return/stock-in rows down to aggregate sums before responding, and two Prisma queries (returns, stockInTransactions inside the payable handlers) don't currently select id/date at all. A basic statement export (itemized chronological history + running balance, PDF/CSV) would need: widen those two queries, stop discarding the rows, merge all event types into one chronological list per Party/Factory, add a running-balance accumulation (pure computation, no schema change), and pick an export library (none exists in the repo today). No changes needed to computeRevenue() or any existing money calculation. A real formal ledger (per-bill running balance, FIFO payment allocation, due-date aging — rules 32-44) is explicitly NOT this and remains deferred. Decision: defer the export build until after deployment and after the Bill No./bill generation system exists — no point building a statement around bills that aren't tracked as real entities yet. Also found: Party.runningDueBalance is a dead schema field (declared, never read or written) — decide later whether to drop it or repurpose it once a real running balance is eventually built. PartyStockReturn has no backdatable date field (only createdAt) unlike PartyPayment — worth a decision if/when the export is eventually built.
 

@@ -27,6 +27,23 @@
 // plain confirm button rather than sitting beside it; a disabled "Bill and lock order" left visible
 // above an active "Confirm at new prices" would be two primary buttons for one action, with the
 // dead one on top. Cancel deliberately stays: backing out must always be available.
+//
+// `size="wide"` + `footer` (added 2026-09-30, docs/REVAMP_PLAN.md T4/B3) — a second LAYOUT for
+// confirms that carry a whole screen's worth of input (the Bill panel, T5/T6), where a 300px card is
+// a phone-sized box even on a desktop. Below 900px it's a full-screen sheet; from 900px it's a
+// centred dialog up to 1040px wide. Either way it has three regions: a fixed header (title), a
+// scrollable body (`body` text, then `children`), and a footer pinned to the bottom so the action is
+// never scrolled out of reach.
+//   - With no `footer`, the pinned footer holds exactly the default Cancel/Confirm buttons, driven by
+//     the same props (confirmLabel, tone, confirmDisabled, hideConfirm) as the default size.
+//   - `footer` (any node) REPLACES those buttons. That's how a caller swaps in PinPrompt at the PIN
+//     step so the PIN field appears where the button was. PinPrompt owns its own <form>; nothing in
+//     this component renders a <form>, so there's never a form nested inside another.
+// It's a separate branch rather than extra classes on the default markup, so every existing caller
+// (none passes `size`) renders exactly the same elements and classNames as before. Closing works the
+// same in both sizes: Cancel and a scrim click call `onCancel`. There's no Escape handling in either,
+// because the default size never had one. Below 900px the sheet covers the whole screen, so there's
+// no scrim left to tap there — Cancel (or the caller's own footer Cancel) is the way out.
 export default function ConfirmModal({
   open,
   title,
@@ -39,8 +56,47 @@ export default function ConfirmModal({
   onCancel,
   confirmDisabled = false,
   hideConfirm = false,
+  size = 'default',
+  footer,
 }) {
   if (!open) return null;
+
+  if (size === 'wide') {
+    return (
+      <div className="modal-scrim modal-scrim-wide" onClick={onCancel}>
+        <div className="modal-card-wide" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-wide-header">
+            <h2 className="modal-title">{title}</h2>
+          </div>
+          <div className="modal-wide-body">
+            {body && <p className="modal-body">{body}</p>}
+            {children}
+          </div>
+          <div className="modal-wide-footer">
+            {footer ?? (
+              // Same buttons as the default size below. Kept as a copy rather than shared so the
+              // default markup isn't touched at all. If you change one, change the other.
+              <div className="modal-actions">
+                <button type="button" className="btn-modal-cancel" onClick={onCancel}>
+                  {cancelLabel}
+                </button>
+                {!hideConfirm && (
+                  <button
+                    type="button"
+                    className={`btn-modal-confirm btn-modal-confirm-${tone}`}
+                    onClick={onConfirm}
+                    disabled={confirmDisabled}
+                  >
+                    {confirmLabel}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     // The scrim itself is also a cancel target — clicking outside the card is the expected

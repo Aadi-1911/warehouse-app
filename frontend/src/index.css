@@ -390,6 +390,17 @@
   --row-stripe-fill: color-mix(in srgb, var(--section-fill) 50%, var(--card-bg));
 }
 
+/* === BREAKPOINTS (docs/REVAMP_PLAN.md B2, 2026-09-30) — the app's only two, used everywhere ===
+     640px — phone. Below this, a screen gets its phone layout.
+     900px — narrow desktop. The dashboard rail already collapses at `max-width: 900px`; wide
+             dialogs (ConfirmModal size="wide") become full-screen sheets below it.
+   They're written as literal pixel values in each @media rule, not as custom properties. A
+   custom property like `--bp-phone: 640px` can't be used in a media query: `var()` only works in
+   property values, and a media query's condition isn't one. (`@custom-media` would allow a name,
+   but browsers don't support it yet and it needs a PostCSS plugin this project doesn't have.) So
+   this comment is the single definition: when adding a media query, use one of these two numbers
+   and nothing else, and search for "640px" / "900px" to find every place that depends on them. */
+
 * {
   box-sizing: border-box;
 }
@@ -1766,6 +1777,89 @@ body {
 .btn-modal-confirm:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* --- ConfirmModal size="wide" (T4, 2026-09-30, docs/REVAMP_PLAN.md B3) — for a confirm that carries
+   a whole screen of input (the Bill panel, T5/T6). Separate classes from .modal-card, so no existing
+   300px confirm changes. Written phone-first: the rules below are the full-screen sheet used under
+   900px, and the @media block after them turns it into a centred dialog from 900px up (see the
+   BREAKPOINTS comment near the top of this file).
+
+   Layout: a flex column of header / body / footer. The body is the only part that scrolls
+   (`flex: 1 1 auto` + `min-height: 0` lets it shrink below its content's height — without
+   `min-height: 0` a flex item refuses to get smaller than its content, so the body would push the
+   footer off the bottom instead of scrolling). Header and footer are `flex-shrink: 0`, so the
+   footer's buttons (or the PinPrompt a caller swaps in) are always on screen. --- */
+.modal-scrim-wide {
+  padding: 0;
+  align-items: stretch;
+}
+
+.modal-card-wide {
+  background: var(--card-bg);
+  width: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* env(safe-area-inset-*) keeps the title and the buttons clear of a phone's notch and home bar
+   when the sheet fills the screen. It's 0 wherever there's no such inset. */
+.modal-wide-header {
+  flex-shrink: 0;
+  padding: calc(var(--space-5) + env(safe-area-inset-top, 0px)) var(--space-5) 0;
+}
+
+.modal-wide-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.modal-wide-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--divider);
+  background: var(--card-bg);
+  padding: var(--space-4) var(--space-5) calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 900px) {
+  .modal-scrim-wide {
+    padding: var(--space-5);
+    align-items: center;
+  }
+
+  /* height: auto + max-height means a short dialog is only as tall as its content, and a long one
+     stops at 90dvh (the same cap .modal-card uses) with the body scrolling inside it. */
+  .modal-card-wide {
+    max-width: 1040px;
+    height: auto;
+    max-height: 90dvh;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .modal-wide-header {
+    padding-top: var(--space-5);
+  }
+
+  .modal-wide-footer {
+    padding-bottom: var(--space-4);
+  }
+
+  /* The default buttons are `flex: 1`, which on a 1040px dialog would make two ~500px-wide buttons.
+     Right-aligned, content-width buttons read as normal dialog actions at this size. Scoped to the
+     wide footer, so the 300px card's full-width buttons are untouched. */
+  .modal-wide-footer .modal-actions {
+    justify-content: flex-end;
+  }
+
+  .modal-wide-footer .btn-modal-cancel,
+  .modal-wide-footer .btn-modal-confirm {
+    flex: 0 0 auto;
+    padding: 0 var(--space-6);
+  }
 }
 
 /* --- Bill Order's discount/GST questions (added 2026-08-25, rule 101) — rendered as
