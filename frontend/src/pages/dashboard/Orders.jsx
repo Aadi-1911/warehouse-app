@@ -509,6 +509,15 @@ export default function Orders() {
                 // path to have already cleared it.
                 resetPriceAndLocationReview();
                 setBillNo('');
+                // Owner decision 2026-10-05 (option A): discount/GST reset on OPEN too, not only on
+                // Cancel — without this, a successful bill left the previous order's ticks/percents
+                // sitting in state, so the very next "Mark billed" (for ANY order, this page lists
+                // many) silently inherited them. Same four setters, same values, as
+                // handleCancelBillConfirm's own reset.
+                setDiscountApplicable(false);
+                setDiscountPercent('');
+                setGstApplicable(false);
+                setGstPercent('');
                 // Keeps the row's own expanded-body detail in sync — this button is reachable
                 // from the collapsed header, so the row isn't necessarily expanded (and its
                 // detail fetched) already. NOT what the confirm modal's pricing depends on any
