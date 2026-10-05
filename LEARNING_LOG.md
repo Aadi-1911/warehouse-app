@@ -2124,6 +2124,20 @@ With a body of `{ locationPrices: [{ locationId, costPrice: 999 }] }`, `'costPri
 
 ---
 
+### Parties → "Orders and bills" showed the ORDER date on billed rows, not the BILL date (2026-10-05, owner decision)
+
+**What was wrong.** Each row in the owner's Parties screen under a selected party's "Orders and bills" card displayed `formatDate(o.createdAt)` unconditionally — the date the order was *placed* — even once that order had been billed or shipped. A party with an order placed on one day and billed days later saw the placed date, not the bill date, which is what this screen is actually meant to communicate for a billed row.
+
+**Why this is frontend-only.** `orderController.js` already selects and returns `billedAt` on every order the list endpoint returns (`backend/src/controllers/orderController.js:69,135,395`), so the data this fix needed was already on the wire — nothing server-side needed to change, only which field the component reads and displays.
+
+**Owner's two decisions (2026-10-05).**
+1. **Date shown per row:** `o.billedAt` when set (covers Billed AND Dispatched/Shipped, since neither later stage clears `billedAt`), otherwise `o.createdAt`. Not `shippedAt`, not `cancelledAt`. Implemented as a local helper, `rowDateOf(o)`, next to `formatDate` (`frontend/src/pages/dashboard/Parties.jsx`) — matches `Bills.jsx`, which already displays `billedAt` for the same reason.
+2. **Sort:** the fetched list is now sorted newest-first by that same `rowDateOf`, as a copy (`[...list].sort(...)`), at the point it's stored (`setOrders(...)` inside the `listOrders` effect) — so the list reads in the order of the dates it shows, rather than the order the API happened to return. The existing in-place `.map()` patch used elsewhere in the file (for the billing-correction flow) was left untouched; it patches one row's fields and isn't involved in ordering.
+
+**Not verified in a browser.** `npm run build` passes; the change was not exercised against a running server or seen on screen.
+
+---
+
 ## Concepts
 
 **ORM (Object-Relational Mapper)** — Prisma, in our case. Instead of writing raw SQL by hand to talk to the database, you describe your data as JavaScript-like objects and the ORM translates that into SQL for you. You still end up understanding the database structure (the schema file basically *is* your data model), you just don't hand-write every query.

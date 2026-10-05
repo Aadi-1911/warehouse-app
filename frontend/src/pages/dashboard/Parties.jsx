@@ -71,6 +71,14 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Owner decision 2026-10-05: the Parties "Orders and bills" row shows the BILL date once an
+// order has one, not the order's createdAt — billedAt already comes back from GET /api/orders
+// (orderController.js select includes billedAt), and covers Billed AND Dispatched/Shipped rows
+// since neither later stage clears it. Matches Bills.jsx, which also displays billedAt.
+function rowDateOf(o) {
+  return o.billedAt ?? o.createdAt;
+}
+
 // Same tiny helper DashboardLayout.jsx already has for the owner's own rail avatar — duplicated
 // rather than extracted for a two-line pure function used in exactly two places.
 // Local calendar date, NOT toISOString().slice(0, 10) — that reads UTC, which is silently the
@@ -575,7 +583,9 @@ export default function Parties() {
     setOrdersError(null);
     listOrders({ partyId: selectedPartyId })
       .then((list) => {
-        if (!cancelled) setOrders(list);
+        // Sort a copy, newest first, by the same date the row displays (rowDateOf) so the list
+        // reads in the order of the dates shown — not the order the API happens to return.
+        if (!cancelled) setOrders([...list].sort((a, b) => new Date(rowDateOf(b)) - new Date(rowDateOf(a))));
       })
       .catch((err) => {
         if (!cancelled) setOrdersError(err.message);
@@ -1028,7 +1038,7 @@ export default function Parties() {
               ) : (
                 orders.map((o) => (
                   <div key={o.id} className={`dash-party-order-row${o.isCancelled ? ' dash-party-order-row-cancelled' : ''}`}>
-                    <span className="dash-party-order-date">{formatDate(o.createdAt)}</span>
+                    <span className="dash-party-order-date">{formatDate(rowDateOf(o))}</span>
                     {o.isCancelled ? (
                       <span className="badge badge-danger">Cancelled</span>
                     ) : (
