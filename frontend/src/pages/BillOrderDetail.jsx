@@ -8,13 +8,12 @@ import { getOrder, billOrder, cancelOrderLine, cancelOrder } from '../api/orders
 import { listStock } from '../api/stock';
 import { piecesPerSetFor } from '../utils/piecesPerSet';
 import { computeBillingAmounts, clampPercent, seenPricesFromPreview, describeChangedLines } from '../utils/orderBilling';
-import BillFulfillmentPicker from '../components/BillFulfillmentPicker';
-import BillPriceReview from '../components/BillPriceReview';
+import BillReviewPanel from '../components/BillReviewPanel';
 import PinPrompt from '../components/PinPrompt';
 import { useFulfillmentPreview } from '../hooks/useFulfillmentPreview';
 import { useOwnerCostPrices } from '../hooks/useOwnerCostPrices';
 import { deriveBillPricing, PIN_ERROR_CODES } from '../utils/billPriceOverrides';
-import { BILL_NO_MAX_LENGTH, cleanBillNo } from '../utils/billNo';
+import { cleanBillNo } from '../utils/billNo';
 import { formatMoney } from '../utils/money';
 
 // Bill Orders — detail. Mirrors PackOrderDetail.jsx's structure (accordion grouped by article,
@@ -47,13 +46,10 @@ function pluralSets(n) {
 // T1 (2026-09-30): was a local formatCurrency() here, byte-identical to the one
 // dashboard/Orders.jsx had of its own — now utils/money.js's shared formatMoney(), imported and
 // used directly wherever this screen used it for a PRICE (the article-header totals, the price
-// review inputs via BillPriceReview's own `formatCurrency` prop, Total to bill). This screen also
-// needs the OTHER mode — formatPaise below — for the live discount/GST/Order-total lines, which
-// must always show exactly 2 decimals; see money.js's own header comment for why the two modes
-// exist and which figures belong in which.
-function formatPaise(amount) {
-  return formatMoney(amount, { mode: 'paise' });
-}
+// review inputs via BillPriceReview's own `formatCurrency` prop). The 2-decimal 'paise' mode for the
+// live discount/GST/Order-total lines used to be a local formatPaise() here; since T6a (2026-10-05)
+// those lines are rendered by components/BillReviewPanel.jsx, which has its own identical copy, so
+// this screen no longer needs one.
 
 // utils/piecesPerSet.js's piecesPerSetFor expects a product-shaped { isKids, sizes } object;
 // getOrder() returns those flattened onto the line item itself (productIsKids/productSizes), so
@@ -479,13 +475,17 @@ export default function BillOrderDetail() {
       ? (pricing.estimatedPreTax ?? preview.preTaxAmount)
       : preview.preTaxAmount
     : null;
-  const { discountAmount, finalAmount, gstAmount, actualPayable, roundingAdjustment, hasDiscount, hasGst } = computeBillingAmounts({
+  // Kept as ONE object (T6a, 2026-10-05) because BillReviewPanel takes it whole as `amounts`. Only
+  // hasDiscount/hasGst are still needed by name outside the dialog (billingInputIncomplete below),
+  // so they're read off the same object rather than from a second call.
+  const amounts = computeBillingAmounts({
     preTaxAmount: preTaxAmount ?? 0,
     discountApplicable,
     discountPercent,
     gstApplicable,
     gstPercent,
   });
+  const { hasDiscount, hasGst } = amounts;
   // Blocks confirming with a half-answered question — the checkbox says "yes, apply a discount"
   // but no usable percent has been typed yet. Same guard shape as blockedLines.length above:
   // the trigger button and the modal's own confirm button share this so an owner can't get from
@@ -692,15 +692,24 @@ export default function BillOrderDetail() {
           Discount/GST questions (rule 101) live inside this SAME confirm flow via ConfirmModal's
           `children` — not a second dialog — so the owner answers them right where they're
           already committing to bill, with the real rupee impact visible before they press
-          confirm, not only afterward. */}
+          confirm, not only afterward.
+
+          T6a (2026-10-05, docs/REVAMP_PLAN.md) — LAYOUT ONLY. size="wide" makes this a full-screen
+          sheet on a phone (a ~1040px dialog from 900px) with the action pinned to the bottom, so
+          the Bill button never scrolls away under a long article list. The body is now
+          BillReviewPanel, the same display-only layout dashboard/Orders.jsx will use (T6b); every
+          value and handler it shows still comes from this file, unchanged. A wide dialog ignores
+          clicks outside it (ConfirmModal's own header comment), so the typed prices can only be
+          thrown away by an explicit Cancel. */}
       <ConfirmModal
         open={confirmOpen}
+        size="wide"
         title="Bill this order? This cannot be undone."
         body={`This immediately deducts ${pluralSets(totalPacked)} from live stock, and permanently locks ${order.partyName}'s order — no quantity, price or packing change is possible after this, ever. There is no way to reverse it.`}
         // Rule 113 turns this into a TWO-STEP confirm whenever a price was changed: this button
         // stages the PIN step instead of billing, and PinPrompt's own submit button (which replaces
-        // this one — see ConfirmModal's hideConfirm) is what actually bills. With no price changed
-        // it is exactly the one-step confirm it has always been. The arrow wrapper on the non-PIN
+        // this one — see `footer` below) is what actually bills. With no price changed it is
+        // exactly the one-step confirm it has always been. The arrow wrapper on the non-PIN
         // path matters: ConfirmModal calls onConfirm as a click handler, so passing
         // handleConfirmBill bare would hand it the click EVENT as its `pin` argument.
         confirmLabel={
@@ -710,82 +719,23 @@ export default function BillOrderDetail() {
         onConfirm={pricing.pinRequired ? () => setPinStaged(true) : () => handleConfirmBill()}
         onCancel={handleCancelBillConfirm}
         confirmDisabled={submitting || billingInputIncomplete}
-        hideConfirm={pinStaged}
-      >
-        <div className="bill-pricing-questions">
-          {/* Rule 113 — sourced from the fulfillment preview, not priceAtOrder. Three explicit
-              states rather than one line that might show a wrong number: no location chosen yet
-              (nothing to preview), the fetch in flight (never show a stale or placeholder total —
-              same discipline dashboard/Orders.jsx already applies to billPreTaxAmount), and a
-              failed fetch (billing is blocked either way — see previewReady — so this says why). */}
-          {!fulfillLocationId ? (
-            <p className="muted bill-pricing-pretax">Choose a fulfilment location to see the order total.</p>
-          ) : previewError ? (
-            <p className="error-banner" role="alert">
-              Could not load prices for this location: {previewError}
-            </p>
-          ) : !previewReady ? (
-            <p className="muted bill-pricing-pretax">Loading prices for this location…</p>
-          ) : (
-            <p className="muted bill-pricing-pretax">
-              Order total: {formatPaise(preTaxAmount)}
-              {/* Named an estimate only once a typed price is actually in play. Unchanged prices
-                  make this the server's own preview figure, which is not an estimate at all. */}
-              {pricing.pinRequired ? ' (estimate at your new prices)' : ''}
-            </p>
-          )}
-
-          {/* Fulfilment location first, above the money questions — it decides which physical
-              stock leaves the building, which is the more consequential of the two decisions and
-              the one that used to be made invisibly. */}
-          <BillFulfillmentPicker
-            locationId={fulfillLocationId}
-            onLocationChange={setFulfillLocationId}
-            confirmed={locationConfirmed}
-            onConfirmedChange={setLocationConfirmed}
-            onLocationSwitched={handleLocationSwitched}
-            previewStatus={previewStatus}
-            preview={preview}
-            previewError={previewError}
-          />
-
-          {/* Rule 113's price review, between the location and the money questions: the location
-              decides the baseline these prices start from, and discount/GST then apply on top of
-              whatever this settles on. Rendered only once there is a real preview to price against —
-              with no preview there are no baselines, so every row would be blank. Inputs are
-              disabled on the PIN step so the figures the PIN is about can't shift underneath it;
-              "Change prices" below unstages to edit them. */}
-          {previewReady && (
-            <BillPriceReview
-              pricing={pricing}
-              onOverrideChange={handleOverrideChange}
-              formatCurrency={formatMoney}
-              costStatus={costStatus}
-              costError={costError}
-              resetNote={priceResetNote}
-              disabled={submitting || pinStaged}
-            />
-          )}
-
-          {staleNote && (
-            <p className="error-banner" role="alert">
-              {staleNote}
-            </p>
-          )}
-
-          {/* The PIN step. PinPrompt (components/PinPrompt.jsx) — the shared component, not a
-              hand-copied field — owns the input, the submit button, the in-flight label, and the
-              INVALID_PIN "(N attempts remaining)" rendering this action can genuinely hit, which is
-              why handleConfirmBill re-throws instead of swallowing a PIN failure. Same "stage the
-              other fields, then swap to PinPrompt" shape dashboard/History.jsx and
-              dashboard/Parties.jsx already use, since PinPrompt owns its own <form> and cannot be
-              merged into a bigger one. */}
-          {pinStaged && (
-            <div className="bill-pricing-pin">
-              {/* T3 (2026-09-30) — this used to repeat "N prices changed", which BillPriceReview's
-                  own summary heading above already states (plus the actual old→new list, which
-                  this line never had). Now says only the one thing that line uniquely adds: the
-                  instruction to enter the PIN. */}
+        // The PIN step. `footer` REPLACES the default Cancel/Confirm buttons in the pinned footer
+        // (which is why hideConfirm is gone — with a footer passed, the default buttons aren't
+        // rendered at all), so the PIN field appears exactly where the Bill button was. `undefined`
+        // when not staged gives back the default buttons, driven by the props above.
+        //
+        // PinPrompt (components/PinPrompt.jsx) — the shared component, not a hand-copied field —
+        // owns the input, the submit button, the in-flight label, and the INVALID_PIN "(N attempts
+        // remaining)" rendering this action can genuinely hit, which is why handleConfirmBill
+        // re-throws instead of swallowing a PIN failure. It owns its own <form>, and ConfirmModal
+        // renders none, so there's no form nested in a form.
+        //
+        // No .bill-pricing-pin wrapper here: that class draws its own top divider, and the pinned
+        // footer already has one, so it would be a double line. The default footer has no Cancel
+        // once `footer` is passed, so this one carries its own — backing out must always be possible.
+        footer={
+          pinStaged ? (
+            <>
               <p className="muted hint-text">Enter your PIN to bill at the new prices.</p>
               <PinPrompt
                 submitLabel="Bill and lock order"
@@ -793,107 +743,67 @@ export default function BillOrderDetail() {
                 autoFocus
                 onSubmit={handleConfirmBill}
               />
-              <button type="button" className="link-button" onClick={() => setPinStaged(false)}>
-                Change prices
-              </button>
-            </div>
-          )}
-
-
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={discountApplicable}
-              onChange={(e) => setDiscountApplicable(e.target.checked)}
-            />
-            Apply a discount?
-          </label>
-          {discountApplicable && (
-            <div className="field bill-pricing-percent-field">
-              <span className="field-label">Discount %</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={discountPercent}
-                onChange={(e) => setDiscountPercent(clampPercent(e.target.value, 100))}
-                placeholder="e.g. 5"
-                autoFocus
-              />
-            </div>
-          )}
-          {hasDiscount && (
-            <p className="bill-pricing-line">
-              −{formatPaise(discountAmount)} discount → {formatPaise(finalAmount)}
-            </p>
-          )}
-
-          <label className="checkbox-field">
-            <input type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} />
-            Apply GST?
-          </label>
-          {gstApplicable && (
-            <div className="field bill-pricing-percent-field">
-              <span className="field-label">GST %</span>
-              <input
-                type="number"
-                min="0"
-                max="5"
-                step="0.01"
-                value={gstPercent}
-                onChange={(e) => setGstPercent(clampPercent(e.target.value, 5))}
-                placeholder="e.g. 5"
-                autoFocus
-              />
-            </div>
-          )}
-          {hasGst && <p className="bill-pricing-line">+{formatPaise(gstAmount)} GST</p>}
-
-          {/* Rule 109's rounding, shown only when it actually did something — the same "omit at exactly 0"
-              and explicit-sign convention as the post-billing footer in dashboard/Orders.jsx. This
-              is what explains why "Total to bill" is a whole rupee while the lines above it carry
-              paise.
-              T1 (2026-09-30): kept on its own hand-built toFixed(2) rather than switched onto
-              formatMoney's new 'paise' mode (utils/money.js), which fixes the exact 3-decimal bug
-              this comment used to cite against the old local formatCurrency() — that reason is
-              gone now. Left alone anyway: toFixed(2) and toLocaleString's fraction-digit rounding
-              aren't guaranteed to round a boundary value (e.g. exactly half a paisa) the same way
-              in every JS engine, and this line is the one place in the app a difference of ±₹0.01
-              would be visible against the real rounding the server applies. Per T1's own
-              instruction to leave this line untouched when unsure whether the output would stay
-              byte-identical — it stays untouched. */}
-          {roundingAdjustment !== 0 && (
-            <p className="bill-pricing-line">
-              Rounding {roundingAdjustment > 0 ? '+' : '−'}₹{Math.abs(roundingAdjustment).toFixed(2)}
-            </p>
-          )}
-
-          <p className="bill-pricing-final">
-            Total to bill: {formatMoney(actualPayable)}
-            {/* T3 (2026-09-30) — same condition as Order total's "(estimate at your new prices)"
-                above: only once a typed price is actually in play. Without a changed price this
-                figure already matches what the server will bill, so it stays unlabelled. */}
-            {pricing.pinRequired ? ' (estimate)' : ''}
-          </p>
-
-          {/* Below the total on purpose: everything above it changes the amount, this doesn't.
-              Placing it among the discount/GST controls would imply it participates in the
-              arithmetic. Optional — blank is a perfectly normal outcome, and it never blocks the
-              confirm button (billingInputIncomplete ignores it entirely). Correctable afterwards
-              from the party's billing history if it's mistyped here. */}
-          <div className="field bill-no-field">
-            <span className="field-label">Bill No. (optional)</span>
-            <input
-              type="text"
-              value={billNo}
-              onChange={(e) => setBillNo(e.target.value)}
-              placeholder="e.g. INV-2291"
-              maxLength={BILL_NO_MAX_LENGTH}
-              disabled={submitting}
-            />
-          </div>
-        </div>
+              <div className="action-row">
+                <button type="button" className="link-button" onClick={() => setPinStaged(false)}>
+                  Change prices
+                </button>
+                <button type="button" className="link-button" onClick={handleCancelBillConfirm}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : undefined
+        }
+      >
+        {/* Every prop below is a value or handler this file already had; the panel lays them out
+            and computes nothing (see its own header comment). What each one was before T6a:
+            - pickerProps: BillFulfillmentPicker's props, byte-for-byte what it was given inline.
+            - priceReviewProps: BillPriceReview's props, likewise. Its inputs stay disabled on the
+              PIN step (`pinStaged`) so the figures the PIN is about can't shift underneath it;
+              "Change prices" in the footer unstages to edit them. The panel still renders it only
+              once previewReady — no preview means no baselines, so every row would be blank.
+            - hasLocation: the `!fulfillLocationId` check the Order-total line used to branch on.
+            - the percent handlers keep clampPercent exactly as before (100 for discount, 5 for GST).
+            - billNoDisabled: `submitting`, as the inline input had. */}
+        <BillReviewPanel
+          pickerProps={{
+            locationId: fulfillLocationId,
+            onLocationChange: setFulfillLocationId,
+            confirmed: locationConfirmed,
+            onConfirmedChange: setLocationConfirmed,
+            onLocationSwitched: handleLocationSwitched,
+            previewStatus,
+            preview,
+            previewError,
+          }}
+          priceReviewProps={{
+            pricing,
+            onOverrideChange: handleOverrideChange,
+            formatCurrency: formatMoney,
+            costStatus,
+            costError,
+            resetNote: priceResetNote,
+            disabled: submitting || pinStaged,
+          }}
+          hasLocation={!!fulfillLocationId}
+          previewReady={previewReady}
+          previewError={previewError}
+          preTaxAmount={preTaxAmount}
+          pinRequired={pricing.pinRequired}
+          staleNote={staleNote}
+          discountApplicable={discountApplicable}
+          onDiscountApplicableChange={setDiscountApplicable}
+          discountPercent={discountPercent}
+          onDiscountPercentChange={(value) => setDiscountPercent(clampPercent(value, 100))}
+          gstApplicable={gstApplicable}
+          onGstApplicableChange={setGstApplicable}
+          gstPercent={gstPercent}
+          onGstPercentChange={(value) => setGstPercent(clampPercent(value, 5))}
+          amounts={amounts}
+          billNo={billNo}
+          onBillNoChange={setBillNo}
+          billNoDisabled={submitting}
+        />
       </ConfirmModal>
     </div>
   );
